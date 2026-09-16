@@ -51,11 +51,29 @@ real, sin integraciones vivas, cero recursos externos en runtime.
 - `npm run lint`: **0 errores** (1 warning preexistente de react-refresh en `src/lib/theme.tsx`, no bloqueante).
 - `npm run check:externos`: **exit 0** (sin URLs externas).
 
+## Lighthouse CI — resultado final (escritorio 1920×1080, 3 corridas)
+
+Run GitHub Actions [`35057890871`](https://github.com/WILSP1971/CRM_WhatsApp/actions/runs/35057890871), commit `efa1d2c`.
+
+| Categoría      | Score | Gate  |
+| -------------- | ----- | ----- |
+| Performance    | 100   | ≥90 ✅ |
+| Accessibility  | 98    | ≥90 ✅ |
+| Best Practices | 92    | ✅     |
+| SEO            | 100   | ✅     |
+
+Métricas: FCP 0.5s · LCP 0.5s · TTI 0.5s · **TBT 0 ms** · **CLS 0** · Speed Index 0.5s.
+
+**Optimización de Performance (THOR → CAPTAIN AMERICA):** 80 → 100.
+- `vite.config.ts`: `manualChunks` (vendor-react / vendor-ui) + `build.target: es2020`; entry propio 345 KB → 72 KB.
+- Plugin local `inlineCssPlugin` (`transformIndexHtml`): CSS de entrada inline como `<style>`, elimina el `<link rel=stylesheet>` render-blocking (~670 ms), sin recursos externos.
+- `.lighthouserc.json`: corregido a throttling de **escritorio** (CPU 1×) acorde al target; el config previo aplicaba throttling móvil sobre form-factor desktop, hundiendo/variando el score (58/80/80).
+
 ## Notas / riesgos abiertos
 
 - **Inter self-hosted**: `.woff2` no incluidos (sin descargas externas en este entorno); fallback `system-ui`.
   Procedimiento en `public/fonts/README.md` para añadirlos localmente (nunca vía CDN).
-- **Lighthouse/axe reales**: pendientes de ejecutar en CI (requiere Chromium). Config lista en `.lighthouserc.json`.
+- **Lighthouse**: ejecutado en CI (ver sección de resultados). **axe** real por navegador queda como checklist manual (el harness de contraste vitest 32/32 cubre AAA de tokens).
 - **`npm audit`**: 2 moderadas en `react-router-dom` 6.x (runtime) y high/critical en `vite`/`vitest`
   que solo afectan el dev-server local, no el build de producción. Valorar upgrade en SPEC futura.
 
@@ -71,6 +89,6 @@ real, sin integraciones vivas, cero recursos externos en runtime.
 
 ## Próximos pasos (fuera de alcance SPEC-010)
 
-1. Ejecutar CI en GitHub Actions y validar que los jobs pasan (puede tomar 3–5 min en el primer run).
-2. Lighthouse/axe reales se ejecutarán en el runner de GitHub Actions (requiere Chromium disponible).
+1. ✅ CI en GitHub Actions verde (build + lint + test + check:externos + Lighthouse).
+2. ✅ Lighthouse ejecutado (Performance 100, A11y 98, BP 92, SEO 100). Pendiente opcional: axe real por navegador.
 3. (Opcional) Fase funcional futura: backend/integraciones/IA con modelos locales/self-hosted (respetando `.no-externo`).
