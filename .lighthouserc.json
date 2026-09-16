@@ -13,7 +13,15 @@
           "disabled": false
         },
         "formFactor": "desktop",
-        "throttlingMethod": "simulate"
+        "throttlingMethod": "simulate",
+        "throttling": {
+          "cpuSlowdownMultiplier": 1,
+          "rttMs": 40,
+          "throughputKbps": 10240,
+          "requestLatencyMs": 0,
+          "downloadThroughputKbps": 0,
+          "uploadThroughputKbps": 0
+        }
       }
     },
     "assert": {
