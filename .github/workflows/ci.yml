@@ -79,10 +79,37 @@ jobs:
         run: lhci autorun --config=.lighthouserc.json
         continue-on-error: true
 
+      - name: Resumen de scores Lighthouse
+        if: always()
+        run: |
+          echo "## 🔦 Lighthouse — scores (mediana de 3 corridas)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Categoría | Score | Gate |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f .lighthouseci/manifest.json ]; then
+            # Elige la corrida representativa (isRepresentativeRun) o la primera
+            LHR=$(node -e "const m=require('./.lighthouseci/manifest.json');const r=(m.find(x=>x.isRepresentativeRun)||m[0]);process.stdout.write(r.jsonPath)")
+            echo "Reporte representativo: $LHR"
+            node -e "
+              const r=require('$LHR');
+              const cats=r.categories;
+              const order=['performance','accessibility','best-practices','seo'];
+              for (const k of order){ if(cats[k]){ const s=Math.round(cats[k].score*100); console.log('CATEGORÍA '+cats[k].title+': '+s); require('fs').appendFileSync(process.env.GITHUB_STEP_SUMMARY, '| '+cats[k].title+' | '+s+' | '+(k==='performance'||k==='accessibility'?'≥90':'—')+' |\n'); } }
+              const a=r.audits; const m=['first-contentful-paint','largest-contentful-paint','interactive','total-blocking-time','cumulative-layout-shift','speed-index'];
+              console.log('--- métricas ---');
+              for(const k of m){ if(a[k]) console.log(k+': '+a[k].displayValue); }
+            "
+          else
+            echo "No se encontró .lighthouseci/manifest.json (revisar corrida de Lighthouse)."
+            echo "| (sin datos) | — | — |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Upload Lighthouse reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: lighthouse-results-${{ github.run_id }}
           path: .lighthouseci/
-          if-no-files-found: ignore
+          include-hidden-files: true
+          if-no-files-found: warn
           retention-days: 7
