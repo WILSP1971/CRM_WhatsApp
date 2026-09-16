@@ -1,0 +1,32 @@
+[
+  {
+    "id": "call-001",
+    "contactId": "contact-001",
+    "direction": "entrante",
+    "status": "finalizada",
+    "durationSeconds": 184,
+    "startedAt": "2026-09-15T10:02:00-05:00",
+    "detectedIntent": "seguimiento_pedido",
+    "recordingSimulated": true
+  },
+  {
+    "id": "call-002",
+    "contactId": "contact-003",
+    "direction": "saliente",
+    "status": "en_espera",
+    "durationSeconds": 0,
+    "startedAt": "2026-09-16T08:15:00-05:00",
+    "detectedIntent": "reclamo",
+    "recordingSimulated": false
+  },
+  {
+    "id": "call-003",
+    "contactId": "contact-002",
+    "direction": "entrante",
+    "status": "en_llamada",
+    "durationSeconds": 42,
+    "startedAt": "2026-09-16T08:20:00-05:00",
+    "detectedIntent": "cotizacion_servicios",
+    "recordingSimulated": true
+  }
+]

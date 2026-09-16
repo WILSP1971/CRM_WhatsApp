@@ -1,0 +1,26 @@
+[
+  {
+    "id": "notif-001",
+    "title": "Nuevo mensaje de Laura Gómez",
+    "description": "Confirmó el pedido #4821 vía WhatsApp.",
+    "createdAt": "2026-09-16T07:50:00-05:00",
+    "read": false,
+    "severity": "info"
+  },
+  {
+    "id": "notif-002",
+    "title": "Llamada escalada a soporte",
+    "description": "Marcela Torres reportó un pedido incompleto.",
+    "createdAt": "2026-09-16T07:20:00-05:00",
+    "read": false,
+    "severity": "warning"
+  },
+  {
+    "id": "notif-003",
+    "title": "Sync ERP completada",
+    "description": "Inventario de Manufacturas del Valle actualizado (simulado).",
+    "createdAt": "2026-09-16T06:05:00-05:00",
+    "read": true,
+    "severity": "success"
+  }
+]

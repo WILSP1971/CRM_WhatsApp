@@ -1,0 +1,266 @@
+[
+  {
+    "id": "conv-001",
+    "contactId": "contact-001",
+    "channel": "whatsapp",
+    "sentiment": "positivo",
+    "lastMessage": "¡Perfecto, muchas gracias! Confirmo el pedido para mañana.",
+    "lastMessageAt": "2026-09-15T14:32:00-05:00",
+    "unreadCount": 0,
+    "status": "abierta",
+    "messages": [
+      {
+        "id": "conv-001-msg-01",
+        "direction": "entrante",
+        "text": "Hola, quisiera saber si tienen disponibilidad de tornillería inoxidable M8.",
+        "sentAt": "2026-09-15T14:20:00-05:00",
+        "status": "leido"
+      },
+      {
+        "id": "conv-001-msg-02",
+        "direction": "saliente",
+        "text": "¡Hola Laura! Sí, tenemos stock. Te preparo una cotización con envío para mañana.",
+        "sentAt": "2026-09-15T14:24:00-05:00",
+        "status": "leido"
+      },
+      {
+        "id": "conv-001-msg-03",
+        "direction": "entrante",
+        "text": "¡Perfecto, muchas gracias! Confirmo el pedido para mañana.",
+        "sentAt": "2026-09-15T14:32:00-05:00",
+        "status": "leido"
+      }
+    ]
+  },
+  {
+    "id": "conv-002",
+    "contactId": "contact-002",
+    "channel": "instagram",
+    "sentiment": "neutral",
+    "lastMessage": "¿Podrían enviarme la propuesta de horas facturables actualizada?",
+    "lastMessageAt": "2026-09-14T09:10:00-05:00",
+    "unreadCount": 2,
+    "status": "pendiente",
+    "messages": [
+      {
+        "id": "conv-002-msg-01",
+        "direction": "entrante",
+        "text": "Buen día, seguimos interesados en el paquete de consultoría trimestral.",
+        "sentAt": "2026-09-14T09:02:00-05:00",
+        "status": "leido"
+      },
+      {
+        "id": "conv-002-msg-02",
+        "direction": "saliente",
+        "text": "Buen día Julián, con gusto. Estamos ajustando la propuesta con el nuevo alcance.",
+        "sentAt": "2026-09-14T09:06:00-05:00",
+        "status": "entregado"
+      },
+      {
+        "id": "conv-002-msg-03",
+        "direction": "entrante",
+        "text": "¿Podrían enviarme la propuesta de horas facturables actualizada?",
+        "sentAt": "2026-09-14T09:10:00-05:00",
+        "status": "leido"
+      }
+    ]
+  },
+  {
+    "id": "conv-003",
+    "contactId": "contact-003",
+    "channel": "messenger",
+    "sentiment": "negativo",
+    "lastMessage": "El pedido llegó incompleto, necesito una solución hoy mismo.",
+    "lastMessageAt": "2026-09-13T17:45:00-05:00",
+    "unreadCount": 5,
+    "status": "escalada",
+    "messages": [
+      {
+        "id": "conv-003-msg-01",
+        "direction": "entrante",
+        "text": "Recibimos el pedido #4821 pero faltan 3 piezas del lote acordado.",
+        "sentAt": "2026-09-13T17:30:00-05:00",
+        "status": "leido"
+      },
+      {
+        "id": "conv-003-msg-02",
+        "direction": "saliente",
+        "text": "Lamentamos el inconveniente, Marcela. Estamos verificando con logística.",
+        "sentAt": "2026-09-13T17:38:00-05:00",
+        "status": "entregado"
+      },
+      {
+        "id": "conv-003-msg-03",
+        "direction": "entrante",
+        "text": "El pedido llegó incompleto, necesito una solución hoy mismo.",
+        "sentAt": "2026-09-13T17:45:00-05:00",
+        "status": "leido"
+      }
+    ]
+  },
+  {
+    "id": "conv-004",
+    "contactId": "contact-004",
+    "channel": "webchat",
+    "sentiment": "positivo",
+    "lastMessage": "Genial, quiero ver más opciones en talla M.",
+    "lastMessageAt": "2026-09-12T11:05:00-05:00",
+    "unreadCount": 1,
+    "status": "abierta",
+    "messages": [
+      {
+        "id": "conv-004-msg-01",
+        "direction": "entrante",
+        "text": "Hola, ¿tienen la chaqueta denim en catálogo de invierno?",
+        "sentAt": "2026-09-12T10:55:00-05:00",
+        "status": "leido"
+      },
+      {
+        "id": "conv-004-msg-02",
+        "direction": "saliente",
+        "text": "¡Hola Andrés! Sí, está disponible en varias tallas y colores.",
+        "sentAt": "2026-09-12T10:59:00-05:00",
+        "status": "leido"
+      },
+      {
+        "id": "conv-004-msg-03",
+        "direction": "entrante",
+        "text": "Genial, quiero ver más opciones en talla M.",
+        "sentAt": "2026-09-12T11:05:00-05:00",
+        "status": "entregado"
+      }
+    ]
+  },
+  {
+    "id": "conv-005",
+    "contactId": "contact-005",
+    "channel": "whatsapp",
+    "sentiment": "neutral",
+    "lastMessage": "Entendido, quedo atenta a la respuesta del área técnica.",
+    "lastMessageAt": "2026-09-15T08:40:00-05:00",
+    "unreadCount": 0,
+    "status": "pendiente",
+    "messages": [
+      {
+        "id": "conv-005-msg-01",
+        "direction": "entrante",
+        "text": "Hola, necesito soporte con la integración del catálogo digital.",
+        "sentAt": "2026-09-15T08:30:00-05:00",
+        "status": "leido"
+      },
+      {
+        "id": "conv-005-msg-02",
+        "direction": "saliente",
+        "text": "Hola Camila, escalé tu caso al área técnica; te confirman en breve.",
+        "sentAt": "2026-09-15T08:36:00-05:00",
+        "status": "entregado"
+      },
+      {
+        "id": "conv-005-msg-03",
+        "direction": "entrante",
+        "text": "Entendido, quedo atenta a la respuesta del área técnica.",
+        "sentAt": "2026-09-15T08:40:00-05:00",
+        "status": "entregado"
+      }
+    ]
+  },
+  {
+    "id": "conv-006",
+    "contactId": "contact-006",
+    "channel": "instagram",
+    "sentiment": "positivo",
+    "lastMessage": "Me encantó la muestra, avancemos con la producción del lote 2.",
+    "lastMessageAt": "2026-09-11T16:18:00-05:00",
+    "unreadCount": 0,
+    "status": "cerrada",
+    "messages": [
+      {
+        "id": "conv-006-msg-01",
+        "direction": "entrante",
+        "text": "Ya llegó la muestra de empaques, se ve muy bien terminada.",
+        "sentAt": "2026-09-11T16:05:00-05:00",
+        "status": "leido"
+      },
+      {
+        "id": "conv-006-msg-02",
+        "direction": "saliente",
+        "text": "¡Qué bueno saberlo! ¿Confirmamos producción del lote 2 con ese diseño?",
+        "sentAt": "2026-09-11T16:12:00-05:00",
+        "status": "leido"
+      },
+      {
+        "id": "conv-006-msg-03",
+        "direction": "entrante",
+        "text": "Me encantó la muestra, avancemos con la producción del lote 2.",
+        "sentAt": "2026-09-11T16:18:00-05:00",
+        "status": "leido"
+      }
+    ]
+  },
+  {
+    "id": "conv-007",
+    "contactId": "contact-007",
+    "channel": "messenger",
+    "sentiment": "neutral",
+    "lastMessage": "¿Cuál es el tiempo estimado de respuesta para garantías?",
+    "lastMessageAt": "2026-09-10T13:22:00-05:00",
+    "unreadCount": 3,
+    "status": "pendiente",
+    "messages": [
+      {
+        "id": "conv-007-msg-01",
+        "direction": "entrante",
+        "text": "Buenas tardes, tengo una consulta sobre la garantía del equipo comprado.",
+        "sentAt": "2026-09-10T13:10:00-05:00",
+        "status": "leido"
+      },
+      {
+        "id": "conv-007-msg-02",
+        "direction": "saliente",
+        "text": "Buenas tardes Sergio, con gusto te ayudo. ¿Tienes el número de factura?",
+        "sentAt": "2026-09-10T13:15:00-05:00",
+        "status": "entregado"
+      },
+      {
+        "id": "conv-007-msg-03",
+        "direction": "entrante",
+        "text": "¿Cuál es el tiempo estimado de respuesta para garantías?",
+        "sentAt": "2026-09-10T13:22:00-05:00",
+        "status": "leido"
+      }
+    ]
+  },
+  {
+    "id": "conv-008",
+    "contactId": "contact-008",
+    "channel": "webchat",
+    "sentiment": "negativo",
+    "lastMessage": "Ya es la segunda vez que el envío se retrasa, estoy muy molesta.",
+    "lastMessageAt": "2026-09-09T19:05:00-05:00",
+    "unreadCount": 4,
+    "status": "escalada",
+    "messages": [
+      {
+        "id": "conv-008-msg-01",
+        "direction": "entrante",
+        "text": "Mi pedido debía llegar ayer y todavía no tengo noticias del transportista.",
+        "sentAt": "2026-09-09T18:50:00-05:00",
+        "status": "leido"
+      },
+      {
+        "id": "conv-008-msg-02",
+        "direction": "saliente",
+        "text": "Lamentamos la demora, Diana. Estamos escalando con la transportadora ahora mismo.",
+        "sentAt": "2026-09-09T18:58:00-05:00",
+        "status": "entregado"
+      },
+      {
+        "id": "conv-008-msg-03",
+        "direction": "entrante",
+        "text": "Ya es la segunda vez que el envío se retrasa, estoy muy molesta.",
+        "sentAt": "2026-09-09T19:05:00-05:00",
+        "status": "leido"
+      }
+    ]
+  }
+]

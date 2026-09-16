@@ -1,0 +1,96 @@
+{
+  "notaFicticia": "Datos 100% ficticios para representar el Centro de llamadas VoiceBot (SPEC-006). No hay VoIP, captura de audio ni STT real: la onda, la transcripción y la detección de intención son simuladas con fixtures locales.",
+  "activeCallId": "call-003",
+  "intents": [
+    {
+      "id": "intent-saldo",
+      "label": "Consulta de saldo",
+      "confidence": 0.92
+    },
+    {
+      "id": "intent-reclamo",
+      "label": "Reclamo",
+      "confidence": 0.78
+    },
+    {
+      "id": "intent-agendar",
+      "label": "Agendar cita",
+      "confidence": 0.85
+    },
+    {
+      "id": "intent-cotizacion",
+      "label": "Cotización de servicios",
+      "confidence": 0.88
+    },
+    {
+      "id": "intent-seguimiento",
+      "label": "Seguimiento de pedido",
+      "confidence": 0.81
+    }
+  ],
+  "transcripts": {
+    "call-001": [
+      {
+        "speaker": "voicebot",
+        "text": "Gracias por comunicarte con OmniCore, ¿en qué puedo ayudarte hoy?"
+      },
+      {
+        "speaker": "cliente",
+        "text": "Hola, quiero saber en qué va mi pedido número 4821."
+      },
+      {
+        "speaker": "voicebot",
+        "text": "Claro, permíteme verificar el estado de tu pedido ficticio."
+      },
+      {
+        "speaker": "agente",
+        "text": "Buenas, tomo la llamada. Veo que tu pedido está en tránsito, llega mañana."
+      },
+      { "speaker": "cliente", "text": "Perfecto, muchas gracias por la información." },
+      {
+        "speaker": "agente",
+        "text": "Con gusto. ¿Hay algo más en lo que te pueda ayudar?"
+      },
+      { "speaker": "cliente", "text": "No, eso era todo. Buen día." }
+    ],
+    "call-002": [
+      {
+        "speaker": "voicebot",
+        "text": "Bienvenido, estamos marcando el número de contacto ficticio."
+      },
+      {
+        "speaker": "agente",
+        "text": "Buenas tardes, le llamamos por el reclamo registrado ayer."
+      },
+      { "speaker": "cliente", "text": "Sí, aún espero la respuesta sobre el reembolso." }
+    ],
+    "call-003": [
+      {
+        "speaker": "voicebot",
+        "text": "Hola, soy el asistente virtual de OmniCore. ¿Cómo te puedo ayudar?"
+      },
+      {
+        "speaker": "cliente",
+        "text": "Buenas, quisiera una cotización para el servicio de mantenimiento anual."
+      },
+      {
+        "speaker": "voicebot",
+        "text": "Con gusto, te transfiero con un agente especializado en cotizaciones."
+      },
+      {
+        "speaker": "agente",
+        "text": "Hola, buenas, con gusto te ayudo con la cotización del servicio."
+      },
+      { "speaker": "cliente", "text": "Genial, necesito el plan para dos sedes." },
+      {
+        "speaker": "agente",
+        "text": "Perfecto, dame un momento para preparar la propuesta ficticia."
+      }
+    ]
+  },
+  "callIntentMap": {
+    "call-001": "intent-seguimiento",
+    "call-002": "intent-reclamo",
+    "call-003": "intent-cotizacion"
+  }
+}

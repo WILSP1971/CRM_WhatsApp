@@ -1,0 +1,253 @@
+{
+  "notaFicticia": "Todos los clientes, montos y pedidos son ficticios (maqueta OmniCore AI); no representan datos reales.",
+  "etapas": [
+    { "id": "prospecto", "label": "Prospecto", "color": "muted" },
+    { "id": "calificado", "label": "Calificado", "color": "cyan" },
+    { "id": "propuesta", "label": "Propuesta", "color": "warning" },
+    { "id": "negociacion", "label": "Negociación", "color": "indigo" },
+    { "id": "ganado", "label": "Ganado", "color": "success" },
+    { "id": "perdido", "label": "Perdido", "color": "danger" }
+  ],
+  "oportunidades": [
+    {
+      "id": "op-001",
+      "cliente": "Distribuidora Andina S.A.S.",
+      "monto": 18500000,
+      "probabilidad": 20,
+      "etapaId": "prospecto",
+      "canal": "whatsapp",
+      "responsable": "M. Ortega",
+      "actualizadoAt": "2026-09-14T09:30:00-05:00"
+    },
+    {
+      "id": "op-002",
+      "cliente": "Café Sierra Nevada Ltda.",
+      "monto": 9800000,
+      "probabilidad": 35,
+      "etapaId": "prospecto",
+      "canal": "instagram",
+      "responsable": "J. Restrepo",
+      "actualizadoAt": "2026-09-13T14:05:00-05:00"
+    },
+    {
+      "id": "op-003",
+      "cliente": "Textiles del Valle",
+      "monto": 27600000,
+      "probabilidad": 45,
+      "etapaId": "calificado",
+      "canal": "webchat",
+      "responsable": "M. Ortega",
+      "actualizadoAt": "2026-09-12T11:20:00-05:00"
+    },
+    {
+      "id": "op-004",
+      "cliente": "Ferretería Central",
+      "monto": 6400000,
+      "probabilidad": 50,
+      "etapaId": "calificado",
+      "canal": "whatsapp",
+      "responsable": "L. Vargas",
+      "actualizadoAt": "2026-09-15T08:40:00-05:00"
+    },
+    {
+      "id": "op-005",
+      "cliente": "Panadería El Trigal",
+      "monto": 4200000,
+      "probabilidad": 60,
+      "etapaId": "propuesta",
+      "canal": "messenger",
+      "responsable": "J. Restrepo",
+      "actualizadoAt": "2026-09-11T16:10:00-05:00"
+    },
+    {
+      "id": "op-006",
+      "cliente": "AutoRepuestos del Norte",
+      "monto": 15300000,
+      "probabilidad": 55,
+      "etapaId": "propuesta",
+      "canal": "whatsapp",
+      "responsable": "L. Vargas",
+      "actualizadoAt": "2026-09-10T10:00:00-05:00"
+    },
+    {
+      "id": "op-007",
+      "cliente": "Constructora Los Álamos",
+      "monto": 52000000,
+      "probabilidad": 70,
+      "etapaId": "negociacion",
+      "canal": "webchat",
+      "responsable": "M. Ortega",
+      "actualizadoAt": "2026-09-15T13:15:00-05:00"
+    },
+    {
+      "id": "op-008",
+      "cliente": "Tienda Modacolor",
+      "monto": 7900000,
+      "probabilidad": 65,
+      "etapaId": "negociacion",
+      "canal": "instagram",
+      "responsable": "J. Restrepo",
+      "actualizadoAt": "2026-09-09T09:50:00-05:00"
+    },
+    {
+      "id": "op-009",
+      "cliente": "Supermercado La Cosecha",
+      "monto": 11200000,
+      "probabilidad": 100,
+      "etapaId": "ganado",
+      "canal": "whatsapp",
+      "responsable": "L. Vargas",
+      "actualizadoAt": "2026-09-08T12:00:00-05:00"
+    },
+    {
+      "id": "op-010",
+      "cliente": "Hotel Mirador del Río",
+      "monto": 21500000,
+      "probabilidad": 100,
+      "etapaId": "ganado",
+      "canal": "webchat",
+      "responsable": "M. Ortega",
+      "actualizadoAt": "2026-09-07T15:30:00-05:00"
+    },
+    {
+      "id": "op-011",
+      "cliente": "Insumos Médicos SAS",
+      "monto": 9300000,
+      "probabilidad": 0,
+      "etapaId": "perdido",
+      "canal": "messenger",
+      "responsable": "J. Restrepo",
+      "actualizadoAt": "2026-09-06T17:45:00-05:00"
+    }
+  ],
+  "pedidos": [
+    {
+      "id": "ped-2031",
+      "cliente": "Supermercado La Cosecha",
+      "importe": 11200000,
+      "fecha": "2026-09-08T12:30:00-05:00",
+      "canal": "whatsapp",
+      "estado": "entregado"
+    },
+    {
+      "id": "ped-2032",
+      "cliente": "Hotel Mirador del Río",
+      "importe": 21500000,
+      "fecha": "2026-09-07T16:00:00-05:00",
+      "canal": "webchat",
+      "estado": "en_transito"
+    },
+    {
+      "id": "ped-2033",
+      "cliente": "Café Sierra Nevada Ltda.",
+      "importe": 3200000,
+      "fecha": "2026-09-14T10:15:00-05:00",
+      "canal": "instagram",
+      "estado": "procesando"
+    },
+    {
+      "id": "ped-2034",
+      "cliente": "Panadería El Trigal",
+      "importe": 1800000,
+      "fecha": "2026-09-13T09:00:00-05:00",
+      "canal": "messenger",
+      "estado": "confirmado"
+    },
+    {
+      "id": "ped-2035",
+      "cliente": "Ferretería Central",
+      "importe": 6400000,
+      "fecha": "2026-09-15T11:45:00-05:00",
+      "canal": "whatsapp",
+      "estado": "pendiente_pago"
+    },
+    {
+      "id": "ped-2036",
+      "cliente": "AutoRepuestos del Norte",
+      "importe": 4750000,
+      "fecha": "2026-09-05T14:20:00-05:00",
+      "canal": "webchat",
+      "estado": "cancelado"
+    },
+    {
+      "id": "ped-2037",
+      "cliente": "Distribuidora Andina S.A.S.",
+      "importe": 8600000,
+      "fecha": "2026-09-12T08:10:00-05:00",
+      "canal": "whatsapp",
+      "estado": "entregado"
+    }
+  ],
+  "ventaCruzada": [
+    {
+      "id": "vc-001",
+      "cliente": "Supermercado La Cosecha",
+      "sugerencia": "Plan de reposición automática mensual",
+      "motivo": "Compra recurrente de abarrotes en los últimos 3 meses",
+      "impactoEstimado": 2400000
+    },
+    {
+      "id": "vc-002",
+      "cliente": "Hotel Mirador del Río",
+      "sugerencia": "Paquete de amenities premium",
+      "motivo": "Incremento de reservas para temporada alta",
+      "impactoEstimado": 5100000
+    },
+    {
+      "id": "vc-003",
+      "cliente": "Ferretería Central",
+      "sugerencia": "Kit de herramientas eléctricas",
+      "motivo": "Búsquedas frecuentes en catálogo relacionado",
+      "impactoEstimado": 1350000
+    },
+    {
+      "id": "vc-004",
+      "cliente": "Constructora Los Álamos",
+      "sugerencia": "Extensión de garantía de materiales",
+      "motivo": "Negociación en curso de proyecto de gran volumen",
+      "impactoEstimado": 3800000
+    }
+  ],
+  "kpis": [
+    {
+      "id": "kpi-pipeline-total",
+      "label": "Pipeline total",
+      "value": 173800000,
+      "delta": 6.4,
+      "trend": "up",
+      "format": "currency"
+    },
+    {
+      "id": "kpi-tasa-cierre",
+      "label": "Tasa de cierre (%)",
+      "value": 32.5,
+      "delta": 2.1,
+      "trend": "up",
+      "format": "percent"
+    },
+    {
+      "id": "kpi-ticket-promedio",
+      "label": "Ticket promedio",
+      "value": 15800000,
+      "delta": -1.8,
+      "trend": "down",
+      "format": "currency"
+    },
+    {
+      "id": "kpi-oportunidades-abiertas",
+      "label": "Oportunidades abiertas",
+      "value": 8,
+      "delta": 3.0,
+      "trend": "up",
+      "format": "number"
+    }
+  ],
+  "ventasPorMes": [
+    { "mes": "Abr", "ventas": 38500000, "meta": 40000000 },
+    { "mes": "May", "ventas": 41200000, "meta": 40000000 },
+    { "mes": "Jun", "ventas": 39800000, "meta": 42000000 },
+    { "mes": "Jul", "ventas": 45300000, "meta": 42000000 },
+    { "mes": "Ago", "ventas": 48200000, "meta": 45000000 },
+    { "mes": "Sep", "ventas": 33900000, "meta": 46000000 }
+  ]
+}

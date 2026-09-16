@@ -1,0 +1,87 @@
+@import "./tokens.css";
+@import "./fonts.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-border-default;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  html[data-theme="light"] {
+    color-scheme: light;
+  }
+
+  body {
+    @apply bg-bg-canvas text-text-primary antialiased;
+    font-family: var(--font-family-sans);
+    font-size: var(--font-size-base);
+    line-height: var(--line-height-normal);
+    min-height: 100vh;
+  }
+
+  /* Foco visible consistente en toda la app (WCAG 2.2 AAA — navegación por teclado). */
+  :focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  ::selection {
+    background-color: var(--color-accent-indigo);
+    color: var(--color-text-inverse);
+  }
+}
+
+@layer components {
+  /*
+   * Superficie de glassmorphism con capa sólida mínima (R-02): el blur se
+   * aplica SOBRE un fondo casi opaco (--surface-glass-solid), nunca sobre un
+   * fondo totalmente transparente, para garantizar que el contraste de texto
+   * encima siga cumpliendo AAA (>= 7:1) sin importar qué haya detrás.
+   */
+  .glass-surface {
+    background-color: var(--surface-glass-solid);
+    background-image: linear-gradient(135deg, var(--surface-glass-tint), transparent 60%);
+    border: 1px solid var(--surface-glass-border);
+    backdrop-filter: blur(var(--blur-glass));
+    -webkit-backdrop-filter: blur(var(--blur-glass));
+  }
+
+  .skip-link {
+    @apply sr-only focus:not-sr-only;
+    position: fixed;
+    top: var(--space-2);
+    left: var(--space-2);
+    z-index: var(--z-overlay);
+    background-color: var(--color-bg-surface-raised);
+    color: var(--color-text-primary);
+    padding: var(--space-2) var(--space-4);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+  }
+}
+
+/*
+ * Red de seguridad global para prefers-reduced-motion (BLOQUEANTE 3,
+ * revisión de accesibilidad): además de los modificadores puntuales
+ * `motion-reduce:animate-none` en los componentes con animate-ping/
+ * animate-pulse, se neutraliza cualquier animación/transición residual
+ * para usuarios que solicitan menos movimiento a nivel de sistema.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

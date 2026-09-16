@@ -1,0 +1,129 @@
+{
+  "notaFicticia": "Órdenes de trabajo, inventario y sincronización ERP son ficticios (maqueta OmniCore AI); no representan datos reales.",
+  "ordenesTrabajo": [
+    {
+      "id": "ot-4501",
+      "producto": "Perfil de aluminio 6m",
+      "cantidad": 1200,
+      "estado": "en_produccion",
+      "avance": 65,
+      "fechaEntrega": "2026-09-20"
+    },
+    {
+      "id": "ot-4502",
+      "producto": "Empaque flexible laminado",
+      "cantidad": 8000,
+      "estado": "planificada",
+      "avance": 0,
+      "fechaEntrega": "2026-09-28"
+    },
+    {
+      "id": "ot-4503",
+      "producto": "Componente inyectado ABS",
+      "cantidad": 5000,
+      "estado": "en_produccion",
+      "avance": 30,
+      "fechaEntrega": "2026-09-24"
+    },
+    {
+      "id": "ot-4504",
+      "producto": "Estructura metálica soldada",
+      "cantidad": 40,
+      "estado": "control_calidad",
+      "avance": 90,
+      "fechaEntrega": "2026-09-17"
+    },
+    {
+      "id": "ot-4505",
+      "producto": "Panel eléctrico ensamblado",
+      "cantidad": 150,
+      "estado": "completada",
+      "avance": 100,
+      "fechaEntrega": "2026-09-12"
+    },
+    {
+      "id": "ot-4506",
+      "producto": "Rodamiento industrial 6205",
+      "cantidad": 3000,
+      "estado": "detenida",
+      "avance": 15,
+      "fechaEntrega": "2026-09-22"
+    }
+  ],
+  "alertasInventario": [
+    {
+      "id": "inv-001",
+      "insumo": "Resina ABS grado industrial",
+      "nivel": "critico",
+      "stockActual": 120,
+      "stockMinimo": 500,
+      "unidad": "kg"
+    },
+    {
+      "id": "inv-002",
+      "insumo": "Lámina de aluminio 3mm",
+      "nivel": "bajo",
+      "stockActual": 800,
+      "stockMinimo": 1000,
+      "unidad": "kg"
+    },
+    {
+      "id": "inv-003",
+      "insumo": "Rodamientos 6205",
+      "nivel": "critico",
+      "stockActual": 200,
+      "stockMinimo": 1500,
+      "unidad": "unidades"
+    },
+    {
+      "id": "inv-004",
+      "insumo": "Film laminado flexible",
+      "nivel": "normal",
+      "stockActual": 4200,
+      "stockMinimo": 2000,
+      "unidad": "m2"
+    },
+    {
+      "id": "inv-005",
+      "insumo": "Componentes eléctricos varios",
+      "nivel": "bajo",
+      "stockActual": 340,
+      "stockMinimo": 400,
+      "unidad": "kits"
+    }
+  ],
+  "syncErp": {
+    "ultimaSincronizacion": "2026-09-16T05:45:00-05:00",
+    "estadoGeneral": "sincronizado",
+    "modulos": [
+      {
+        "id": "mod-inventario",
+        "nombre": "Inventario",
+        "estado": "sincronizado",
+        "registros": 1842,
+        "ultimaActualizacion": "2026-09-16T05:45:00-05:00"
+      },
+      {
+        "id": "mod-ordenes",
+        "nombre": "Órdenes de trabajo",
+        "estado": "sincronizado",
+        "registros": 96,
+        "ultimaActualizacion": "2026-09-16T05:44:30-05:00"
+      },
+      {
+        "id": "mod-proveedores",
+        "nombre": "Proveedores",
+        "estado": "con_advertencias",
+        "registros": 58,
+        "ultimaActualizacion": "2026-09-16T05:30:10-05:00"
+      },
+      {
+        "id": "mod-facturacion",
+        "nombre": "Facturación",
+        "estado": "pendiente",
+        "registros": 0,
+        "ultimaActualizacion": "2026-09-15T22:10:00-05:00"
+      }
+    ]
+  }
+}

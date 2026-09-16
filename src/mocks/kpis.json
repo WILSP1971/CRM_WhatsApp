@@ -1,0 +1,33 @@
+{
+  "generatedAt": "2026-09-16T06:00:00-05:00",
+  "resumen": [
+    {
+      "id": "kpi-conversaciones-abiertas",
+      "label": "Conversaciones abiertas",
+      "value": 128,
+      "delta": 4.2,
+      "trend": "up"
+    },
+    {
+      "id": "kpi-tiempo-primera-respuesta",
+      "label": "Tiempo 1ª respuesta (min)",
+      "value": 3.4,
+      "delta": -12.5,
+      "trend": "down"
+    },
+    { "id": "kpi-csat", "label": "CSAT (%)", "value": 92.1, "delta": 1.8, "trend": "up" },
+    {
+      "id": "kpi-llamadas-voicebot",
+      "label": "Llamadas atendidas por VoiceBot",
+      "value": 356,
+      "delta": 9.6,
+      "trend": "up"
+    }
+  ],
+  "porSector": [
+    { "sector": "comercial", "ingresosEstimados": 48200000, "ticketsAbiertos": 21 },
+    { "sector": "servicios", "ingresosEstimados": 19750000, "ticketsAbiertos": 9 },
+    { "sector": "manufactura", "ingresosEstimados": 63100000, "ticketsAbiertos": 14 }
+  ],
+  "notaFicticia": "Todos los valores son simulados con fines de maqueta (OmniCore AI); no representan datos reales."
+}

@@ -1,0 +1,32 @@
+{
+  "_comment": "SPEC-009 (HAWKEYE) — Config de Lighthouse CI lista para ejecutarse en un entorno con Chromium/Puppeteer disponible (p. ej. pipeline de QUICKSILVER en SPEC-010). NO se ejecutó en este entorno de verificación por no contar con navegador headless instalado y para evitar una descarga de binario (~200MB) no autorizada por el Lead en un proyecto SENSIBLE. Procedimiento: `npm run build && npm run preview -- --port 4173` y luego `npx lhci autorun` (requiere `npm i -D @lhci/cli` y Chromium disponible).",
+  "ci": {
+    "collect": {
+      "staticDistDir": "./dist",
+      "numberOfRuns": 3,
+      "settings": {
+        "screenEmulation": {
+          "mobile": false,
+          "width": 1920,
+          "height": 1080,
+          "deviceScaleFactor": 1,
+          "disabled": false
+        },
+        "formFactor": "desktop",
+        "throttlingMethod": "simulate"
+      }
+    },
+    "assert": {
+      "assertions": {
+        "categories:accessibility": ["error", { "minScore": 0.9 }],
+        "categories:performance": ["error", { "minScore": 0.9 }],
+        "first-contentful-paint": ["warn", { "maxNumericValue": 2500 }],
+        "interactive": ["error", { "maxNumericValue": 2500 }]
+      }
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": "./.lighthouseci"
+    }
+  }
+}

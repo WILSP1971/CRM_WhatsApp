@@ -1,0 +1,166 @@
+{
+  "citations": [
+    {
+      "id": "rag-cite-001",
+      "conversationId": "conv-001",
+      "source": "Catálogo_Ferretería_2026.pdf · pág. 12",
+      "excerpt": "Tornillería inoxidable M8 disponible en presentaciones de 50 y 100 unidades, entrega en 24h dentro del área metropolitana.",
+      "similarityScore": 0.93
+    },
+    {
+      "id": "rag-cite-002",
+      "conversationId": "conv-001",
+      "source": "Política_Envíos.md",
+      "excerpt": "Los pedidos confirmados antes de las 3:00 p.m. se despachan el mismo día hábil.",
+      "similarityScore": 0.87
+    },
+    {
+      "id": "rag-cite-003",
+      "conversationId": "conv-001",
+      "source": "FAQ_Clientes_VIP.pdf",
+      "excerpt": "Clientes con etiqueta VIP acceden a prioridad de despacho sin costo adicional.",
+      "similarityScore": 0.81
+    },
+    {
+      "id": "rag-cite-004",
+      "conversationId": "conv-002",
+      "source": "Propuesta_Consultoría_Plantilla.docx",
+      "excerpt": "El paquete trimestral de consultoría incluye 40 horas facturables mensuales con reporte de avance quincenal.",
+      "similarityScore": 0.9
+    },
+    {
+      "id": "rag-cite-005",
+      "conversationId": "conv-002",
+      "source": "Tarifario_Servicios_2026.pdf · pág. 4",
+      "excerpt": "Hora facturable estándar: $180.000 COP; tarifa preferencial para clientes recurrentes: $155.000 COP.",
+      "similarityScore": 0.84
+    },
+    {
+      "id": "rag-cite-006",
+      "conversationId": "conv-002",
+      "source": "Historial_Cuenta_Julián_Restrepo.md",
+      "excerpt": "Cliente activo desde marzo 2026, sin incidencias de facturación registradas.",
+      "similarityScore": 0.76
+    },
+    {
+      "id": "rag-cite-007",
+      "conversationId": "conv-003",
+      "source": "Procedimiento_Reclamos_Logística.pdf · pág. 3",
+      "excerpt": "Ante faltantes de lote, se debe generar nota crédito o reposición en un plazo máximo de 24h.",
+      "similarityScore": 0.95
+    },
+    {
+      "id": "rag-cite-008",
+      "conversationId": "conv-003",
+      "source": "Orden_Despacho_4821.json",
+      "excerpt": "Orden #4821: 12 unidades despachadas de 15 solicitadas; 3 unidades pendientes en bodega central.",
+      "similarityScore": 0.9
+    },
+    {
+      "id": "rag-cite-009",
+      "conversationId": "conv-003",
+      "source": "Guía_Atención_Casos_Escalados.md",
+      "excerpt": "Casos escalados por incumplimiento de pedido deben recibir respuesta y plan de acción en menos de 2 horas.",
+      "similarityScore": 0.85
+    },
+    {
+      "id": "rag-cite-010",
+      "conversationId": "default",
+      "source": "Manual_Atención_Omnicanal.pdf · pág. 1",
+      "excerpt": "Todo contacto debe recibir una respuesta inicial en menos de 5 minutos durante horario de atención.",
+      "similarityScore": 0.78
+    },
+    {
+      "id": "rag-cite-011",
+      "conversationId": "default",
+      "source": "Base_Conocimiento_Productos.md",
+      "excerpt": "El catálogo completo de productos y servicios se actualiza semanalmente con disponibilidad y precios vigentes.",
+      "similarityScore": 0.72
+    },
+    {
+      "id": "rag-cite-012",
+      "conversationId": "default",
+      "source": "Política_Privacidad_Datos.pdf",
+      "excerpt": "Los datos de contacto se usan exclusivamente para la gestión comercial autorizada por el cliente.",
+      "similarityScore": 0.68
+    }
+  ],
+  "drafts": [
+    {
+      "id": "rag-draft-001",
+      "conversationId": "conv-001",
+      "text": "¡Hola Laura! Confirmo tu pedido de tornillería inoxidable M8 (100 unidades) con despacho prioritario para mañana antes del mediodía. Te llegará el número de guía por este mismo canal.",
+      "generatedAt": "2026-09-15T14:33:00-05:00"
+    },
+    {
+      "id": "rag-draft-002",
+      "conversationId": "conv-002",
+      "text": "Hola Julián, adjunto la propuesta actualizada: paquete trimestral de 40 horas facturables mensuales a tarifa preferencial de $155.000 COP/hora, con reporte de avance quincenal.",
+      "generatedAt": "2026-09-14T09:11:00-05:00"
+    },
+    {
+      "id": "rag-draft-003",
+      "conversationId": "conv-003",
+      "text": "Marcela, lamentamos el faltante en la orden #4821. Ya generamos la reposición de las 3 unidades pendientes con envío urgente, sin costo adicional, y aplicamos una nota crédito por la demora.",
+      "generatedAt": "2026-09-13T17:46:00-05:00"
+    },
+    {
+      "id": "rag-draft-004",
+      "conversationId": "default",
+      "text": "Gracias por tu mensaje. Estamos revisando tu solicitud y te daremos una respuesta detallada en los próximos minutos.",
+      "generatedAt": "2026-09-16T08:00:00-05:00"
+    }
+  ],
+  "suggestions": [
+    {
+      "id": "rag-sugg-001",
+      "conversationId": "conv-001",
+      "name": "Kit tornillería inoxidable premium (200 u.)",
+      "description": "Presentación ampliada con estuche organizador, mismo lote de calidad M8.",
+      "price": 189000
+    },
+    {
+      "id": "rag-sugg-002",
+      "conversationId": "conv-001",
+      "name": "Plan de reposición automática mensual",
+      "description": "Envío recurrente programado para clientes con consumo frecuente de insumos.",
+      "price": 45000
+    },
+    {
+      "id": "rag-sugg-003",
+      "conversationId": "conv-002",
+      "name": "Módulo adicional de auditoría de procesos",
+      "description": "Complemento al paquete trimestral con revisión de cumplimiento normativo.",
+      "price": 620000
+    },
+    {
+      "id": "rag-sugg-004",
+      "conversationId": "conv-002",
+      "name": "Sesión ejecutiva de seguimiento (2h)",
+      "description": "Espacio mensual adicional con socio consultor senior.",
+      "price": 310000
+    },
+    {
+      "id": "rag-sugg-005",
+      "conversationId": "conv-003",
+      "name": "Extensión de garantía por incidencia",
+      "description": "Cobertura adicional de 6 meses como compensación por el inconveniente logístico.",
+      "price": 0
+    },
+    {
+      "id": "rag-sugg-006",
+      "conversationId": "default",
+      "name": "Paquete de bienvenida OmniCore",
+      "description": "Beneficios introductorios para nuevos contactos multicanal.",
+      "price": 99000
+    },
+    {
+      "id": "rag-sugg-007",
+      "conversationId": "default",
+      "name": "Asesoría personalizada 1:1",
+      "description": "Sesión de acompañamiento con un especialista de cuenta.",
+      "price": 150000
+    }
+  ],
+  "notaFicticia": "Todas las citas, borradores y sugerencias son datos pre-grabados y ficticios para la maqueta OmniCore AI. No se realiza ninguna consulta a modelos, embeddings ni bases vectoriales reales."
+}

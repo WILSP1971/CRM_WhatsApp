@@ -1,0 +1,23 @@
+[
+  {
+    "id": "tenant-comercial",
+    "name": "Moda Urbana Bogotá",
+    "sector": "comercial",
+    "initials": "MU",
+    "planLabel": "Plan Comercial Pro"
+  },
+  {
+    "id": "tenant-servicios",
+    "name": "Consultoría Norte S.A.S.",
+    "sector": "servicios",
+    "initials": "CN",
+    "planLabel": "Plan Servicios"
+  },
+  {
+    "id": "tenant-manufactura",
+    "name": "Manufacturas del Valle Ltda.",
+    "sector": "manufactura",
+    "initials": "MV",
+    "planLabel": "Plan Manufactura"
+  }
+]

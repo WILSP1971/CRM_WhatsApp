@@ -1,0 +1,11 @@
+{
+  "notaFicticia": "Serie histórica simulada para la analítica multisectorial (maqueta OmniCore AI); no representa datos reales.",
+  "csatMensual": [
+    { "mes": "Abr", "comercial": 90.2, "servicios": 88.5, "manufactura": 85.1 },
+    { "mes": "May", "comercial": 91.0, "servicios": 89.0, "manufactura": 86.4 },
+    { "mes": "Jun", "comercial": 89.6, "servicios": 90.1, "manufactura": 87.0 },
+    { "mes": "Jul", "comercial": 92.4, "servicios": 90.8, "manufactura": 88.2 },
+    { "mes": "Ago", "comercial": 93.1, "servicios": 91.5, "manufactura": 89.0 },
+    { "mes": "Sep", "comercial": 92.1, "servicios": 92.0, "manufactura": 90.3 }
+  ]
+}

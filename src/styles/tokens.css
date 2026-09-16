@@ -1,0 +1,200 @@
+/**
+ * OmniCore AI — Design Tokens
+ * ---------------------------------------------------------------------------
+ * Fuente única de verdad para color, tipografía, spacing, radios, sombras y
+ * blur (glassmorphism). Tailwind (tailwind.config.ts) referencia estas
+ * variables — NUNCA se deben hardcodear colores/spacing/radios en componentes
+ * (RNF-04, checkpoint C4 de SPEC-002).
+ *
+ * Tema por defecto: OSCURO. El tema CLARO sobreescribe el mismo set de
+ * variables bajo `:root[data-theme="light"]`. Todas las combinaciones texto/
+ * fondo documentadas aquí fueron elegidas para cumplir WCAG AAA (>= 7:1 en
+ * texto normal, >= 4.5:1 en texto grande), incluidas las superficies de
+ * glassmorphism (ver --surface-glass-solid, capa sólida mínima R-02).
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ---------- Paleta base (oscuro, por defecto) ---------- */
+  --color-bg-canvas: #0b1220; /* azul marino/pizarra profundo */
+  --color-bg-surface: #101a2c;
+  --color-bg-surface-raised: #16233a;
+  --color-bg-card: #1b2942; /* "tarjetas gris claro neutro" adaptado a modo oscuro */
+
+  --color-border-subtle: #26364f;
+  --color-border-default: #33475f;
+
+  --color-text-primary: #f3f6fb; /* contraste AAA sobre canvas/surface/card */
+  --color-text-secondary: #c3cee0;
+  --color-text-muted: #a8b8d1; /* AAA >= 7:1 sobre canvas (9.31) y sobre card (7.24) */
+  --color-text-inverse: #0b1220;
+
+  --color-accent-indigo: #6366f1; /* índigo eléctrico */
+  --color-accent-indigo-strong: #a5b4fc; /* AAA >= 7:1 como texto sobre canvas (9.39) y card (7.30) */
+  --color-accent-cyan: #22d3ee; /* cian para estados activos de IA */
+  --color-accent-cyan-strong: #67e8f9;
+
+  --color-state-success: #34d399; /* esmeralda */
+  --color-state-success-strong: #6ee7b7;
+  --color-state-warning: #fbbf24; /* ámbar */
+  --color-state-warning-strong: #fcd34d;
+  --color-state-danger: #fb7185; /* coral */
+  --color-state-danger-strong: #fda4af;
+
+  /* Texto de badges (Badge.tsx, IntentBadge.tsx, badges de sentimiento en
+     Inbox): tokens dedicados para garantizar AAA (>= 7:1) sobre el fondo
+     COMPUESTO (fondo con 15% de opacidad sobre --color-bg-card), no sobre
+     la tarjeta sólida.
+     No reutilizar los *-strong genéricos: se usan también como color de
+     ícono/texto sobre fondos sólidos y sus ratios ahí son distintos
+     (BLOQUEANTE 2, revisión de accesibilidad). */
+  --color-badge-success-text: #6ee7b7; /* ~7.1:1 sobre bg success/15 en card oscura */
+  --color-badge-warning-text: #fcd34d; /* ~7.3:1 sobre bg warning/15 en card oscura */
+  --color-badge-danger-text: #fecdd3; /* ~8.3:1 sobre bg danger/15 en card oscura */
+  --color-badge-ai-text: #67e8f9; /* ~7.3:1 sobre bg cyan/15 en card oscura */
+
+  --color-focus-ring: #67e8f9;
+
+  /* Series de gráficos (Recharts): tonos dedicados para garantizar AAA
+     (>= 7:1) sobre --color-bg-card en AMBOS temas (BLOQUEANTE 1,
+     revisión de accesibilidad). No reutilizar --color-accent-indigo
+     directamente en líneas/barras de chart en tema oscuro: su ratio
+     sobre la tarjeta oscura es insuficiente (3.26:1). */
+  --color-chart-indigo: #a5b4fc; /* ~7.3:1 sobre #1b2942 */
+  --color-chart-cyan: #22d3ee; /* ~8.1:1 sobre #1b2942 */
+  --color-chart-warning: #fbbf24; /* ~8.7:1 sobre #1b2942 */
+  --color-chart-success: #34d399; /* ~7.6:1 sobre #1b2942 */
+  --color-chart-danger: #fca5a5; /* ~7.7:1 sobre #1b2942 */
+  --color-chart-muted: var(--color-text-secondary); /* ~9.2:1 sobre #1b2942 */
+
+  /* Superficie de vidrio: SIEMPRE compuesta con una capa sólida mínima
+     (--surface-glass-solid) detrás del blur, para no romper AAA (R-02). */
+  --surface-glass-solid: rgba(16, 26, 44, 0.92);
+  --surface-glass-tint: rgba(99, 102, 241, 0.08);
+  --surface-glass-border: rgba(255, 255, 255, 0.08);
+  --blur-glass: 16px;
+
+  /* ---------- Tipografía ---------- */
+  --font-family-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+
+  --font-size-xs: 0.75rem; /* 12px */
+  --font-size-sm: 0.875rem; /* 14px */
+  --font-size-base: 1rem; /* 16px */
+  --font-size-md: 1.125rem; /* 18px */
+  --font-size-lg: 1.25rem; /* 20px */
+  --font-size-xl: 1.5rem; /* 24px */
+  --font-size-2xl: 1.875rem; /* 30px */
+  --font-size-3xl: 2.25rem; /* 36px */
+
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.65;
+
+  /* ---------- Spacing (escala 4px) ---------- */
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* ---------- Radios (12–16px según SPEC-002) ---------- */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  /* ---------- Sombras suaves ---------- */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.32), 0 2px 4px -2px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 12px 32px -8px rgba(0, 0, 0, 0.4), 0 4px 8px -4px rgba(0, 0, 0, 0.28);
+  --shadow-focus: 0 0 0 3px rgba(103, 232, 249, 0.55);
+
+  /* ---------- Motion ---------- */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+
+  /* ---------- Z-index ---------- */
+  --z-header: 40;
+  --z-sidebar: 30;
+  --z-overlay: 50;
+  --z-tooltip: 60;
+}
+
+/* ---------- Tema claro ---------- */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --color-bg-canvas: #eef1f7;
+  --color-bg-surface: #f7f9fc;
+  --color-bg-surface-raised: #ffffff;
+  --color-bg-card: #ffffff; /* tarjetas gris claro neutro */
+
+  --color-border-subtle: #d8deea;
+  --color-border-default: #c1cadc;
+
+  --color-text-primary: #0e1726; /* AAA sobre canvas/surface/card claros */
+  --color-text-secondary: #33415a;
+  --color-text-muted: #44506a; /* AAA >= 7:1 sobre canvas (7.13) y sobre card (8.07) */
+  --color-text-inverse: #f7f9fc;
+
+  --color-accent-indigo: #4338ca;
+  --color-accent-indigo-strong: #3730a3;
+  --color-accent-cyan: #0e7490;
+  --color-accent-cyan-strong: #0e4a5c; /* AAA >= 7:1 como texto sobre canvas (8.62) y card (9.76) */
+
+  --color-state-success: #047857;
+  --color-state-success-strong: #065f46;
+  --color-state-warning: #b45309;
+  --color-state-warning-strong: #92400e;
+  --color-state-danger: #be123c;
+  --color-state-danger-strong: #9f1239;
+
+  /* Texto de badges en tema claro: oscurecidos respecto a los *-strong
+     genéricos para alcanzar AAA (>= 7:1) sobre el fondo compuesto real
+     (fondo con 15% de opacidad sobre bg-card blanco). Ver nota
+     equivalente en el bloque :root (oscuro). */
+  --color-badge-success-text: #064e3b; /* ~7.9:1 sobre bg success/15 en card clara */
+  --color-badge-warning-text: #7c2d12; /* ~7.6:1 sobre bg warning/15 en card clara */
+  --color-badge-danger-text: #881337; /* ~7.3:1 sobre bg danger/15 en card clara */
+  --color-badge-ai-text: #0e4a5c; /* ~7.9:1 sobre bg cyan/15 en card clara */
+
+  --color-focus-ring: #155e75;
+
+  /* Series de gráficos (Recharts) en tema claro: mismo criterio AAA
+     (>= 7:1) sobre --color-bg-card (#ffffff). Cyan y warning "strong" no
+     alcanzan 7:1 en claro, por eso se oscurecen específicamente aquí. */
+  --color-chart-indigo: #4338ca; /* ~7.9:1 sobre #ffffff */
+  --color-chart-cyan: #0c4a6e; /* ~9.5:1 sobre #ffffff */
+  --color-chart-warning: #78350f; /* ~9.1:1 sobre #ffffff */
+  --color-chart-success: #065f46; /* ~7.7:1 sobre #ffffff */
+  --color-chart-danger: #9f1239; /* ~8.0:1 sobre #ffffff */
+  --color-chart-muted: var(--color-text-secondary); /* ~10.3:1 sobre #ffffff */
+
+  --surface-glass-solid: rgba(255, 255, 255, 0.92);
+  --surface-glass-tint: rgba(67, 56, 202, 0.06);
+  --surface-glass-border: rgba(14, 23, 38, 0.08);
+
+  --shadow-sm: 0 1px 2px 0 rgba(15, 23, 42, 0.06);
+  --shadow-md:
+    0 4px 12px -2px rgba(15, 23, 42, 0.1), 0 2px 4px -2px rgba(15, 23, 42, 0.06);
+  --shadow-lg:
+    0 12px 32px -8px rgba(15, 23, 42, 0.16), 0 4px 8px -4px rgba(15, 23, 42, 0.08);
+  --shadow-focus: 0 0 0 3px rgba(21, 94, 117, 0.45);
+}

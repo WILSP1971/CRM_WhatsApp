@@ -1,0 +1,178 @@
+{
+  "proyecto": "CRM_WhatsApp — OmniCore AI",
+  "clasificacion": "SENSIBLE",
+  "actualizado": "2026-09-16T09:30:00-05:00",
+  "contadores": {
+    "next_plan": 2,
+    "next_spec": 11,
+    "next_adr": 3,
+    "total_specs": 10,
+    "por_estado": {
+      "PROPUESTA": 0,
+      "APROBADA": 0,
+      "EN_PROGRESO": 0,
+      "EN_VERIFICACION": 0,
+      "CERRADA": 10
+    }
+  },
+  "planes": [
+    {
+      "id": "PLAN-001",
+      "titulo": "Maqueta de alta fidelidad OmniCore AI (Entregable #1)",
+      "archivo": ".swarm/PLAN-001.md",
+      "estado": "APROBADA",
+      "origen": "prompt-lab/PROMPT-OPTIMIZADO.md",
+      "specs_propuestas": [
+        "SPEC-001",
+        "SPEC-002",
+        "SPEC-003",
+        "SPEC-004",
+        "SPEC-005",
+        "SPEC-006",
+        "SPEC-007",
+        "SPEC-008",
+        "SPEC-009",
+        "SPEC-010"
+      ]
+    }
+  ],
+  "specs": [
+    {
+      "id": "SPEC-001",
+      "titulo": "Scaffolding, tooling y estructura del proyecto",
+      "archivo": ".swarm/specs/SPEC-001.md",
+      "estado": "CERRADA",
+      "fase": "F0",
+      "plan": "PLAN-001",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": ["WOLVERINE", "BLACK WIDOW", "HAWKEYE"],
+      "depende_de": []
+    },
+    {
+      "id": "SPEC-002",
+      "titulo": "Design system: tokens, temas y primitivas UI",
+      "archivo": ".swarm/specs/SPEC-002.md",
+      "estado": "CERRADA",
+      "fase": "F1",
+      "plan": "PLAN-001",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": ["DAREDEVIL", "WOLVERINE", "HAWKEYE"],
+      "depende_de": ["SPEC-001"]
+    },
+    {
+      "id": "SPEC-003",
+      "titulo": "Layout global y navegación SPA",
+      "archivo": ".swarm/specs/SPEC-003.md",
+      "estado": "CERRADA",
+      "fase": "F2",
+      "plan": "PLAN-001",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": ["DAREDEVIL", "WOLVERINE", "HAWKEYE"],
+      "depende_de": ["SPEC-001", "SPEC-002"]
+    },
+    {
+      "id": "SPEC-004",
+      "titulo": "Bandeja omnicanal unificada",
+      "archivo": ".swarm/specs/SPEC-004.md",
+      "estado": "CERRADA",
+      "fase": "F3",
+      "plan": "PLAN-001",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": ["DAREDEVIL", "WOLVERINE", "HAWKEYE"],
+      "depende_de": ["SPEC-002", "SPEC-003"]
+    },
+    {
+      "id": "SPEC-005",
+      "titulo": "Panel lateral RAG en vivo (representación)",
+      "archivo": ".swarm/specs/SPEC-005.md",
+      "estado": "CERRADA",
+      "fase": "F4",
+      "plan": "PLAN-001",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": ["DAREDEVIL", "WOLVERINE", "HAWKEYE", "BLACK WIDOW"],
+      "depende_de": ["SPEC-002", "SPEC-003", "SPEC-004"]
+    },
+    {
+      "id": "SPEC-006",
+      "titulo": "VoiceBot + telefonía VoIP (representación)",
+      "archivo": ".swarm/specs/SPEC-006.md",
+      "estado": "CERRADA",
+      "fase": "F5",
+      "plan": "PLAN-001",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": ["DAREDEVIL", "WOLVERINE", "HAWKEYE", "BLACK WIDOW"],
+      "depende_de": ["SPEC-002", "SPEC-003"]
+    },
+    {
+      "id": "SPEC-007",
+      "titulo": "Sector Comercial / E-Commerce (prioritario)",
+      "archivo": ".swarm/specs/SPEC-007.md",
+      "estado": "CERRADA",
+      "fase": "F6",
+      "plan": "PLAN-001",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": ["DAREDEVIL", "WOLVERINE", "HAWKEYE"],
+      "depende_de": ["SPEC-002", "SPEC-003"]
+    },
+    {
+      "id": "SPEC-008",
+      "titulo": "Sectores de referencia + analítica multisectorial",
+      "archivo": ".swarm/specs/SPEC-008.md",
+      "estado": "CERRADA",
+      "fase": "F6",
+      "plan": "PLAN-001",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": ["DAREDEVIL", "WOLVERINE", "HAWKEYE"],
+      "depende_de": ["SPEC-002", "SPEC-003"]
+    },
+    {
+      "id": "SPEC-009",
+      "titulo": "Accesibilidad, performance y QA",
+      "archivo": ".swarm/specs/SPEC-009.md",
+      "estado": "CERRADA",
+      "fase": "F7",
+      "plan": "PLAN-001",
+      "responsable": "HAWKEYE",
+      "revisan": ["WOLVERINE", "BLACK WIDOW", "THOR", "DAREDEVIL"],
+      "depende_de": [
+        "SPEC-001",
+        "SPEC-002",
+        "SPEC-003",
+        "SPEC-004",
+        "SPEC-005",
+        "SPEC-006",
+        "SPEC-007",
+        "SPEC-008"
+      ]
+    },
+    {
+      "id": "SPEC-010",
+      "titulo": "Repo, CI y documentación",
+      "archivo": ".swarm/specs/SPEC-010.md",
+      "estado": "CERRADA",
+      "fase": "F8",
+      "plan": "PLAN-001",
+      "responsable": "QUICKSILVER",
+      "revisan": ["BLACK WIDOW", "WOLVERINE", "HAWKEYE"],
+      "depende_de": ["SPEC-001", "SPEC-009"]
+    }
+  ],
+  "adrs": [
+    {
+      "id": "ADR-001",
+      "titulo": "Elección del stack tecnológico de la maqueta",
+      "archivo": ".swarm/adrs/ADR-001-stack-maqueta.md",
+      "estado": "Aceptada",
+      "fecha": "2026-09-16",
+      "plan": "PLAN-001"
+    },
+    {
+      "id": "ADR-002",
+      "titulo": "Glassmorphism compatible con WCAG AAA (contraste >= 7:1)",
+      "archivo": ".swarm/adrs/ADR-002-glassmorphism-vs-wcag-aaa.md",
+      "estado": "Aceptada",
+      "fecha": "2026-09-16",
+      "plan": "PLAN-001"
+    }
+  ]
+}

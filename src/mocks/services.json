@@ -1,0 +1,139 @@
+{
+  "notaFicticia": "Proyectos, horas y reservas son ficticios (maqueta OmniCore AI); no representan datos reales.",
+  "hitos": [
+    {
+      "id": "hito-001",
+      "proyecto": "Implementación ERP — Grupo Ánfora",
+      "nombre": "Levantamiento de requisitos",
+      "avance": 100,
+      "estado": "completado",
+      "fechaLimite": "2026-08-20"
+    },
+    {
+      "id": "hito-002",
+      "proyecto": "Implementación ERP — Grupo Ánfora",
+      "nombre": "Diseño de arquitectura",
+      "avance": 80,
+      "estado": "en_curso",
+      "fechaLimite": "2026-09-25"
+    },
+    {
+      "id": "hito-003",
+      "proyecto": "Consultoría de procesos — Lácteos del Campo",
+      "nombre": "Diagnóstico operativo",
+      "avance": 100,
+      "estado": "completado",
+      "fechaLimite": "2026-08-30"
+    },
+    {
+      "id": "hito-004",
+      "proyecto": "Consultoría de procesos — Lácteos del Campo",
+      "nombre": "Plan de mejora continua",
+      "avance": 45,
+      "estado": "en_curso",
+      "fechaLimite": "2026-10-05"
+    },
+    {
+      "id": "hito-005",
+      "proyecto": "Migración cloud — Aseguradora Puente",
+      "nombre": "Pruebas de aceptación",
+      "avance": 10,
+      "estado": "en_riesgo",
+      "fechaLimite": "2026-09-18"
+    }
+  ],
+  "horasFacturables": [
+    {
+      "id": "hf-001",
+      "consultor": "A. Bermúdez",
+      "proyecto": "Grupo Ánfora",
+      "horas": 32,
+      "tarifaHora": 180000,
+      "semana": "2026-W37"
+    },
+    {
+      "id": "hf-002",
+      "consultor": "C. Peña",
+      "proyecto": "Lácteos del Campo",
+      "horas": 24,
+      "tarifaHora": 160000,
+      "semana": "2026-W37"
+    },
+    {
+      "id": "hf-003",
+      "consultor": "D. Salcedo",
+      "proyecto": "Aseguradora Puente",
+      "horas": 40,
+      "tarifaHora": 200000,
+      "semana": "2026-W37"
+    },
+    {
+      "id": "hf-004",
+      "consultor": "A. Bermúdez",
+      "proyecto": "Aseguradora Puente",
+      "horas": 12,
+      "tarifaHora": 180000,
+      "semana": "2026-W37"
+    }
+  ],
+  "sla": [
+    {
+      "id": "sla-001",
+      "cliente": "Grupo Ánfora",
+      "indicador": "Tiempo de respuesta",
+      "estado": "cumplido",
+      "objetivo": "< 4 h",
+      "actual": "2.1 h"
+    },
+    {
+      "id": "sla-002",
+      "cliente": "Lácteos del Campo",
+      "indicador": "Resolución de incidentes",
+      "estado": "en_riesgo",
+      "objetivo": "< 24 h",
+      "actual": "21.5 h"
+    },
+    {
+      "id": "sla-003",
+      "cliente": "Aseguradora Puente",
+      "indicador": "Disponibilidad del entregable",
+      "estado": "incumplido",
+      "objetivo": "99.5%",
+      "actual": "97.8%"
+    },
+    {
+      "id": "sla-004",
+      "cliente": "Grupo Ánfora",
+      "indicador": "Satisfacción del cliente",
+      "estado": "cumplido",
+      "objetivo": "> 90%",
+      "actual": "94%"
+    }
+  ],
+  "reservas": [
+    {
+      "id": "res-001",
+      "cliente": "Grupo Ánfora",
+      "servicio": "Sesión de arquitectura",
+      "fecha": "2026-09-18T09:00:00-05:00",
+      "consultor": "A. Bermúdez",
+      "estado": "confirmada"
+    },
+    {
+      "id": "res-002",
+      "cliente": "Lácteos del Campo",
+      "servicio": "Taller de procesos",
+      "fecha": "2026-09-19T14:00:00-05:00",
+      "consultor": "C. Peña",
+      "estado": "pendiente"
+    },
+    {
+      "id": "res-003",
+      "cliente": "Aseguradora Puente",
+      "servicio": "Revisión de pruebas UAT",
+      "fecha": "2026-09-17T11:00:00-05:00",
+      "consultor": "D. Salcedo",
+      "estado": "confirmada"
+    }
+  ]
+}
