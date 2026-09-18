@@ -92,3 +92,46 @@ Métricas: FCP 0.5s · LCP 0.5s · TTI 0.5s · **TBT 0 ms** · **CLS 0** · Spee
 1. ✅ CI en GitHub Actions verde (build + lint + test + check:externos + Lighthouse).
 2. ✅ Lighthouse ejecutado (Performance 100, A11y 98, BP 92, SEO 100). Pendiente opcional: axe real por navegador.
 3. (Opcional) Fase funcional futura: backend/integraciones/IA con modelos locales/self-hosted (respetando `.no-externo`).
+
+## Deuda técnica registrada (revisión BLACK PANTHER)
+
+- **SPEC-015 (WebChat) — robustez WS** (MAYOR, no bloqueante, para hardening/SPEC-022):
+  1. `app/api/ws_chat.py` `_forward_redis_to_socket`: envolver `pubsub.listen()` en try/except con log y cierre/reintento (evitar conexión zombie si Redis cae).
+  2. Backpressure/timeout en `websocket.send_text` (desconectar cliente lento).
+  3. Reconciliación si falla el 2º write de `estado_entrega` (mensaje queda "enviado").
+- **SPEC-015/022 — verificación dura**: HAWKEYE debe ejecutar `tests/test_ws_chat_integration.py` (y los skipped de 012/013/014) contra Postgres+Redis reales (docker-compose) antes del cierre definitivo (criterio R-23 aislamiento cross-tenant end-to-end).
+- **MENOR transversal**: `app/main.py` `/healthz` usa `os.popen("date -Iseconds")` → cambiar a `datetime.now(timezone.utc).isoformat()`.
+- **SPEC-018 (sentimiento)** (MAYOR, no bloqueante): (1) docstring de migración `b478b79c2111` dice `server_default="0"` pero el código usa `nullable=True` sin default → corregir comentario; (2) añadir `CheckConstraint` en `Message.sentimiento` (defensa en profundidad, hoy depende de single-writer).
+- **SPEC-020 (integración SPA)** (MENOR, flag ON): `sendOutgoingMessage` (useConversationsData) usa fallback REST con `void sendMessage(...)` sin capturar el error → envío perdido en silencio si falla; propagar al `error` del hook.
+- **MENOR recurrente** `app/main.py` `/healthz` usa `os.popen("date -Iseconds")` (flagged por PANTHER 014/015 y WIDOW 021) → cambiar a `datetime.now(timezone.utc).isoformat()`. Trivial, pendiente pasada de limpieza.
+- **SPEC-021 (BAJO)**: export/erase autorizan a cualquier agente autenticado del tenant (no exigen rol admin); endurecer a rol admin en fase futura (aislamiento por tenant sí garantizado por RLS).
+
+## Entregable #2 — Fase Funcional (PLAN-002) — IMPLEMENTADO (EN_VERIFICACION)
+
+Fecha: 2026-09-18. Las 13 SPECs (SPEC-011..023) implementadas, revisadas y en EN_VERIFICACION.
+Backend FastAPI + PostgreSQL16/pgvector + Redis + Ollama (IA 100% local), workers rag/sentiment/retention.
+
+| SPEC | Título | Revisión |
+| ---- | ------ | -------- |
+| 011 | Infra + Docker Compose + CI | IRON MAN (egress `internal:true` verificado; corrigió masquerade) |
+| 012 | Datos + RLS FORCE | IRON MAN (21 sentencias RLS, test aislamiento CI) |
+| 013 | Auth multi-tenant 🔴 | BLACK WIDOW (fix ALTO: fail-fast de secretos) |
+| 014 | API core + OpenAPI | BLACK PANTHER (apta) |
+| 015 | WebChat WebSocket | BLACK PANTHER (apta; 3 MAYOR robustez → deuda) |
+| 016 | IA local + egress 🔴 | BLACK WIDOW (guard host interno no evadible; IRON MAN quitó leak) |
+| 017 | RAG local (≥3 citas) | BLACK PANTHER (fix BLOQUEANTE: cola Redis+worker) |
+| 018 | Sentimiento LLM local | BLACK PANTHER (apta) |
+| 019 | Human-in-the-loop | BLACK PANTHER (fix BLOQUEANTE: carrera doble envío → transición atómica) |
+| 020 | Integración SPA feature-flag | DAREDEVIL (apta; flag OFF = maqueta intacta 59/59) |
+| 021 | Seguridad + datos personales 🔴 | BLACK WIDOW (HABEAS DATA OK; fix bug auditoría) |
+| 022 | Pruebas + carga + observabilidad | HAWKEYE (200 passed; /metrics; Locust; CI con Postgres/Redis) |
+| 023 | Docs + runbook + deploy 🔴 | BLACK WIDOW (fix CRÍTICO: secretos concretos en docs → placeholders) |
+
+ADRs: ADR-003 (LLM/embeddings locales), ADR-004 (RLS pool-model), ADR-005 (egress bloqueado).
+Estado backend (sandbox, sin daemon Postgres/Redis/Ollama): pytest 200 passed / 71 skipped / 0 failed,
+coverage 69% (gate ≥80% en CI con los skipped corriendo), black/flake8 limpios, check-externos-backend APROBADO,
+docker compose config VÁLIDO, `ia_internal internal:true`.
+
+Cierre a CERRADA pendiente de: correr el pipeline CI contra Postgres/Redis/Ollama reales (los 71 tests skipped,
+coverage ≥80%, cross-tenant RLS end-to-end, egress real, p95 RAG con Locust). Deploy real a prod requiere OK del Lead.
+Deuda técnica registrada arriba (robustez WS 015, os.popen /healthz, CheckConstraint sentimiento, etc.).

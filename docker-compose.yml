@@ -1,0 +1,266 @@
+version: '3.9'
+
+services:
+  # PostgreSQL 16 con extensión pgvector para embeddings
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: crm_db
+    environment:
+      POSTGRES_DB: ${DB_NAME:-omnicore_ai}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD requerido}
+      POSTGRES_INITDB_ARGS: "-c shared_preload_libraries=vector"
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-omnicore_ai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app
+    restart: unless-stopped
+
+  # Redis para colas de indexado/ingesta y pub/sub WebChat
+  redis:
+    image: redis:7-alpine
+    container_name: crm_redis
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app
+    restart: unless-stopped
+
+  # Contenedor de IA (Ollama) en RED INTERNA SIN EGRESS
+  ia:
+    image: ollama/ollama:latest
+    container_name: crm_ia
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_MODELS: /root/.ollama/models
+      OLLAMA_NUM_THREAD: ${OLLAMA_NUM_THREAD:-4}
+    ports:
+      # Puerto expuesto solo dentro de la red interna; NO accesible desde fuera
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama/models
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - ia_internal
+    restart: unless-stopped
+    # Nota: sin ports expuesto globalmente, solo en red ia_internal
+
+  # API FastAPI (stateless)
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crm_api
+    environment:
+      # Base de datos
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?DB_PASSWORD requerido}@db:5432/${DB_NAME:-omnicore_ai}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-omnicore_ai}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD requerido}
+
+      # Redis
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      # IA (Ollama) en red interna — SPEC-016 (SENSIBLE, .no-externo)
+      OLLAMA_BASE_URL: http://ia:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b-instruct}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      AI_CONNECT_TIMEOUT_SECONDS: ${AI_CONNECT_TIMEOUT_SECONDS:-5}
+      AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-30}
+
+      # API
+      API_HOST: ${API_HOST:-0.0.0.0}
+      API_PORT: ${API_PORT:-8000}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+
+      # Secretos (NUNCA hardcoded; desde variables de entorno; sin default débil)
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY requerido}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+
+      # Rate-limit de login (SPEC-013)
+      LOGIN_RATE_LIMIT_MAX_ATTEMPTS: ${LOGIN_RATE_LIMIT_MAX_ATTEMPTS:-5}
+      LOGIN_RATE_LIMIT_WINDOW_SECONDS: ${LOGIN_RATE_LIMIT_WINDOW_SECONDS:-300}
+      LOGIN_RATE_LIMIT_STRICT_REDIS: ${LOGIN_RATE_LIMIT_STRICT_REDIS:-true}
+
+      # CORS: allowlist explícita (nunca "*" con credenciales, ver app/main.py)
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+
+      # Datos personales: minimización y retención (SPEC-021, HABEAS DATA/GDPR)
+      DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS:-90}
+      ENABLE_DATA_ANONYMIZATION: ${ENABLE_DATA_ANONYMIZATION:-false}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ia:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app
+      - ia_internal
+    restart: unless-stopped
+
+  # Worker de ingesta RAG (SPEC-017 RNF-06/R-28): consume la cola Redis
+  # persistente (`rag:ingest:*`, `app.core.rag_queue`) fuera del proceso de
+  # la API, para que un reinicio de `api` NUNCA pierda un job de ingesta en
+  # curso (el job ya quedó persistido en Redis `appendonly yes` antes de que
+  # `api` respondiera 202). Necesita hablar con `ia` (Ollama) para generar
+  # embeddings -> misma red `ia_internal` que `api`, SIN egress (idéntica
+  # postura de seguridad: `internal: true` en la red, nunca acceso a
+  # internet). Mismos secretos `${VAR:?}` fail-fast que `api`.
+  rag_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crm_rag_worker
+    command: ["python", "-m", "app.workers.rag_ingest_worker"]
+    environment:
+      # Base de datos
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?DB_PASSWORD requerido}@db:5432/${DB_NAME:-omnicore_ai}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-omnicore_ai}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD requerido}
+
+      # Redis (misma cola que la API usa para encolar)
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      # IA (Ollama) en red interna — SPEC-016 (SENSIBLE, .no-externo). El
+      # worker necesita embeddings para procesar la ingesta; habla con `ia`
+      # por la MISMA red `ia_internal` sin egress que usa `api`, nunca se le
+      # da salida a internet.
+      OLLAMA_BASE_URL: http://ia:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b-instruct}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      AI_CONNECT_TIMEOUT_SECONDS: ${AI_CONNECT_TIMEOUT_SECONDS:-5}
+      AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-30}
+
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+
+      # Secretos (NUNCA hardcoded; desde variables de entorno; sin default débil)
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY requerido}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ia:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    networks:
+      - app
+      - ia_internal
+    restart: unless-stopped
+
+  # Worker de análisis de sentimiento (SPEC-018 RF: "no bloquea la recepción
+  # del mensaje"): consume la cola Redis `sentiment:analyze:*`
+  # (`app.core.sentiment_queue`) fuera del proceso de la API, mismo patrón
+  # que `rag_worker` (SPEC-017). Necesita hablar con `ia` (Ollama, LLM local)
+  # para clasificar el sentimiento -> misma red `ia_internal` sin egress.
+  sentiment_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crm_sentiment_worker
+    command: ["python", "-m", "app.workers.sentiment_worker"]
+    environment:
+      # Base de datos
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?DB_PASSWORD requerido}@db:5432/${DB_NAME:-omnicore_ai}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-omnicore_ai}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD requerido}
+
+      # Redis (misma cola que la API usa para encolar)
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      # IA (Ollama) en red interna — SPEC-016 (SENSIBLE, .no-externo). El
+      # worker necesita el LLM local para clasificar sentimiento; habla con
+      # `ia` por la MISMA red `ia_internal` sin egress que usa `api`.
+      OLLAMA_BASE_URL: http://ia:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b-instruct}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      AI_CONNECT_TIMEOUT_SECONDS: ${AI_CONNECT_TIMEOUT_SECONDS:-5}
+      AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-30}
+
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+
+      # Secretos (NUNCA hardcoded; desde variables de entorno; sin default débil)
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY requerido}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ia:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    networks:
+      - app
+      - ia_internal
+    restart: unless-stopped
+
+networks:
+  # Red de aplicación: API ↔ PostgreSQL ↔ Redis (con egress a internet)
+  app:
+    driver: bridge
+
+  # Red INTERNA SIN egress para el contenedor IA (CHECKPOINT .no-externo)
+  # internal: true — mecanismo oficial Docker que bloquea egress a internet
+  # IA (Ollama) SOLO en esta red; API conecta a ambas para bridgear localmente
+  ia_internal:
+    driver: bridge
+    internal: true
+
+volumes:
+  db_data:
+    driver: local
+  redis_data:
+    driver: local
+  ollama_models:
+    driver: local

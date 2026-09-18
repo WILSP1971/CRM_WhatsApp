@@ -1,0 +1,7 @@
+# Dependencias SOLO para la prueba de carga/latencia (SPEC-022, THOR).
+# NUNCA se instalan en la imagen de runtime del backend (Dockerfile no las
+# referencia); son herramientas de test/CI locales. Locust habla HTTP con el
+# backend bajo prueba (host interno, ver `loadtest/locustfile.py`) y no
+# realiza ninguna llamada a servicios externos por sí mismo.
+
+locust==2.24.1

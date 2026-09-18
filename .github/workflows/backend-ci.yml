@@ -1,0 +1,299 @@
+name: Backend CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'backend/**'
+
+env:
+  # Entorno SENSIBLE (.no-externo): ningún secreto real en CI, solo valores
+  # de prueba con la longitud mínima exigida por `Settings` (C3). NUNCA
+  # apuntan a un host de IA externo (SPEC-016 aborta el arranque si no).
+  ENVIRONMENT: test
+  DATABASE_URL: postgresql+psycopg://postgres:postgres_ci_password@localhost:5432/omnicore_ai_test
+  DB_PASSWORD: postgres_ci_password
+  REDIS_URL: redis://localhost:6379
+  JWT_SECRET_KEY: ci-only-jwt-secret-key-not-a-real-secret-32c
+  OLLAMA_BASE_URL: http://localhost:11434
+
+jobs:
+  lint-and-static-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r backend/requirements.txt
+
+      - name: Lint with black
+        run: |
+          black --check backend/app backend/tests
+          echo "✓ Black linting passed"
+
+      - name: Lint with flake8
+        run: |
+          flake8 backend/app --max-line-length=120 --ignore=E501,W503
+          flake8 backend/tests --max-line-length=120 --ignore=E501,W503
+          echo "✓ Flake8 linting passed"
+
+      - name: Type checking with mypy
+        run: |
+          mypy backend/app --ignore-missing-imports || true
+          echo "✓ Mypy type checking completed (no bloqueante)"
+
+      - name: Check external API references (check-externos-backend.sh)
+        run: |
+          chmod +x backend/check-externos-backend.sh
+          bash backend/check-externos-backend.sh backend/
+          echo "✓ External API check passed (CE-21, cero inferencia externa)"
+
+      - name: Validate docker-compose.yml syntax
+        run: |
+          docker compose -f docker-compose.yml config > /dev/null
+          echo "✓ docker-compose.yml syntax is valid"
+
+  test:
+    name: Tests (unit + integración + RLS cross-tenant, Postgres/Redis reales)
+    runs-on: ubuntu-latest
+    needs: lint-and-static-checks
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: omnicore_ai_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d omnicore_ai_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r backend/requirements.txt
+
+      - name: Wait for Postgres/Redis health
+        run: |
+          for i in $(seq 1 30); do
+            pg_isready -h localhost -p 5432 -U postgres && break
+            sleep 2
+          done
+          redis-cli -h localhost -p 6379 ping
+
+      - name: Apply Alembic migrations (head único, esquema RLS SPEC-012+)
+        working-directory: backend
+        run: |
+          alembic upgrade head
+          echo "✓ Migraciones aplicadas contra Postgres real del job"
+
+      - name: Run full test suite (incluye los ~71 tests que se SKIPEAN sin Postgres/Redis)
+        working-directory: backend
+        run: |
+          pytest -q --cov=app --cov-report=term-missing --cov-report=xml \
+            --junitxml=pytest-report.xml
+        env:
+          # DATABASE_URL/REDIS_URL ya están en env: de nivel workflow.
+          PYTHONDONTWRITEBYTECODE: '1'
+
+      - name: Verificar CERO tests SKIPEADOS (con Postgres/Redis reales, no debe quedar ninguno)
+        working-directory: backend
+        run: |
+          if grep -q ' 0 skipped' pytest-report.xml 2>/dev/null; then
+            echo "info: reporte junit no expone 'skipped' en texto plano, se valida por conteo abajo"
+          fi
+          SKIPPED=$(python -c "
+          import xml.etree.ElementTree as ET
+          root = ET.parse('pytest-report.xml').getroot()
+          suite = root.find('testsuite') if root.tag != 'testsuite' else root
+          print(suite.attrib.get('skipped', '0'))
+          ")
+          echo "Tests skipped con Postgres/Redis reales: $SKIPPED"
+          if [ "$SKIPPED" != "0" ]; then
+            echo "::error::Con Postgres/Redis reales disponibles, NINGÚN test debería" \
+                 "quedar SKIPEADO (los ~71 skips documentados son SOLO para sandboxes" \
+                 "sin Docker). Revisar DATABASE_URL/REDIS_URL o el fixture postgres_engine."
+            exit 1
+          fi
+
+      - name: Verificar test cross-tenant RLS (CE-22) ejecutado y en verde
+        working-directory: backend
+        run: |
+          pytest -q tests/test_rls_isolation.py tests/test_auth_cross_tenant_rls.py -v
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-${{ github.run_id }}
+          path: backend/coverage.xml
+          retention-days: 14
+
+      - name: Enforce coverage >= 80% (CE-27)
+        working-directory: backend
+        run: |
+          coverage report --fail-under=80
+
+  load-smoke:
+    name: Carga/latencia (THOR) — smoke no bloqueante sin GPU
+    runs-on: ubuntu-latest
+    needs: test
+    continue-on-error: true
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: omnicore_ai_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d omnicore_ai_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies (incluye locust, solo para este job)
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r backend/requirements.txt
+          pip install -r backend/requirements-loadtest.txt
+
+      - name: Apply Alembic migrations
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Seed usuario/tenant de carga
+        working-directory: backend
+        run: python -m loadtest.seed_loadtest_user
+
+      - name: "Levantar API en background (sin Ollama real - RAG en modo degradado 503 esperado)"
+        working-directory: backend
+        run: |
+          nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > api.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8000/healthz && break
+            sleep 1
+          done
+
+      - name: Locust — smoke de API no-IA (RNF-04 p95 <= 200ms)
+        working-directory: backend
+        run: |
+          locust -f loadtest/locustfile.py --host http://localhost:8000 \
+            --headless -u 10 -r 5 -t 30s --csv=loadtest_report \
+            --exit-code-on-error 0 || true
+
+      - name: Resumen de carga en el job summary
+        if: always()
+        working-directory: backend
+        run: |
+          echo "## Smoke de carga (THOR) — SPEC-022" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Sin Ollama/GPU en este runner: el escenario RAG queda en modo" \
+               "degradado (503) por diseño (R-21); el p95 RAG real (RNF-04, <=6s" \
+               "GPU) se mide en el entorno on-prem con GPU (checklist en" \
+               "backend/loadtest/README.md), no aquí." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f loadtest_report_stats.csv ]; then
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat loadtest_report_stats.csv >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "(sin loadtest_report_stats.csv — revisar log de Locust)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload load report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loadtest-report-${{ github.run_id }}
+          path: |
+            backend/loadtest_report_stats.csv
+            backend/loadtest_report_failures.csv
+            backend/api.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  summary:
+    name: Summary
+    runs-on: ubuntu-latest
+    needs: [lint-and-static-checks, test, load-smoke]
+    if: always()
+    steps:
+      - name: Summary
+        run: |
+          echo "================================"
+          echo "Backend CI Pipeline Summary"
+          echo "================================"
+          echo "✓ Lint (black + flake8) + mypy"
+          echo "✓ External API audit (check-externos-backend.sh, CE-21)"
+          echo "✓ Docker Compose validation"
+          echo "✓ Tests con Postgres/Redis reales (unit + integración + RLS cross-tenant CE-22)"
+          echo "✓ Cobertura >= 80% (CE-27)"
+          echo "○ Carga/latencia (THOR, RNF-04): smoke no-IA en CI; p95 RAG GPU en entorno real"
+          echo ""
+          echo "SPEC-022 Status: ver criterios de aceptación en .swarm/specs/SPEC-022.md"
+          echo "================================"

@@ -1,19 +1,20 @@
 {
   "proyecto": "CRM_WhatsApp — OmniCore AI",
   "clasificacion": "SENSIBLE",
-  "actualizado": "2026-09-16T09:30:00-05:00",
+  "actualizado": "2026-09-17T00:00:00-05:00",
   "contadores": {
-    "next_plan": 2,
-    "next_spec": 11,
-    "next_adr": 3,
-    "total_specs": 10,
+    "next_plan": 3,
+    "next_spec": 24,
+    "next_adr": 6,
+    "total_specs": 23,
     "por_estado": {
       "PROPUESTA": 0,
       "APROBADA": 0,
       "EN_PROGRESO": 0,
-      "EN_VERIFICACION": 0,
+      "EN_VERIFICACION": 13,
       "CERRADA": 10
-    }
+    },
+    "actualizado": null
   },
   "planes": [
     {
@@ -34,6 +35,28 @@
         "SPEC-009",
         "SPEC-010"
       ]
+    },
+    {
+      "id": "PLAN-002",
+      "titulo": "Fase funcional OmniCore AI: backend real + IA LOCAL self-hosted (Entregable #2)",
+      "archivo": ".swarm/PLAN-002.md",
+      "estado": "PROPUESTA",
+      "origen": "prompt-lab/PROMPT-OPTIMIZADO-FASE2.md",
+      "specs_propuestas": [
+        "SPEC-011",
+        "SPEC-012",
+        "SPEC-013",
+        "SPEC-014",
+        "SPEC-015",
+        "SPEC-016",
+        "SPEC-017",
+        "SPEC-018",
+        "SPEC-019",
+        "SPEC-020",
+        "SPEC-021",
+        "SPEC-022",
+        "SPEC-023"
+      ]
     }
   ],
   "specs": [
@@ -45,7 +68,11 @@
       "fase": "F0",
       "plan": "PLAN-001",
       "responsable": "CAPTAIN AMERICA",
-      "revisan": ["WOLVERINE", "BLACK WIDOW", "HAWKEYE"],
+      "revisan": [
+        "WOLVERINE",
+        "BLACK WIDOW",
+        "HAWKEYE"
+      ],
       "depende_de": []
     },
     {
@@ -56,8 +83,14 @@
       "fase": "F1",
       "plan": "PLAN-001",
       "responsable": "CAPTAIN AMERICA",
-      "revisan": ["DAREDEVIL", "WOLVERINE", "HAWKEYE"],
-      "depende_de": ["SPEC-001"]
+      "revisan": [
+        "DAREDEVIL",
+        "WOLVERINE",
+        "HAWKEYE"
+      ],
+      "depende_de": [
+        "SPEC-001"
+      ]
     },
     {
       "id": "SPEC-003",
@@ -67,8 +100,15 @@
       "fase": "F2",
       "plan": "PLAN-001",
       "responsable": "CAPTAIN AMERICA",
-      "revisan": ["DAREDEVIL", "WOLVERINE", "HAWKEYE"],
-      "depende_de": ["SPEC-001", "SPEC-002"]
+      "revisan": [
+        "DAREDEVIL",
+        "WOLVERINE",
+        "HAWKEYE"
+      ],
+      "depende_de": [
+        "SPEC-001",
+        "SPEC-002"
+      ]
     },
     {
       "id": "SPEC-004",
@@ -78,8 +118,15 @@
       "fase": "F3",
       "plan": "PLAN-001",
       "responsable": "CAPTAIN AMERICA",
-      "revisan": ["DAREDEVIL", "WOLVERINE", "HAWKEYE"],
-      "depende_de": ["SPEC-002", "SPEC-003"]
+      "revisan": [
+        "DAREDEVIL",
+        "WOLVERINE",
+        "HAWKEYE"
+      ],
+      "depende_de": [
+        "SPEC-002",
+        "SPEC-003"
+      ]
     },
     {
       "id": "SPEC-005",
@@ -89,8 +136,17 @@
       "fase": "F4",
       "plan": "PLAN-001",
       "responsable": "CAPTAIN AMERICA",
-      "revisan": ["DAREDEVIL", "WOLVERINE", "HAWKEYE", "BLACK WIDOW"],
-      "depende_de": ["SPEC-002", "SPEC-003", "SPEC-004"]
+      "revisan": [
+        "DAREDEVIL",
+        "WOLVERINE",
+        "HAWKEYE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-002",
+        "SPEC-003",
+        "SPEC-004"
+      ]
     },
     {
       "id": "SPEC-006",
@@ -100,8 +156,16 @@
       "fase": "F5",
       "plan": "PLAN-001",
       "responsable": "CAPTAIN AMERICA",
-      "revisan": ["DAREDEVIL", "WOLVERINE", "HAWKEYE", "BLACK WIDOW"],
-      "depende_de": ["SPEC-002", "SPEC-003"]
+      "revisan": [
+        "DAREDEVIL",
+        "WOLVERINE",
+        "HAWKEYE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-002",
+        "SPEC-003"
+      ]
     },
     {
       "id": "SPEC-007",
@@ -111,8 +175,15 @@
       "fase": "F6",
       "plan": "PLAN-001",
       "responsable": "CAPTAIN AMERICA",
-      "revisan": ["DAREDEVIL", "WOLVERINE", "HAWKEYE"],
-      "depende_de": ["SPEC-002", "SPEC-003"]
+      "revisan": [
+        "DAREDEVIL",
+        "WOLVERINE",
+        "HAWKEYE"
+      ],
+      "depende_de": [
+        "SPEC-002",
+        "SPEC-003"
+      ]
     },
     {
       "id": "SPEC-008",
@@ -122,8 +193,15 @@
       "fase": "F6",
       "plan": "PLAN-001",
       "responsable": "CAPTAIN AMERICA",
-      "revisan": ["DAREDEVIL", "WOLVERINE", "HAWKEYE"],
-      "depende_de": ["SPEC-002", "SPEC-003"]
+      "revisan": [
+        "DAREDEVIL",
+        "WOLVERINE",
+        "HAWKEYE"
+      ],
+      "depende_de": [
+        "SPEC-002",
+        "SPEC-003"
+      ]
     },
     {
       "id": "SPEC-009",
@@ -133,7 +211,12 @@
       "fase": "F7",
       "plan": "PLAN-001",
       "responsable": "HAWKEYE",
-      "revisan": ["WOLVERINE", "BLACK WIDOW", "THOR", "DAREDEVIL"],
+      "revisan": [
+        "WOLVERINE",
+        "BLACK WIDOW",
+        "THOR",
+        "DAREDEVIL"
+      ],
       "depende_de": [
         "SPEC-001",
         "SPEC-002",
@@ -153,8 +236,270 @@
       "fase": "F8",
       "plan": "PLAN-001",
       "responsable": "QUICKSILVER",
-      "revisan": ["BLACK WIDOW", "WOLVERINE", "HAWKEYE"],
-      "depende_de": ["SPEC-001", "SPEC-009"]
+      "revisan": [
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "HAWKEYE"
+      ],
+      "depende_de": [
+        "SPEC-001",
+        "SPEC-009"
+      ]
+    },
+    {
+      "id": "SPEC-011",
+      "titulo": "Infraestructura base y Docker Compose on-prem + CI backend",
+      "archivo": ".swarm/specs/SPEC-011.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F0",
+      "plan": "PLAN-002",
+      "responsable": "QUICKSILVER",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "HAWKEYE"
+      ],
+      "depende_de": []
+    },
+    {
+      "id": "SPEC-012",
+      "titulo": "Modelo de datos multi-tenant: esquema, migraciones, RLS y pgvector",
+      "archivo": ".swarm/specs/SPEC-012.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F1",
+      "plan": "PLAN-002",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-011"
+      ]
+    },
+    {
+      "id": "SPEC-013",
+      "titulo": "Autenticación, gestión de sesión y multi-tenant",
+      "archivo": ".swarm/specs/SPEC-013.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F2",
+      "plan": "PLAN-002",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK WIDOW",
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-011",
+        "SPEC-012"
+      ]
+    },
+    {
+      "id": "SPEC-014",
+      "titulo": "API core REST + contrato OpenAPI",
+      "archivo": ".swarm/specs/SPEC-014.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F3",
+      "plan": "PLAN-002",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-012",
+        "SPEC-013"
+      ]
+    },
+    {
+      "id": "SPEC-015",
+      "titulo": "Canal WebChat propio: WebSocket bidireccional + Redis pub/sub",
+      "archivo": ".swarm/specs/SPEC-015.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F3",
+      "plan": "PLAN-002",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "THOR",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-013",
+        "SPEC-014"
+      ]
+    },
+    {
+      "id": "SPEC-016",
+      "titulo": "IA local self-hosted: Ollama/vLLM + modelo abierto + embeddings + egress auditable",
+      "archivo": ".swarm/specs/SPEC-016.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F4",
+      "plan": "PLAN-002",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "THOR",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-011",
+        "SPEC-012"
+      ]
+    },
+    {
+      "id": "SPEC-017",
+      "titulo": "Pipeline RAG local: ingesta, chunking, embeddings, pgvector y borrador citado",
+      "archivo": ".swarm/specs/SPEC-017.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F4",
+      "plan": "PLAN-002",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "THOR",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-016",
+        "SPEC-012"
+      ]
+    },
+    {
+      "id": "SPEC-018",
+      "titulo": "Análisis de sentimiento del mensaje entrante con LLM local",
+      "archivo": ".swarm/specs/SPEC-018.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F5",
+      "plan": "PLAN-002",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-016",
+        "SPEC-015"
+      ]
+    },
+    {
+      "id": "SPEC-019",
+      "titulo": "Borrador RAG human-in-the-loop: revisar/editar/aprobar antes de enviar",
+      "archivo": ".swarm/specs/SPEC-019.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F5",
+      "plan": "PLAN-002",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-017",
+        "SPEC-015"
+      ]
+    },
+    {
+      "id": "SPEC-020",
+      "titulo": "Integración SPA con APIs reales por feature-flag (reemplazo progresivo de mocks)",
+      "archivo": ".swarm/specs/SPEC-020.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F6",
+      "plan": "PLAN-002",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "DAREDEVIL",
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-014",
+        "SPEC-015",
+        "SPEC-018",
+        "SPEC-019"
+      ]
+    },
+    {
+      "id": "SPEC-021",
+      "titulo": "Seguridad y datos personales: TLS, secretos (C3), borrado lógico (C2), HABEAS DATA/GDPR-like",
+      "archivo": ".swarm/specs/SPEC-021.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F7",
+      "plan": "PLAN-002",
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK WIDOW",
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-011",
+        "SPEC-012",
+        "SPEC-013"
+      ]
+    },
+    {
+      "id": "SPEC-022",
+      "titulo": "Pruebas (unit/integración/e2e) + carga (THOR) + observabilidad",
+      "archivo": ".swarm/specs/SPEC-022.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F8",
+      "plan": "PLAN-002",
+      "responsable": "HAWKEYE",
+      "revisan": [
+        "THOR",
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-013",
+        "SPEC-015",
+        "SPEC-016",
+        "SPEC-017",
+        "SPEC-018",
+        "SPEC-019",
+        "SPEC-021"
+      ]
+    },
+    {
+      "id": "SPEC-023",
+      "titulo": "Documentación, runbook operativo y deploy on-prem (Docker Compose)",
+      "archivo": ".swarm/specs/SPEC-023.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F9",
+      "plan": "PLAN-002",
+      "responsable": "QUICKSILVER",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "HAWKEYE"
+      ],
+      "depende_de": [
+        "SPEC-021",
+        "SPEC-022"
+      ]
     }
   ],
   "adrs": [
@@ -173,6 +518,30 @@
       "estado": "Aceptada",
       "fecha": "2026-09-16",
       "plan": "PLAN-001"
+    },
+    {
+      "id": "ADR-003",
+      "titulo": "LLM y embeddings LOCALES (inferencia 100% self-hosted)",
+      "archivo": ".swarm/adrs/ADR-003-llm-embeddings-locales.md",
+      "estado": "Aceptada",
+      "fecha": "2026-09-18",
+      "plan": "PLAN-002"
+    },
+    {
+      "id": "ADR-004",
+      "titulo": "Aislamiento multi-tenant con PostgreSQL Row Level Security (pool-model)",
+      "archivo": ".swarm/adrs/ADR-004-aislamiento-multitenant-rls.md",
+      "estado": "Aceptada",
+      "fecha": "2026-09-18",
+      "plan": "PLAN-002"
+    },
+    {
+      "id": "ADR-005",
+      "titulo": "Bloqueo de egress del contenedor de IA (garantia tecnica de cero externos)",
+      "archivo": ".swarm/adrs/ADR-005-bloqueo-egress-contenedor-ia.md",
+      "estado": "Aceptada",
+      "fecha": "2026-09-18",
+      "plan": "PLAN-002"
     }
   ]
 }

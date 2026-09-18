@@ -37,3 +37,24 @@ coverage/
 
 # TypeScript incremental
 *.tsbuildinfo
+
+# Backend (Python)
+backend/__pycache__/
+backend/.pytest_cache/
+backend/.venv/
+backend/venv/
+backend/dist/
+backend/*.egg-info/
+
+# Docker Compose (volúmenes locales — nunca commitear datos)
+/db_data/
+/redis_data/
+/ollama_models/
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/coverage.xml
+coverage.xml
+.coverage
+htmlcov/
+*.egg-info/

@@ -1,18 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui";
-import ragData from "@/mocks/rag.json";
-import type { RagCitation, RagDraft, RagSuggestion } from "@/lib/types";
 import { RagCitationList } from "@/components/rag/RagCitationList";
 import { RagDraftCard } from "@/components/rag/RagDraftCard";
 import { RagSuggestionList } from "@/components/rag/RagSuggestionList";
-
-const typedRagData = ragData as {
-  citations: RagCitation[];
-  drafts: RagDraft[];
-  suggestions: RagSuggestion[];
-  notaFicticia: string;
-};
+import { useRagData } from "@/lib/dataProvider/useRagData";
+import { USE_REAL_API } from "@/lib/env";
 
 interface RagPanelProps {
   conversationId: string | null;
@@ -20,42 +12,15 @@ interface RagPanelProps {
 }
 
 /**
- * Panel lateral RAG en vivo (SPEC-005) — representación visual, sin ninguna
- * llamada a LLM/embeddings/base vectorial real. Todo el contenido proviene
- * de src/mocks/rag.json (datos pre-grabados ficticios).
+ * Panel lateral RAG en vivo (SPEC-005), conectado por feature-flag a la
+ * generación real de borradores (SPEC-017/019) vía `useRagData` (SPEC-020).
+ * Con `VITE_USE_REAL_API=false` (default) el comportamiento es idéntico al
+ * Entregable #1: representación visual sin ninguna llamada a LLM/embeddings/
+ * base vectorial real, contenido de `src/mocks/rag.json`.
  */
 export function RagPanel({ conversationId, onUseDraft }: RagPanelProps) {
-  const [loading, setLoading] = useState(false);
-
-  // Simula "generando…" al cambiar de conversación (representación visual,
-  // sin ninguna petición de red — cumple RNF de estado "generando" simulado).
-  useEffect(() => {
-    if (!conversationId) return;
-    setLoading(true);
-    const timeout = window.setTimeout(() => setLoading(false), 550);
-    return () => window.clearTimeout(timeout);
-  }, [conversationId]);
-
-  const citations = useMemo(
-    () =>
-      typedRagData.citations.filter(
-        (c) => c.conversationId === conversationId || c.conversationId === "default",
-      ),
-    [conversationId],
-  );
-  const draft = useMemo(
-    () =>
-      typedRagData.drafts.find((d) => d.conversationId === conversationId) ??
-      typedRagData.drafts.find((d) => d.conversationId === "default"),
-    [conversationId],
-  );
-  const suggestions = useMemo(
-    () =>
-      typedRagData.suggestions.filter(
-        (s) => s.conversationId === conversationId || s.conversationId === "default",
-      ),
-    [conversationId],
-  );
+  const { citations, draft, suggestions, loading, error, notaFicticia } =
+    useRagData(conversationId);
 
   if (!conversationId) {
     return (
@@ -90,7 +55,9 @@ export function RagPanel({ conversationId, onUseDraft }: RagPanelProps) {
           </span>
           <h2 className="text-sm font-semibold text-text-primary">RAG activo</h2>
         </div>
-        <Badge variant="ai">Representación · mock local</Badge>
+        <Badge variant="ai">
+          {USE_REAL_API ? "Conectado · API real" : "Representación · mock local"}
+        </Badge>
       </header>
 
       <p role="status" aria-live="polite" className="sr-only">
@@ -99,12 +66,21 @@ export function RagPanel({ conversationId, onUseDraft }: RagPanelProps) {
           : "Sugerencias del asistente RAG actualizadas."}
       </p>
 
+      {error && (
+        <p
+          role="alert"
+          className="border-state-danger-strong/40 bg-state-danger-strong/10 rounded-lg border p-3 text-sm text-state-danger-strong"
+        >
+          {error}
+        </p>
+      )}
+
       <RagCitationList citations={citations} loading={loading} />
       <RagDraftCard draft={draft} loading={loading} onUseDraft={onUseDraft} />
       <RagSuggestionList suggestions={suggestions} loading={loading} />
 
       <p className="mt-auto border-t border-border-subtle pt-3 text-xs text-text-muted">
-        {typedRagData.notaFicticia}
+        {notaFicticia}
       </p>
     </section>
   );
