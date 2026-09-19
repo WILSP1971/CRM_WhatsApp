@@ -1,5 +1,6 @@
 """
-Seed ficticio con ≥2 tenants aislados (SPEC-012, criterio de aceptación).
+Seed ficticio con ≥2 tenants aislados (SPEC-012, criterio de aceptación) y
+routing ficticio de WhatsApp por tenant (SPEC-025, para el simulador).
 
 Uso:
     DATABASE_URL=postgresql+psycopg://... python -m app.db.seed
@@ -10,8 +11,9 @@ Inserta datos vía el engine directo (rol de owner de BD), sin fijar
 que los datos quedan realmente aislados por RLS se hace en
 `tests/test_rls_isolation.py` (fijando `app.tenant_id` de sesión).
 
-Todos los datos son ficticios (sin PII real), acorde a la clasificación
-SENSIBLE del proyecto (`.no-externo`).
+Todos los datos son ficticios (sin PII real, sin `phone_number_id`/tokens
+reales de Meta), acorde a la clasificación SENSIBLE del proyecto
+(`.no-externo`).
 """
 
 import uuid
@@ -26,12 +28,14 @@ SEED_TENANTS = [
         "nombre": "Clínica Demo Norte",
         "slug": "clinica-demo-norte",
         "contacto": {"nombre": "Contacto Ficticio Norte", "telefono": "3001112222"},
+        "whatsapp_phone_number_id": "000000000000001",
     },
     {
         "id": uuid.uuid4(),
         "nombre": "Clínica Demo Sur",
         "slug": "clinica-demo-sur",
         "contacto": {"nombre": "Contacto Ficticio Sur", "telefono": "3003334444"},
+        "whatsapp_phone_number_id": "000000000000002",
     },
 ]
 
@@ -63,7 +67,29 @@ def run_seed() -> None:
                     "telefono": tenant["contacto"]["telefono"],
                 },
             )
-    print(f"Seed completo: {len(SEED_TENANTS)} tenants ficticios con datos disjuntos.")
+            # Routing ficticio de WhatsApp (SPEC-025): phone_number_id de
+            # prueba -> tenant de prueba, para el simulador del webhook
+            # (SPEC-026/027). Sin secretos/tokens reales (C3).
+            conn.execute(
+                sa.text(
+                    "INSERT INTO whatsapp_accounts "
+                    "(id, tenant_id, phone_number_id, display_phone_number, etiqueta) "
+                    "VALUES (:id, :tenant_id, :phone_number_id, :display_phone_number, "
+                    ":etiqueta) "
+                    "ON CONFLICT (phone_number_id) DO NOTHING"
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "tenant_id": tenant["id"],
+                    "phone_number_id": tenant["whatsapp_phone_number_id"],
+                    "display_phone_number": "+000000000",
+                    "etiqueta": f"Número demo — {tenant['nombre']}",
+                },
+            )
+    print(
+        f"Seed completo: {len(SEED_TENANTS)} tenants ficticios con datos disjuntos "
+        "y routing de WhatsApp ficticio."
+    )
 
 
 if __name__ == "__main__":

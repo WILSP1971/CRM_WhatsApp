@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 
 from app.core.rag_queue import IngestJob, dequeue_ingest_job
 from app.core.redis_client import get_redis_client
+from app.core.worker_resilience import resilient_worker_loop
 from app.db.session import SessionLocal, set_tenant_session
 from app.services.ai_service import AIClient
 from app.services.rag.ingest_service import ingest_document
@@ -167,21 +168,31 @@ async def run_worker_loop(
     señalado hasta vaciarla. Se detiene limpiamente al recibir `stop_event`
     (usado para pruebas y para el apagado ordenado por señal, ver
     `_run_forever_with_signal_handling`).
+
+    Hardening (SPEC-032, deuda SPEC-027/BLACK PANTHER): cada iteración corre
+    envuelta en `resilient_worker_loop` — si Redis/Postgres caen a mitad de
+    una iteración, la excepción se loguea y se espera un backoff exponencial
+    en vez de dejar morir el proceso (evita crash-loop de `restart:
+    unless-stopped`).
     """
     redis_client = redis_client or get_redis_client()
     stop_event = stop_event or asyncio.Event()
 
-    logger.info("rag_ingest_worker_started")
-    while not stop_event.is_set():
+    async def _iteration() -> None:
         result = await redis_client.blpop([NOTIFY_KEY], timeout=block_timeout_seconds)
         if result is None:
-            continue
+            return
         _, tenant_id = result
         # Drena TODOS los jobs pendientes de ese tenant antes de volver a
         # esperar la siguiente notificación (una notificación puede quedar
         # "vieja" si el tenant ya encoló varios documentos seguidos).
         while await drain_one(redis_client, tenant_id=tenant_id, timeout_seconds=0):
             pass
+
+    logger.info("rag_ingest_worker_started")
+    await resilient_worker_loop(
+        _iteration, stop_event=stop_event, worker_name="rag_ingest_worker"
+    )
     logger.info("rag_ingest_worker_stopped")
 
 

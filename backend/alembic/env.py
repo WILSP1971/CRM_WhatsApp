@@ -1,9 +1,17 @@
 """
 Alembic environment — OmniCore AI backend (SPEC-012).
 
-CHECKPOINT C3 (secretos): la cadena de conexión se toma de la variable de
-entorno `DATABASE_URL` (o de las variables `DB_*` individuales vía
-`app.core.config.Settings`), NUNCA de un valor hardcodeado en `alembic.ini`.
+CHECKPOINT C3 (secretos): la cadena de conexión se toma de variables de
+entorno (vía `app.core.config.Settings`), NUNCA de un valor hardcodeado en
+`alembic.ini`.
+
+ADR-008 (roles de BD / RLS efectiva): Alembic ejecuta DDL (CREATE/ALTER/DROP)
+y por eso usa el rol PRIVILEGIADO/owner del esquema
+(`sqlalchemy_database_url_migrations`, variables `DATABASE_URL_MIGRATIONS` /
+`DB_MIGRATION_USER` / `DB_MIGRATION_PASSWORD`), NUNCA el rol de runtime de la
+app (`omnicore_app`, NOSUPERUSER/NOBYPASSRLS, sin privilegios de DDL). Esto
+mantiene separados el camino de DDL/migraciones del camino de runtime de
+api/workers, que es el que debe tener RLS aplicándose de verdad.
 """
 
 import os
@@ -30,8 +38,10 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 # Sobreescribe sqlalchemy.url con la URL real desde variables de entorno (C3).
+# ADR-008: Alembic SIEMPRE usa el rol privilegiado/owner (DDL), no el rol de
+# runtime `omnicore_app` (que no tiene permisos de DDL por diseño).
 settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.sqlalchemy_database_url)
+config.set_main_option("sqlalchemy.url", settings.sqlalchemy_database_url_migrations)
 
 
 def run_migrations_offline() -> None:

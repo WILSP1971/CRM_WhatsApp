@@ -2,28 +2,48 @@ version: '3.9'
 
 services:
   # PostgreSQL 16 con extensión pgvector para embeddings
+  # (SPEC-024: en red `ia_internal internal:true` sin egress a internet. Accesible desde
+  # `api`, `rag_worker`, `sentiment_worker` por la misma red sin salida. Invariante:
+  # NUNCA egress a internet, SOLO comunicación interna.)
   db:
     image: pgvector/pgvector:pg16
     container_name: crm_db
     environment:
       POSTGRES_DB: ${DB_NAME:-omnicore_ai}
-      POSTGRES_USER: ${DB_USER:-postgres}
+      # POSTGRES_USER: rol PROPIETARIO del esquema (DDL/bootstrap/Alembic,
+      # ADR-008). Superusuario de la imagen oficial de Postgres, NUNCA usado
+      # como runtime de api/workers (ver DB_USER/DATABASE_URL de esos
+      # servicios más abajo: usan el rol de aplicación `omnicore_app`).
+      POSTGRES_USER: ${DB_MIGRATION_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD requerido}
       POSTGRES_INITDB_ARGS: "-c shared_preload_libraries=vector"
+      # ADR-008: contraseña del rol de aplicación NO-superusuario
+      # `omnicore_app` (NOSUPERUSER NOBYPASSRLS), creado por
+      # `init-sql/01-roles-app.sh` en el primer arranque del volumen. CHECKPOINT
+      # C3: sin default débil, obligatorio.
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}
+      DB_APP_ROLE: ${DB_APP_ROLE:-omnicore_app}
     ports:
       - "${DB_PORT:-5432}:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
+      # ADR-008: rol de aplicación NOSUPERUSER/NOBYPASSRLS + GRANTs mínimos.
+      # Se ejecuta SOLO en la primera inicialización de un volumen vacío
+      # (mecanismo estándar de la imagen oficial de PostgreSQL).
+      - ./init-sql:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-omnicore_ai}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_MIGRATION_USER:-postgres} -d ${DB_NAME:-omnicore_ai}"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
-      - app
+      - ia_internal
     restart: unless-stopped
 
   # Redis para colas de indexado/ingesta y pub/sub WebChat
+  # (SPEC-024: en red `ia_internal internal:true` sin egress a internet. Accesible desde
+  # `api`, `rag_worker`, `sentiment_worker` por la misma red. Invariante: jamás egress,
+  # solo comunicación interna.)
   redis:
     image: redis:7-alpine
     container_name: crm_redis
@@ -38,7 +58,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - app
+      - ia_internal
     restart: unless-stopped
 
   # Contenedor de IA (Ollama) en RED INTERNA SIN EGRESS
@@ -71,13 +91,23 @@ services:
       dockerfile: Dockerfile
     container_name: crm_api
     environment:
-      # Base de datos
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?DB_PASSWORD requerido}@db:5432/${DB_NAME:-omnicore_ai}
+      # Base de datos — RUNTIME (ADR-008): rol de aplicación NO-superusuario
+      # `omnicore_app` (NOSUPERUSER NOBYPASSRLS), para que RLS (ADR-004) se
+      # aplique de verdad en todas las consultas de la API. Este rol NO puede
+      # ejecutar DDL (ver DATABASE_URL_MIGRATIONS más abajo para Alembic).
+      DATABASE_URL: postgresql://${DB_APP_ROLE:-omnicore_app}:${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}@db:5432/${DB_NAME:-omnicore_ai}
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: ${DB_NAME:-omnicore_ai}
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD requerido}
+      DB_USER: ${DB_APP_ROLE:-omnicore_app}
+      DB_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}
+
+      # Base de datos — MIGRACIONES (ADR-008): rol PRIVILEGIADO/owner, SOLO
+      # para Alembic (`make migrate` ejecuta `alembic upgrade head` dentro de
+      # este contenedor). Nunca se usa para servir peticiones HTTP.
+      DATABASE_URL_MIGRATIONS: postgresql://${DB_MIGRATION_USER:-postgres}:${DB_PASSWORD:?DB_PASSWORD requerido}@db:5432/${DB_NAME:-omnicore_ai}
+      DB_MIGRATION_USER: ${DB_MIGRATION_USER:-postgres}
+      DB_MIGRATION_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD requerido}
 
       # Redis
       REDIS_URL: redis://redis:6379
@@ -138,9 +168,10 @@ services:
   # la API, para que un reinicio de `api` NUNCA pierda un job de ingesta en
   # curso (el job ya quedó persistido en Redis `appendonly yes` antes de que
   # `api` respondiera 202). Necesita hablar con `ia` (Ollama) para generar
-  # embeddings -> misma red `ia_internal` que `api`, SIN egress (idéntica
-  # postura de seguridad: `internal: true` en la red, nunca acceso a
-  # internet). Mismos secretos `${VAR:?}` fail-fast que `api`.
+  # embeddings -> red `ia_internal` (SENSIBLE, sin egress).
+  # (SPEC-024: SOLO en `ia_internal internal:true`. Jamás en `app` (que tiene egress
+  # a Meta en SPEC-029). Invariante: sin ruta a internet. Habla con db/redis/ia
+  # por la misma red `ia_internal` que todos comparten sin egress.)
   rag_worker:
     build:
       context: ./backend
@@ -148,13 +179,15 @@ services:
     container_name: crm_rag_worker
     command: ["python", "-m", "app.workers.rag_ingest_worker"]
     environment:
-      # Base de datos
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?DB_PASSWORD requerido}@db:5432/${DB_NAME:-omnicore_ai}
+      # Base de datos — RUNTIME (ADR-008): rol de aplicación NO-superusuario
+      # `omnicore_app` (NOSUPERUSER NOBYPASSRLS), igual que `api`. El worker
+      # nunca ejecuta DDL, solo DML sobre datos ya migrados.
+      DATABASE_URL: postgresql://${DB_APP_ROLE:-omnicore_app}:${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}@db:5432/${DB_NAME:-omnicore_ai}
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: ${DB_NAME:-omnicore_ai}
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD requerido}
+      DB_USER: ${DB_APP_ROLE:-omnicore_app}
+      DB_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}
 
       # Redis (misma cola que la API usa para encolar)
       REDIS_URL: redis://redis:6379
@@ -163,8 +196,7 @@ services:
 
       # IA (Ollama) en red interna — SPEC-016 (SENSIBLE, .no-externo). El
       # worker necesita embeddings para procesar la ingesta; habla con `ia`
-      # por la MISMA red `ia_internal` sin egress que usa `api`, nunca se le
-      # da salida a internet.
+      # por la red `ia_internal` sin egress (internal: true).
       OLLAMA_BASE_URL: http://ia:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b-instruct}
       OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
@@ -187,7 +219,6 @@ services:
     volumes:
       - ./backend:/app
     networks:
-      - app
       - ia_internal
     restart: unless-stopped
 
@@ -195,7 +226,10 @@ services:
   # del mensaje"): consume la cola Redis `sentiment:analyze:*`
   # (`app.core.sentiment_queue`) fuera del proceso de la API, mismo patrón
   # que `rag_worker` (SPEC-017). Necesita hablar con `ia` (Ollama, LLM local)
-  # para clasificar el sentimiento -> misma red `ia_internal` sin egress.
+  # para clasificar el sentimiento -> red `ia_internal` (sin egress).
+  # (SPEC-024: SOLO en `ia_internal internal:true`. Jamás en `app` (que tiene egress
+  # a Meta en SPEC-029). Invariante: sin ruta a internet. Habla con db/redis/ia
+  # por la misma red `ia_internal` que todos comparten sin egress.)
   sentiment_worker:
     build:
       context: ./backend
@@ -203,13 +237,15 @@ services:
     container_name: crm_sentiment_worker
     command: ["python", "-m", "app.workers.sentiment_worker"]
     environment:
-      # Base de datos
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:?DB_PASSWORD requerido}@db:5432/${DB_NAME:-omnicore_ai}
+      # Base de datos — RUNTIME (ADR-008): rol de aplicación NO-superusuario
+      # `omnicore_app` (NOSUPERUSER NOBYPASSRLS), igual que `api`. El worker
+      # nunca ejecuta DDL, solo DML sobre datos ya migrados.
+      DATABASE_URL: postgresql://${DB_APP_ROLE:-omnicore_app}:${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}@db:5432/${DB_NAME:-omnicore_ai}
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: ${DB_NAME:-omnicore_ai}
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD requerido}
+      DB_USER: ${DB_APP_ROLE:-omnicore_app}
+      DB_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}
 
       # Redis (misma cola que la API usa para encolar)
       REDIS_URL: redis://redis:6379
@@ -218,7 +254,7 @@ services:
 
       # IA (Ollama) en red interna — SPEC-016 (SENSIBLE, .no-externo). El
       # worker necesita el LLM local para clasificar sentimiento; habla con
-      # `ia` por la MISMA red `ia_internal` sin egress que usa `api`.
+      # `ia` por la red `ia_internal` sin egress (internal: true).
       OLLAMA_BASE_URL: http://ia:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b-instruct}
       OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
@@ -237,6 +273,128 @@ services:
       redis:
         condition: service_healthy
       ia:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    networks:
+      - ia_internal
+    restart: unless-stopped
+
+  # Worker de ingesta de WhatsApp (SPEC-027, ADR-007/008): consume la cola
+  # Redis persistente `wa:inbound` (`app.core.whatsapp_queue`) fuera del
+  # proceso de la API — mismo patrón que `rag_worker`/`sentiment_worker`
+  # (SPEC-017/018): un reinicio de `api` NUNCA pierde un evento en curso (ya
+  # quedó persistido en Redis `appendonly yes`), y un reinicio del worker
+  # simplemente retoma el siguiente `BLPOP`. Resuelve `phone_number_id ->
+  # tenant_id` (función SECURITY DEFINER, ADR-008), fija RLS y persiste
+  # contacto/conversación/mensaje bajo el tenant correcto; deduplica por
+  # `wamid` (idempotencia, ADR-007). NO habla con `ia` (Ollama): el disparo
+  # del pipeline IA es SPEC-028, fuera de alcance de este worker.
+  # (SPEC-024: SOLO en `ia_internal internal:true`. Jamás en `app` (que tiene
+  # egress a Meta en SPEC-029). Invariante: sin ruta a internet — este
+  # worker procesa on-prem, recibido y validado por firma en SPEC-026; el
+  # enrutado por número + RLS es la barrera cross-tenant (ADR-007). Habla con
+  # db/redis por la misma red `ia_internal` sin egress.)
+  whatsapp_inbound_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crm_whatsapp_inbound_worker
+    command: ["python", "-m", "app.workers.whatsapp_inbound_worker"]
+    environment:
+      # Base de datos — RUNTIME (ADR-008): rol de aplicación NO-superusuario
+      # `omnicore_app` (NOSUPERUSER NOBYPASSRLS), igual que `api`/otros
+      # workers. El worker nunca ejecuta DDL, solo DML + la función
+      # SECURITY DEFINER de resolución de tenant (GRANT EXECUTE, ADR-008).
+      DATABASE_URL: postgresql://${DB_APP_ROLE:-omnicore_app}:${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}@db:5432/${DB_NAME:-omnicore_ai}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-omnicore_ai}
+      DB_USER: ${DB_APP_ROLE:-omnicore_app}
+      DB_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}
+
+      # Redis (misma cola `wa:inbound` que el webhook de la API usa para encolar)
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+
+      # Secretos (NUNCA hardcoded; desde variables de entorno; sin default débil)
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY requerido}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    networks:
+      - ia_internal
+    restart: unless-stopped
+
+  # Worker de ENVÍO saliente por WhatsApp (SPEC-029, ADR-006): consume la
+  # cola Redis persistente `wa:outbound` (`app.core.whatsapp_outbound_queue`)
+  # tras la APROBACIÓN HUMANA del borrador/mensaje (SPEC-019,
+  # `approve_draft_endpoint`). Llama a la Graph API de Meta EXCLUSIVAMENTE
+  # desde `app/integrations/whatsapp/graph_client.py` (host allowlist en
+  # código: `graph.facebook.com` exacto). Nada se envía automáticamente.
+  # (SPEC-024/ADR-006: EXCEPCIÓN ACOTADA — junto con `api`, es el ÚNICO
+  # servicio con egress a internet, y SOLO a `graph.facebook.com`. Por eso
+  # está en la red `app` (egress). También está en `ia_internal` para poder
+  # leer/escribir Postgres y Redis, igual que el resto de workers — pero
+  # NUNCA habla con `ia` (Ollama): no importa `AIClient`/`app.services.rag`,
+  # auditado por `check-externos-backend.sh`. Invariante de topología: `ia`,
+  # `rag_worker`, `sentiment_worker`, `whatsapp_inbound_worker` permanecen
+  # SIN egress (solo en `ia_internal`); `api` y `wa_send_worker` son los
+  # ÚNICOS con salida, y solo hacia Meta.)
+  wa_send_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crm_wa_send_worker
+    command: ["python", "-m", "app.workers.wa_send_worker"]
+    environment:
+      # Base de datos — RUNTIME (ADR-008): rol de aplicación NO-superusuario
+      # `omnicore_app` (NOSUPERUSER NOBYPASSRLS), igual que `api`/otros
+      # workers. El worker nunca ejecuta DDL, solo DML.
+      DATABASE_URL: postgresql://${DB_APP_ROLE:-omnicore_app}:${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}@db:5432/${DB_NAME:-omnicore_ai}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-omnicore_ai}
+      DB_USER: ${DB_APP_ROLE:-omnicore_app}
+      DB_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}
+
+      # Redis (misma cola `wa:outbound` que la API usa para encolar tras aprobar)
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+
+      # Secretos (NUNCA hardcoded; desde variables de entorno; sin default débil)
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY requerido}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+
+      # WhatsApp Cloud API — envío saliente (SPEC-029, SENSIBLE, C3: sin
+      # default débil fuera de development; host fijo graph.facebook.com en
+      # app/integrations/whatsapp/graph_client.py, ADR-006).
+      WHATSAPP_TOKEN: ${WHATSAPP_TOKEN:?WHATSAPP_TOKEN requerido (SPEC-029, C3)}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v21.0}
+      WHATSAPP_SESSION_WINDOW_HOURS: ${WHATSAPP_SESSION_WINDOW_HOURS:-24}
+      WHATSAPP_TEMPLATE_NAME: ${WHATSAPP_TEMPLATE_NAME:-}
+      WHATSAPP_TEMPLATE_LANGUAGE: ${WHATSAPP_TEMPLATE_LANGUAGE:-es}
+      WHATSAPP_SEND_TIMEOUT_SECONDS: ${WHATSAPP_SEND_TIMEOUT_SECONDS:-10}
+      WHATSAPP_SEND_MAX_RETRIES: ${WHATSAPP_SEND_MAX_RETRIES:-3}
+      WHATSAPP_SEND_BACKOFF_BASE_SECONDS: ${WHATSAPP_SEND_BACKOFF_BASE_SECONDS:-1}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - ./backend:/app
@@ -246,13 +404,20 @@ services:
     restart: unless-stopped
 
 networks:
-  # Red de aplicación: API ↔ PostgreSQL ↔ Redis (con egress a internet)
+  # Red de TRANSPORTE (SPEC-024 F0, SPEC-029 F4): SOLO `api` (y `wa_send_worker` en SPEC-029)
+  # CON egress a internet (permitido SOLO a graph.facebook.com via firewall host / proxy allowlist)
+  # Invariante: `api` es el ÚNICO servicio aquí, haciendo de bridge entre webhook y entorno local
   app:
     driver: bridge
 
-  # Red INTERNA SIN egress para el contenedor IA (CHECKPOINT .no-externo)
+  # Red INTERNA SIN egress (CHECKPOINT .no-externo, ADR-005/006, SPEC-024)
   # internal: true — mecanismo oficial Docker que bloquea egress a internet
-  # IA (Ollama) SOLO en esta red; API conecta a ambas para bridgear localmente
+  # Contiene: ia (Ollama), rag_worker, sentiment_worker, whatsapp_inbound_worker, db, redis, api
+  # NADIE en esta red puede salir a internet (internal: true lo garantiza)
+  # Comunicación: api↔db/redis/ia, rag_worker↔ia/db/redis, sentiment_worker↔ia/db/redis,
+  # whatsapp_inbound_worker↔db/redis (SPEC-027, no necesita ia/Ollama)
+  # (todas por la misma red, sin egress). El ÚNICO que también está en `app` es `api`
+  # (hace de bridge para webhook entrante + potencial egress a Meta, sujeto a firewall/allowlist)
   ia_internal:
     driver: bridge
     internal: true

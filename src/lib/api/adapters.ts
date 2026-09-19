@@ -58,7 +58,18 @@
  *    `Contact360Panel` siga renderizando sin romperse, dejando claro que esa
  *    información aún no viene de una fuente real.
  *
- * 7. RAG (`RagCitation`/`RagDraft`): el backend expone borradores
+ * 7. `Conversation.whatsappWindow` (SPEC-031, sin contraparte en
+ *    `ConversationOut`): la ventana de servicio de 24 h de WhatsApp
+ *    (RF-03 SPEC-029) se calcula en `backend/app/workers/wa_send_worker.py`
+ *    a partir del último mensaje ENTRANTE de la conversación, con la MISMA
+ *    ventana de 24 h por defecto (`WHATSAPP_SESSION_WINDOW_HOURS`). El
+ *    adaptador `adaptWhatsappWindow` replica ese mismo criterio (fail-closed:
+ *    sin mensaje entrante -> fuera de ventana) a partir de los mensajes ya
+ *    adaptados, sin requerir un endpoint nuevo (fuera de alcance de
+ *    SPEC-031, que solo pide el indicador visual). Solo se calcula para
+ *    `channel === "whatsapp"`; el resto de canales no lo usa.
+ *
+ * 8. RAG (`RagCitation`/`RagDraft`): el backend expone borradores
  *    persistidos con estado (`propuesto`/`editado`/`enviado`/`descartado`,
  *    SPEC-019) y una lista de citas con `similarityScore` ya en 0..1 (mismo
  *    rango que la maqueta). El adaptador `adaptDraft` mapea 1:1 (misma
@@ -86,7 +97,14 @@ import type {
   RagCitation,
   RagDraft,
   Sentiment,
+  WhatsappServiceWindow,
 } from "@/lib/types";
+
+/** RF-03 SPEC-029: mismo default que `Settings.whatsapp_session_window_hours`
+ * (`backend/app/core/config.py`, `WHATSAPP_SESSION_WINDOW_HOURS=24`). Es un
+ * valor puramente informativo para el indicador SPA (SPEC-031); la decisión
+ * real de bloquear/usar plantilla ocurre en el backend (`wa_send_worker`). */
+const WHATSAPP_SERVICE_WINDOW_HOURS = 24;
 
 const VALID_CHANNELS: readonly Channel[] = [
   "whatsapp",
@@ -99,7 +117,12 @@ function adaptChannel(canal: string): Channel {
   return (VALID_CHANNELS as string[]).includes(canal) ? (canal as Channel) : "webchat";
 }
 
-const VALID_STATUSES: readonly MessageStatus[] = ["enviado", "entregado", "leido"];
+const VALID_STATUSES: readonly MessageStatus[] = [
+  "enviado",
+  "entregado",
+  "leido",
+  "failed",
+];
 
 function adaptMessageStatus(estadoEntrega: string): MessageStatus {
   return (VALID_STATUSES as string[]).includes(estadoEntrega)
@@ -131,6 +154,34 @@ export function adaptMessage(message: BackendMessage): ConversationMessage {
 }
 
 /**
+ * Ventana de servicio de 24 h de WhatsApp (nota 7 del docblock del módulo,
+ * RF-03 SPEC-029 / RF-02 SPEC-031): se mide desde el último mensaje
+ * ENTRANTE (remitente "contacto"). Fail-closed, igual que el backend
+ * (`_within_service_window`): sin mensaje entrante -> fuera de ventana.
+ */
+export function adaptWhatsappWindow(
+  messages: BackendMessage[],
+  now: Date = new Date(),
+): WhatsappServiceWindow {
+  const lastInbound = [...messages]
+    .reverse()
+    .find((m) => m.remitente === "contacto");
+
+  if (!lastInbound) {
+    return { withinWindow: false, lastInboundAt: null };
+  }
+
+  const lastInboundAt = new Date(lastInbound.created_at);
+  const elapsedMs = now.getTime() - lastInboundAt.getTime();
+  const windowMs = WHATSAPP_SERVICE_WINDOW_HOURS * 60 * 60 * 1000;
+
+  return {
+    withinWindow: elapsedMs <= windowMs,
+    lastInboundAt: lastInbound.created_at,
+  };
+}
+
+/**
  * Adapta una conversación real + sus mensajes ya cargados (SPEC-020, nota 2
  * y 3 del docblock del módulo: `lastMessage`/`sentiment` se derivan de los
  * mensajes porque `ConversationOut` no los expone).
@@ -144,11 +195,12 @@ export function adaptConversation(
   const lastMessageWithSentiment = [...messages]
     .reverse()
     .find((m) => m.sentimiento !== null);
+  const channel = adaptChannel(conversation.canal);
 
   return {
     id: conversation.id,
     contactId: conversation.contact_id,
-    channel: adaptChannel(conversation.canal),
+    channel,
     sentiment: adaptSentiment(lastMessageWithSentiment?.sentimiento ?? null),
     lastMessage: lastBackendMessage?.contenido ?? "",
     lastMessageAt: lastBackendMessage?.created_at ?? conversation.updated_at,
@@ -156,6 +208,8 @@ export function adaptConversation(
     unreadCount: 0,
     status: conversation.estado as Conversation["status"],
     messages: adaptedMessages,
+    // Solo WhatsApp tiene ventana de servicio (nota 7); otros canales no la usan.
+    whatsappWindow: channel === "whatsapp" ? adaptWhatsappWindow(messages) : undefined,
   };
 }
 

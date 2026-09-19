@@ -1,12 +1,16 @@
 #!/bin/bash
 #
-# check-externos-backend.sh — Auditoría de "cero egress de inferencia" en backend
+# check-externos-backend.sh — Auditoría de "cero egress de inferencia" + transporte acotado
 # (Equivalente a scripts/check:externos de la SPA, pero para backend)
 #
 # Falla el CI si encuentra:
 # - URLs/dominios de APIs de inferencia externas (OpenAI, Anthropic, Google, etc.)
 # - SDKs de IA de terceros (openai, anthropic, google-generativeai, etc.)
 # - Endpoints de servicios remotos de inferencia
+# - graph.facebook.com FUERA del módulo de WhatsApp (ADR-006, SPEC-024)
+#
+# Permite:
+# - graph.facebook.com DENTRO de app/integrations/whatsapp/ (transporte, no inferencia)
 #
 # Uso: ./backend/check-externos-backend.sh
 # Retorna: 0 si OK, 1 si hay violación
@@ -181,6 +185,78 @@ check_ai_base_url_file() {
 check_ai_base_url_file "${BACKEND_DIR}/.env.example"
 check_ai_base_url_file "$(dirname "${BACKEND_DIR}")/.env.example"
 check_ai_base_url_file "${DC_FILE:-docker-compose.yml}"
+
+# Auditoría de transporte acotado (SPEC-024, ADR-006): graph.facebook.com SOLO en módulo WhatsApp
+echo -e "\n${YELLOW}7. Verificando allowlist de transporte (graph.facebook.com SOLO en WhatsApp módulo)...${NC}"
+
+# Busca graph.facebook.com en TODA la carpeta app/
+if grep -r "graph\.facebook\.com" "${BACKEND_DIR}/app" 2>/dev/null | grep -v "__pycache__"; then
+    # Encontró referencias. Ahora verifica que TODAS estén en app/integrations/whatsapp/
+    matches=$(grep -r "graph\.facebook\.com" "${BACKEND_DIR}/app" 2>/dev/null | grep -v "__pycache__" || true)
+
+    if [ -n "$matches" ]; then
+        # Filtra solo los matches que NO están en app/integrations/whatsapp/
+        outside_whatsapp=$(echo "$matches" | grep -v "app/integrations/whatsapp/" || true)
+
+        if [ -n "$outside_whatsapp" ]; then
+            echo -e "${RED}    ✗ FALLO: graph.facebook.com encontrado FUERA del módulo WhatsApp:${NC}"
+            echo "$outside_whatsapp" | sed 's/^/      /'
+            EXIT_CODE=1
+        else
+            echo -e "${GREEN}    ✓ OK: graph.facebook.com solo en app/integrations/whatsapp/ (transporte permitido)${NC}"
+        fi
+    fi
+else
+    # No encontró, lo cual es OK en F0 (módulo aún es placeholder)
+    echo -e "${GREEN}    ✓ OK: graph.facebook.com no aparece en código (F0, placeholder)${NC}"
+fi
+
+# Verificar que el módulo WhatsApp NO importe Ollama ni servicios de IA (separación: transporte ≠ inferencia)
+echo -e "\n${YELLOW}8. Verificando que módulo WhatsApp NO importa Ollama ni IA...${NC}"
+WHATSAPP_MODULE="${BACKEND_DIR}/app/integrations/whatsapp"
+if [ -d "$WHATSAPP_MODULE" ]; then
+    # Patrones prohibidos dentro del módulo WhatsApp
+    declare -a WHATSAPP_FORBIDDEN_IMPORTS=(
+        "from.*ollama"
+        "import ollama"
+        "from.*ai_client"
+        "from.*app.services.rag"
+        "from.*app.workers"
+    )
+
+    for pattern in "${WHATSAPP_FORBIDDEN_IMPORTS[@]}"; do
+        if grep -r "$pattern" "$WHATSAPP_MODULE" 2>/dev/null | grep -v "__pycache__"; then
+            echo -e "${RED}    ✗ FALLO: patrón prohibido '$pattern' encontrado en módulo WhatsApp${NC}"
+            EXIT_CODE=1
+        fi
+    done
+
+    if [ $EXIT_CODE -eq 0 ]; then
+        echo -e "${GREEN}    ✓ OK: módulo WhatsApp no tiene imports de IA (separación de responsabilidades)${NC}"
+    fi
+else
+    echo -e "${GREEN}    ✓ OK: módulo WhatsApp aún es placeholder (F0)${NC}"
+fi
+
+# Verificar que módulos de IA NO importen httpx ni clientes HTTP de transporte a Meta
+echo -e "\n${YELLOW}9. Verificando que módulos de IA NO importan httpx (transporte)...${NC}"
+declare -a IA_MODULES=(
+    "${BACKEND_DIR}/app/services/rag"
+    "${BACKEND_DIR}/app/workers"
+)
+
+for ia_mod in "${IA_MODULES[@]}"; do
+    if [ -d "$ia_mod" ]; then
+        if grep -r "import httpx\|from httpx" "$ia_mod" 2>/dev/null | grep -v "__pycache__"; then
+            echo -e "${RED}    ✗ FALLO: import httpx encontrado en módulo de IA $ia_mod (salida no permitida)${NC}"
+            EXIT_CODE=1
+        fi
+    fi
+done
+
+if [ $EXIT_CODE -eq 0 ]; then
+    echo -e "${GREEN}    ✓ OK: módulos de IA no importan httpx (sin egress a Meta)${NC}"
+fi
 
 # Resumen
 echo -e "\n${YELLOW}========================================${NC}"

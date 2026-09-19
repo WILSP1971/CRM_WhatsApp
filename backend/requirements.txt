@@ -46,6 +46,10 @@ httpx==0.25.2
 # fakeredis: doble de Redis (protocolo redis.asyncio) SOLO para tests del
 # pub/sub del WebChat (SPEC-015); nunca se usa en el runtime de producción.
 fakeredis==2.38.0
+# PyYAML: SOLO usado por tests (parseo de docker-compose.yml en el
+# guardarraíl anti-regresión de egress, SPEC-032); no es una dependencia de
+# runtime de la aplicación.
+PyYAML==6.0.1
 
 # Linting y type checking
 black==23.12.1

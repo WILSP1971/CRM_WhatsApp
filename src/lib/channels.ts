@@ -51,4 +51,23 @@ export const MESSAGE_STATUS_LABEL: Record<MessageStatus, string> = {
   enviado: "Enviado",
   entregado: "Entregado",
   leido: "Leído",
+  // Estado terminal de envío por WhatsApp (SPEC-029/SPEC-031); solo en datos
+  // reales, nunca en la maqueta mock.
+  failed: "Fallido",
+};
+
+/**
+ * Indicador de ventana de servicio de 24 h de WhatsApp (SPEC-031, RF-02).
+ * Texto siempre explícito (no solo color, RNF a11y — mismo patrón que
+ * `SENTIMENT_META`).
+ */
+export const WHATSAPP_WINDOW_META = {
+  dentro: {
+    label: "Dentro de ventana 24 h",
+    badgeVariant: "success" as const,
+  },
+  fuera: {
+    label: "Fuera de ventana · requiere plantilla",
+    badgeVariant: "warning" as const,
+  },
 };

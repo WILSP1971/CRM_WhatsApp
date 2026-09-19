@@ -24,6 +24,8 @@ ENV_KEYS = (
     "JWT_SECRET_KEY",
     "DB_PASSWORD",
     "CORS_ORIGINS",
+    "WHATSAPP_APP_SECRET",
+    "WHATSAPP_VERIFY_TOKEN",
 )
 
 
@@ -92,12 +94,66 @@ def test_settings_production_starts_with_strong_secrets(clean_env):
     clean_env.setenv("ENVIRONMENT", "production")
     clean_env.setenv("JWT_SECRET_KEY", "a" * 40)
     clean_env.setenv("DB_PASSWORD", "b" * 40)
+    # WHATSAPP_APP_SECRET/WHATSAPP_VERIFY_TOKEN: obligatorios fuera de
+    # development (SPEC-026, mismo fail-fast C3 que JWT_SECRET_KEY/DB_PASSWORD).
+    clean_env.setenv("WHATSAPP_APP_SECRET", "c" * 40)
+    clean_env.setenv("WHATSAPP_VERIFY_TOKEN", "d" * 40)
+    # WHATSAPP_TOKEN: obligatorio fuera de development (SPEC-029, mismo
+    # fail-fast C3 que el resto de secretos del canal WhatsApp).
+    clean_env.setenv("WHATSAPP_TOKEN", "e" * 40)
     config_module = _reload_config()
 
     settings = config_module.Settings()
 
     assert settings.jwt_secret_key == "a" * 40
     assert settings.db_password == "b" * 40
+    assert settings.whatsapp_app_secret == "c" * 40
+    assert settings.whatsapp_verify_token == "d" * 40
+    assert settings.whatsapp_token == "e" * 40
+
+
+def test_settings_production_fails_fast_without_whatsapp_app_secret(clean_env):
+    """SPEC-026 C3: sin WHATSAPP_APP_SECRET fuera de development, el arranque
+    ABORTA (un secreto ausente permitiría desactivar de facto la validación
+    de firma del webhook)."""
+    clean_env.setenv("ENVIRONMENT", "production")
+    clean_env.setenv("JWT_SECRET_KEY", "a" * 40)
+    clean_env.setenv("DB_PASSWORD", "b" * 40)
+    clean_env.setenv("WHATSAPP_VERIFY_TOKEN", "d" * 40)
+    clean_env.setenv("WHATSAPP_TOKEN", "e" * 40)
+    config_module = _reload_config()
+
+    with pytest.raises(config_module.ConfigurationError):
+        config_module.Settings()
+
+
+def test_settings_production_fails_fast_without_whatsapp_verify_token(clean_env):
+    """SPEC-026 C3: sin WHATSAPP_VERIFY_TOKEN fuera de development, el
+    arranque ABORTA (impide validar el challenge GET de alta del webhook)."""
+    clean_env.setenv("ENVIRONMENT", "production")
+    clean_env.setenv("JWT_SECRET_KEY", "a" * 40)
+    clean_env.setenv("DB_PASSWORD", "b" * 40)
+    clean_env.setenv("WHATSAPP_APP_SECRET", "c" * 40)
+    clean_env.setenv("WHATSAPP_TOKEN", "e" * 40)
+    config_module = _reload_config()
+
+    with pytest.raises(config_module.ConfigurationError):
+        config_module.Settings()
+
+
+def test_settings_production_fails_fast_without_whatsapp_token(clean_env):
+    """SPEC-029 C3: sin WHATSAPP_TOKEN fuera de development, el arranque
+    ABORTA (un access token ausente/débil bloquearía el envío en vez de
+    fallar silenciosamente en cada request a la Graph API)."""
+    clean_env.setenv("ENVIRONMENT", "production")
+    clean_env.setenv("JWT_SECRET_KEY", "a" * 40)
+    clean_env.setenv("DB_PASSWORD", "b" * 40)
+    clean_env.setenv("WHATSAPP_APP_SECRET", "c" * 40)
+    clean_env.setenv("WHATSAPP_VERIFY_TOKEN", "d" * 40)
+    config_module = _reload_config()
+
+    with pytest.raises(config_module.ConfigurationError):
+        config_module.Settings()
 
 
 def test_settings_staging_environment_also_enforces_fail_fast(clean_env):

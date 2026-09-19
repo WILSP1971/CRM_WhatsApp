@@ -50,6 +50,26 @@ class Settings:
             f"@{self.db_host}:{self.db_port}/{self.db_name}",
         )
 
+        # --- Rol privilegiado para DDL/migraciones (ADR-008) ---
+        # `DATABASE_URL`/`DB_USER` de arriba son el rol de RUNTIME de la app
+        # (api/workers): `omnicore_app`, NOSUPERUSER/NOBYPASSRLS, para que RLS
+        # (ADR-004) se aplique de verdad. Alembic (DDL: CREATE/ALTER/DROP) NO
+        # puede correr con ese rol -> usa un rol PRIVILEGIADO separado
+        # (owner del esquema, por defecto `postgres`), configurado con estas
+        # variables independientes. Si `DATABASE_URL_MIGRATIONS` no está
+        # definida, se arma a partir de `DB_MIGRATION_USER`/
+        # `DB_MIGRATION_PASSWORD` (por defecto el mismo `DB_PASSWORD`, para no
+        # romper entornos de desarrollo que aún no separaron credenciales).
+        self.db_migration_user: str = os.getenv("DB_MIGRATION_USER", "postgres")
+        self.db_migration_password: str = os.getenv(
+            "DB_MIGRATION_PASSWORD", self.db_password
+        )
+        self.database_url_migrations: str = os.getenv(
+            "DATABASE_URL_MIGRATIONS",
+            f"postgresql+psycopg://{self.db_migration_user}:{self.db_migration_password}"
+            f"@{self.db_host}:{self.db_port}/{self.db_name}",
+        )
+
         # --- Multi-tenant / RLS (ADR-004) ---
         # Nombre del parámetro de sesión de PostgreSQL que las políticas RLS usan
         # como predicado (SET LOCAL app.tenant_id = '<uuid>').
@@ -126,6 +146,77 @@ class Settings:
             "ENABLE_DATA_ANONYMIZATION", "false"
         ).strip().lower() in ("1", "true", "yes")
 
+        # --- WhatsApp Business Cloud API (SPEC-024/025/026, SENSIBLE) ---
+        # `WHATSAPP_APP_SECRET`: clave HMAC para validar `X-Hub-Signature-256`
+        # del webhook (SPEC-026 RF-02). `WHATSAPP_VERIFY_TOKEN`: token del
+        # challenge GET de suscripción (SPEC-026 RF-01). CHECKPOINT C3:
+        # fail-fast fuera de `development` igual que JWT_SECRET_KEY/DB_PASSWORD
+        # (mismo `_require_strong_secret`) — un valor débil/ausente permitiría
+        # falsificar webhooks o bloquear la verificación de Meta.
+        self.whatsapp_app_secret: str = self._require_strong_secret(
+            "WHATSAPP_APP_SECRET",
+            os.getenv("WHATSAPP_APP_SECRET"),
+            dev_default="dev-only-change-me-whatsapp-app-secret",
+        )
+        self.whatsapp_verify_token: str = self._require_strong_secret(
+            "WHATSAPP_VERIFY_TOKEN",
+            os.getenv("WHATSAPP_VERIFY_TOKEN"),
+            dev_default="dev-only-change-me-whatsapp-verify-token",
+        )
+
+        # --- WhatsApp Business Cloud API — envío saliente (SPEC-029, SENSIBLE,
+        # ADR-006 excepción acotada de egress) ---
+        # `WHATSAPP_TOKEN`: access token del WABA (Bearer) usado por
+        # `app/integrations/whatsapp/graph_client.py` para autenticar contra
+        # la Graph API de Meta (host fijo, allowlist ADR-006). CHECKPOINT C3:
+        # fail-fast fuera de `development`, igual que el resto de secretos
+        # del canal — un token débil/ausente en producción bloquearía el
+        # arranque del worker de envío en vez de fallar silenciosamente en
+        # cada request a Meta.
+        self.whatsapp_token: str = self._require_strong_secret(
+            "WHATSAPP_TOKEN",
+            os.getenv("WHATSAPP_TOKEN"),
+            dev_default="dev-only-change-me-whatsapp-token-not-a-real-secret",
+        )
+        # `WHATSAPP_PHONE_NUMBER_ID` por defecto (fallback): en multi-tenant
+        # el `phone_number_id` real de cada envío proviene de la conversación/
+        # `whatsapp_accounts` (SPEC-025); esta variable solo cubre el caso de
+        # un único número configurado por entorno (mismo criterio que otros
+        # defaults de `Settings`, nunca sustituye el dato de la fila cuando
+        # existe).
+        self.whatsapp_phone_number_id: str | None = os.getenv(
+            "WHATSAPP_PHONE_NUMBER_ID"
+        )
+        # Versión de la Graph API: configurable por env, el HOST queda FIJO
+        # (allowlist en `graph_client.py`, RNF-01 SPEC-029) — cambiar esta
+        # variable nunca puede reapuntar a otro dominio.
+        self.whatsapp_api_version: str = os.getenv("WHATSAPP_API_VERSION", "v21.0")
+        # Ventana de servicio (RF-03 SPEC-029): horas desde el último mensaje
+        # del CONTACTO dentro de las cuales se permite texto libre; fuera de
+        # ventana se exige plantilla HSM utilitaria.
+        self.whatsapp_session_window_hours: int = int(
+            os.getenv("WHATSAPP_SESSION_WINDOW_HOURS", "24")
+        )
+        # Plantilla HSM utilitaria mínima (≥1, RF-03) para reabrir la
+        # conversación fuera de ventana. Sin plantilla configurada, un envío
+        # fuera de ventana se bloquea con motivo explícito (criterio de
+        # aceptación SPEC-029) en vez de arriesgarse a que Meta rechace un
+        # texto libre inválido.
+        self.whatsapp_template_name: str | None = os.getenv("WHATSAPP_TEMPLATE_NAME")
+        self.whatsapp_template_language: str = os.getenv(
+            "WHATSAPP_TEMPLATE_LANGUAGE", "es"
+        )
+        # Timeouts/reintentos del cliente de transporte hacia Meta (RNF-05).
+        self.whatsapp_send_timeout_seconds: float = float(
+            os.getenv("WHATSAPP_SEND_TIMEOUT_SECONDS", "10")
+        )
+        self.whatsapp_send_max_retries: int = int(
+            os.getenv("WHATSAPP_SEND_MAX_RETRIES", "3")
+        )
+        self.whatsapp_send_backoff_base_seconds: float = float(
+            os.getenv("WHATSAPP_SEND_BACKOFF_BASE_SECONDS", "1")
+        )
+
     # Hosts permitidos para el servicio de IA: nombre de servicio Docker
     # (`ia`, resuelto en la red interna `ia_internal`) o loopback (para
     # ejecutar Ollama directamente en el host durante desarrollo local sin
@@ -201,6 +292,12 @@ class Settings:
     @property
     def sqlalchemy_database_url(self) -> str:
         return self.database_url
+
+    @property
+    def sqlalchemy_database_url_migrations(self) -> str:
+        """URL de conexión con el rol PRIVILEGIADO (owner/DDL), solo para
+        Alembic (ADR-008). Nunca usar esta URL en el runtime de api/workers."""
+        return self.database_url_migrations
 
 
 @lru_cache

@@ -26,7 +26,13 @@ export interface Contact {
 }
 
 export type MessageDirection = "entrante" | "saliente";
-export type MessageStatus = "enviado" | "entregado" | "leido";
+/**
+ * Estados de entrega del mensaje. `failed` (SPEC-029/SPEC-031) es un estado
+ * TERMINAL propio del transporte de envío por WhatsApp (Graph API): 429/5xx
+ * agotados o ventana de 24h bloqueada sin plantilla HSM. Solo puede
+ * observarse en datos reales (flag ON); la maqueta mock no lo usa.
+ */
+export type MessageStatus = "enviado" | "entregado" | "leido" | "failed";
 
 export interface ConversationMessage {
   id: string;
@@ -34,6 +40,20 @@ export interface ConversationMessage {
   text: string;
   sentAt: string;
   status: MessageStatus;
+}
+
+/**
+ * Ventana de servicio de 24 h de WhatsApp (SPEC-029 RF-03, indicador SPA
+ * SPEC-031): se mide desde el último mensaje ENTRANTE (del contacto).
+ * Dentro de ventana -> texto libre; fuera -> se exige plantilla HSM.
+ * Solo aplica a `channel === "whatsapp"`; `undefined` en cualquier otro
+ * canal o en modo mock (Entregable #1 intacto, RF-05/RNF-07 SPEC-020).
+ */
+export interface WhatsappServiceWindow {
+  /** `true` si hay un mensaje entrante dentro de las últimas 24 h. */
+  withinWindow: boolean;
+  /** ISO de creación del último mensaje entrante; `null` si no existe. */
+  lastInboundAt: string | null;
 }
 
 export interface Conversation {
@@ -46,6 +66,8 @@ export interface Conversation {
   unreadCount: number;
   status: ConversationStatus;
   messages: ConversationMessage[];
+  /** Solo poblado para `channel === "whatsapp"` en modo real (SPEC-031). */
+  whatsappWindow?: WhatsappServiceWindow;
 }
 
 /* ---------- RAG (SPEC-005) — representación, sin IA/LLM real ---------- */

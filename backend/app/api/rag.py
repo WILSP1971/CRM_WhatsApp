@@ -36,6 +36,16 @@ RESTRICCIÓN DURA (SPEC-019, SENSIBLE): ningún endpoint de este router crea un
 `Message` saliente salvo `approve_draft_endpoint`, que requiere una acción
 humana explícita del agente autenticado (nunca se dispara automáticamente al
 generar/editar un borrador).
+
+RESTRICCIÓN DURA (SPEC-029, SENSIBLE, ADR-006): cuando `conversation.canal ==
+"whatsapp"`, `approve_draft_endpoint` además ENCOLA el envío por Graph API
+(`app.core.whatsapp_outbound_queue`, consumido por el worker
+`wa_send_worker`) DESPUÉS de que `create_message` ya persistió el mensaje —
+nunca antes ni de forma condicionada a otra cosa que la aprobación humana ya
+ejecutada. El envío real (host de la Graph API de Meta, allowlist ADR-006,
+ventana 24h/plantilla) vive fuera de este router, en
+`app/integrations/whatsapp/graph_client.py` +
+`app/workers/wa_send_worker.py` (separación transporte/orquestación).
 """
 
 from __future__ import annotations
@@ -67,11 +77,14 @@ from app.schemas.rag import (
     RagDraftOut,
     RagDraftRequest,
 )
+from app.core.whatsapp_outbound_queue import enqueue_outbound_send
 from app.schemas.ws_chat import WsOutgoingMessage
 from app.services.ai_service import AIClient, AIServiceError, get_ai_client
 from app.services.rag import draft_review_service
 from app.services.rag.draft_service import InsufficientContextError, generate_rag_draft
 from app.workers.rag_ingest_worker import notify_new_job
+
+_CANAL_WHATSAPP = "whatsapp"
 
 logger = structlog.get_logger(__name__)
 
@@ -364,7 +377,7 @@ async def approve_draft_endpoint(
     puede recuperar el mensaje vía `GET /conversations/{id}/messages`
     (backlog persistido, mismo mecanismo de reconexión de SPEC-015).
     """
-    _get_conversation_activa_or_404(db, conversation_id)
+    conversation = _get_conversation_activa_or_404(db, conversation_id)
     draft = _get_draft_activo_or_404(db, conversation_id, draft_id)
     try:
         draft, message = draft_review_service.approve_and_send(
@@ -374,6 +387,32 @@ async def approve_draft_endpoint(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
         ) from exc
+
+    # SPEC-029/RF-02 (SENSIBLE, ADR-006): SOLO tras la aprobación humana de
+    # arriba (`approve_and_send` ya persistió `message`) y SOLO si el canal
+    # de la conversación es WhatsApp, se encola el transporte real por Graph
+    # API. Ningún otro path del backend encola este job (allowlist de
+    # llamadores: únicamente este endpoint). Best-effort de encolado (igual
+    # criterio que el `publish` de WebChat de abajo): si Redis falla aquí, el
+    # mensaje YA quedó persistido — se loguea para reconciliar manualmente en
+    # vez de revertir la aprobación ya confirmada.
+    if conversation.canal == _CANAL_WHATSAPP:
+        try:
+            await enqueue_outbound_send(
+                redis_client,
+                tenant_id=current_user.tenant_id,
+                conversation_id=conversation_id,
+                message_id=message.id,
+            )
+        except Exception:  # noqa: BLE001 — best-effort, no revierte la aprobación
+            logger.error(
+                "rag_draft_approve_whatsapp_enqueue_failed",
+                draft_id=str(draft.id),
+                message_id=str(message.id),
+                conversation_id=str(conversation_id),
+                tenant_id=str(current_user.tenant_id),
+                exc_info=True,
+            )
 
     message_out = MessageOut.model_validate(message)
     envelope = WsOutgoingMessage(message=message_out)

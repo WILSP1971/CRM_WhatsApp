@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.core.sentiment_queue import enqueue_sentiment_job
 from app.models.conversation import Conversation
-from app.models.message import ESTADOS_ENTREGA_VALIDOS, Message
+from app.models.message import ESTADO_ENTREGA_FAILED, ESTADOS_ENTREGA_VALIDOS, Message
 
 logger = structlog.get_logger(__name__)
 
@@ -126,9 +126,20 @@ def update_delivery_status(
 
     No permite retroceder el estado (p.ej. de "leido" a "entregado") ni
     valores fuera de `ESTADOS_ENTREGA_VALIDOS`.
+
+    Hardening (SPEC-032, deuda SPEC-030/BLACK PANTHER): `failed` es TERMINAL
+    (`ESTADO_ENTREGA_FAILED`) y esta función es un no-op si el mensaje YA
+    está en ese estado — la terminalidad NO depende únicamente de que el
+    caller (`whatsapp_inbound_worker::_process_status_event`) filtre antes de
+    invocar; queda garantizada aquí también, en el único punto de escritura
+    de la progresión monotónica, para que ningún caller futuro pueda
+    "revivir" un mensaje ya marcado `failed`.
     """
     if estado_entrega not in ESTADOS_ENTREGA_VALIDOS:
         raise ValueError(f"estado_entrega inválido: {estado_entrega}")
+
+    if message.estado_entrega == ESTADO_ENTREGA_FAILED:
+        return message
 
     orden = {"enviado": 0, "entregado": 1, "leido": 2}
     if orden[estado_entrega] > orden.get(message.estado_entrega, 0):

@@ -1,20 +1,20 @@
 {
   "proyecto": "CRM_WhatsApp — OmniCore AI",
   "clasificacion": "SENSIBLE",
-  "actualizado": "2026-09-17T00:00:00-05:00",
+  "actualizado": "2026-09-18T00:00:00-05:00",
   "contadores": {
-    "next_plan": 3,
-    "next_spec": 24,
-    "next_adr": 6,
-    "total_specs": 23,
+    "next_plan": 4,
+    "next_spec": 35,
+    "next_adr": 9,
+    "total_specs": 34,
     "por_estado": {
       "PROPUESTA": 0,
       "APROBADA": 0,
       "EN_PROGRESO": 0,
-      "EN_VERIFICACION": 13,
+      "EN_VERIFICACION": 24,
       "CERRADA": 10
     },
-    "actualizado": null
+    "actualizado": "2026-09-19"
   },
   "planes": [
     {
@@ -56,6 +56,30 @@
         "SPEC-021",
         "SPEC-022",
         "SPEC-023"
+      ]
+    },
+    {
+      "id": "PLAN-003",
+      "titulo": "Fase 3 OmniCore AI: canal real WhatsApp Business Cloud API (Meta) end-to-end con human-in-the-loop (Entregable #3)",
+      "archivo": ".swarm/PLAN-003.md",
+      "estado": "PROPUESTA",
+      "origen": "prompt-lab/PROMPT-OPTIMIZADO-FASE3.md",
+      "specs_propuestas": [
+        "SPEC-024",
+        "SPEC-025",
+        "SPEC-026",
+        "SPEC-027",
+        "SPEC-028",
+        "SPEC-029",
+        "SPEC-030",
+        "SPEC-031",
+        "SPEC-032",
+        "SPEC-033",
+        "SPEC-034"
+      ],
+      "adrs_recomendados": [
+        "ADR-006",
+        "ADR-007"
       ]
     }
   ],
@@ -500,6 +524,246 @@
         "SPEC-021",
         "SPEC-022"
       ]
+    },
+    {
+      "id": "SPEC-024",
+      "titulo": "Infra de egress acotado + aislamiento reforzado de IA + auditoria de transporte",
+      "archivo": ".swarm/specs/SPEC-024.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F0",
+      "plan": "PLAN-003",
+      "sensible": true,
+      "responsable": "QUICKSILVER",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "HAWKEYE"
+      ],
+      "depende_de": [
+        "SPEC-011"
+      ]
+    },
+    {
+      "id": "SPEC-025",
+      "titulo": "Datos del canal WhatsApp: routing phone_number_id->tenant_id + wamid/estado en messages",
+      "archivo": ".swarm/specs/SPEC-025.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F1",
+      "plan": "PLAN-003",
+      "sensible": false,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-024",
+        "SPEC-012"
+      ]
+    },
+    {
+      "id": "SPEC-026",
+      "titulo": "Webhook de recepcion WhatsApp: challenge GET + firma HMAC-SHA256 + ACK rapido",
+      "archivo": ".swarm/specs/SPEC-026.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F2",
+      "plan": "PLAN-003",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "THOR",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-024",
+        "SPEC-025"
+      ]
+    },
+    {
+      "id": "SPEC-027",
+      "titulo": "Ingesta idempotente + enrutado multi-tenant (wa_inbound_worker)",
+      "archivo": ".swarm/specs/SPEC-027.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F3",
+      "plan": "PLAN-003",
+      "sensible": false,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-026",
+        "SPEC-025"
+      ]
+    },
+    {
+      "id": "SPEC-028",
+      "titulo": "Disparo del pipeline IA local sobre WhatsApp (reutiliza SPEC-017/018)",
+      "archivo": ".swarm/specs/SPEC-028.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F3",
+      "plan": "PLAN-003",
+      "sensible": false,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "THOR",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-027",
+        "SPEC-017",
+        "SPEC-018",
+        "SPEC-019"
+      ]
+    },
+    {
+      "id": "SPEC-029",
+      "titulo": "Envio saliente por Graph API (transporte) + human-in-the-loop + ventana 24h/plantilla",
+      "archivo": ".swarm/specs/SPEC-029.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F4",
+      "plan": "PLAN-003",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "THOR",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-027",
+        "SPEC-019",
+        "SPEC-024"
+      ]
+    },
+    {
+      "id": "SPEC-030",
+      "titulo": "Statuses de entrega: sent/delivered/read/failed -> estado_entrega",
+      "archivo": ".swarm/specs/SPEC-030.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F5",
+      "plan": "PLAN-003",
+      "sensible": false,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-029",
+        "SPEC-026"
+      ]
+    },
+    {
+      "id": "SPEC-031",
+      "titulo": "Integracion SPA del canal WhatsApp por feature-flag (reutiliza SPEC-020)",
+      "archivo": ".swarm/specs/SPEC-031.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F6",
+      "plan": "PLAN-003",
+      "sensible": false,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "DAREDEVIL",
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-027",
+        "SPEC-029",
+        "SPEC-030",
+        "SPEC-020"
+      ]
+    },
+    {
+      "id": "SPEC-032",
+      "titulo": "Seguridad del canal + politica de egress: auditoria cero inferencia externa + transporte acotado",
+      "archivo": ".swarm/specs/SPEC-032.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F7",
+      "plan": "PLAN-003",
+      "sensible": true,
+      "responsable": "BLACK WIDOW",
+      "revisan": [
+        "BLACK PANTHER",
+        "CAPTAIN AMERICA",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-024",
+        "SPEC-026",
+        "SPEC-027",
+        "SPEC-029",
+        "SPEC-030"
+      ]
+    },
+    {
+      "id": "SPEC-033",
+      "titulo": "Pruebas + carga (THOR) + observabilidad del canal WhatsApp",
+      "archivo": ".swarm/specs/SPEC-033.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F8",
+      "plan": "PLAN-003",
+      "sensible": false,
+      "responsable": "HAWKEYE",
+      "revisan": [
+        "THOR",
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "CAPTAIN AMERICA"
+      ],
+      "depende_de": [
+        "SPEC-024",
+        "SPEC-025",
+        "SPEC-026",
+        "SPEC-027",
+        "SPEC-028",
+        "SPEC-029",
+        "SPEC-030",
+        "SPEC-031",
+        "SPEC-032",
+        "SPEC-034"
+      ]
+    },
+    {
+      "id": "SPEC-034",
+      "titulo": "Documentacion, runbook del canal WhatsApp, simulador de webhook firmado y deploy on-prem",
+      "archivo": ".swarm/specs/SPEC-034.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F9",
+      "plan": "PLAN-003",
+      "sensible": false,
+      "responsable": "QUICKSILVER",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "HAWKEYE"
+      ],
+      "depende_de": [
+        "SPEC-032",
+        "SPEC-033"
+      ]
     }
   ],
   "adrs": [
@@ -542,6 +806,30 @@
       "estado": "Aceptada",
       "fecha": "2026-09-18",
       "plan": "PLAN-002"
+    },
+    {
+      "id": "ADR-006",
+      "titulo": "Excepcion acotada a .no-externo para el transporte del canal WhatsApp/Meta",
+      "archivo": ".swarm/adrs/ADR-006-excepcion-egress-transporte-whatsapp.md",
+      "estado": "Aceptada",
+      "fecha": "2026-09-18",
+      "plan": "PLAN-003"
+    },
+    {
+      "id": "ADR-007",
+      "titulo": "Idempotencia por wamid + enrutado phone_number_id->tenant_id",
+      "archivo": ".swarm/adrs/ADR-007-idempotencia-wamid-enrutado-tenant.md",
+      "estado": "Aceptada",
+      "fecha": "2026-09-18",
+      "plan": "PLAN-003"
+    },
+    {
+      "id": "ADR-008",
+      "titulo": "Modelo de roles de BD y RLS efectiva (rol app no-superusuario + SECURITY DEFINER)",
+      "archivo": ".swarm/adrs/ADR-008-roles-bd-rls-efectiva.md",
+      "estado": "Aceptada",
+      "fecha": "2026-09-18",
+      "plan": "PLAN-003"
     }
   ]
 }

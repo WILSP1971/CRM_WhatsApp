@@ -23,6 +23,7 @@ from app.api.rag import router as rag_router
 from app.api.tenants import router as tenants_router
 from app.api.privacy import router as privacy_router
 from app.api.ws_chat import router as ws_chat_router
+from app.integrations.whatsapp.webhook import router as whatsapp_webhook_router
 from app.core.metrics import observe_http_request, render_latest
 from app.core.redis_client import close_redis_client
 from app.core.request_id import RequestIDMiddleware
@@ -175,6 +176,14 @@ app.include_router(ai_router, prefix="/api/v1")
 # (SPEC-017, SENSIBLE: embeddings/generación SOLO vía AIClient interno)
 # ============================================================================
 app.include_router(rag_router, prefix="/api/v1")
+
+# ============================================================================
+# CANAL WHATSAPP — webhook de recepción: challenge GET + firma HMAC-SHA256 +
+# ACK rápido (SPEC-026, SENSIBLE: borde de entrada con Meta, ADR-006). NO
+# hace llamadas salientes a la Graph API (eso es el envío, SPEC-029); solo
+# valida y encola para el worker de ingesta (SPEC-027).
+# ============================================================================
+app.include_router(whatsapp_webhook_router, prefix="/api/v1")
 
 # ============================================================================
 # HEALTH CHECK ENDPOINTS (SPEC-011 RF-02)

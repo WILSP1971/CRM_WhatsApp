@@ -14,6 +14,7 @@ from app.models.document import Document  # noqa: F401
 from app.models.chunk import Chunk  # noqa: F401
 from app.models.embedding import Embedding  # noqa: F401
 from app.models.rag_draft import RagDraft  # noqa: F401
+from app.models.whatsapp_account import WhatsappAccount  # noqa: F401
 
 __all__ = [
     "Tenant",
@@ -25,4 +26,5 @@ __all__ = [
     "Chunk",
     "Embedding",
     "RagDraft",
+    "WhatsappAccount",
 ]

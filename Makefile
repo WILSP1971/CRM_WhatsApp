@@ -1,4 +1,4 @@
-.PHONY: help setup up down logs health backup restore test-egress migrate seed clean ps shell
+.PHONY: help setup up down logs health backup restore test-egress migrate seed clean ps shell wa-sim wa-sim-dup wa-sim-status wa-sim-challenge
 
 # Variables
 COMPOSE_FILE := docker-compose.yml
@@ -36,6 +36,10 @@ help:
 	@echo "  $(GREEN)shell-api$(NC)          Abrir shell en contenedor api"
 	@echo "  $(GREEN)shell-db$(NC)           Abrir shell en contenedor db (psql)"
 	@echo "  $(GREEN)stats$(NC)              Ver estadísticas de recursos (CPU, RAM)"
+	@echo "  $(GREEN)wa-sim$(NC)             Emitir webhook WhatsApp con firma HMAC válida"
+	@echo "  $(GREEN)wa-sim-dup$(NC)         Emitir webhook duplicado (prueba idempotencia)"
+	@echo "  $(GREEN)wa-sim-status$(NC)      Emitir callbacks de status (sent→delivered→read)"
+	@echo "  $(GREEN)wa-sim-challenge$(NC)   Emitir GET challenge (suscripción de webhook)"
 	@echo "  $(GREEN)docs$(NC)               Imprimir referencias a documentación"
 	@echo ""
 
@@ -170,6 +174,30 @@ test-egress:
 check-externos:
 	@echo "$(BLUE)▶ Ejecutando check-externos-backend.sh...$(NC)"
 	@bash $(BACKEND_DIR)/check-externos-backend.sh
+
+wa-sim:
+	@echo "$(BLUE)▶ Emitiendo webhook WhatsApp (mensaje entrante)...$(NC)"
+	@export WHATSAPP_APP_SECRET=$${WHATSAPP_APP_SECRET:-$$(openssl rand -hex 32)}; \
+	export WEBHOOK_URL=http://localhost:8000/api/v1/whatsapp/webhook; \
+	echo "$(YELLOW)app_secret: $$WHATSAPP_APP_SECRET$(NC)"; \
+	python $(BACKEND_DIR)/tools/wa_webhook_simulator.py
+
+wa-sim-dup:
+	@echo "$(BLUE)▶ Emitiendo webhook duplicado (prueba idempotencia)...$(NC)"
+	@export WHATSAPP_APP_SECRET=$${WHATSAPP_APP_SECRET:-$$(openssl rand -hex 32)}; \
+	export WEBHOOK_URL=http://localhost:8000/api/v1/whatsapp/webhook; \
+	python $(BACKEND_DIR)/tools/wa_webhook_simulator.py --duplicate
+
+wa-sim-status:
+	@echo "$(BLUE)▶ Emitiendo callbacks de status (sent→delivered→read)...$(NC)"
+	@export WHATSAPP_APP_SECRET=$${WHATSAPP_APP_SECRET:-$$(openssl rand -hex 32)}; \
+	export WEBHOOK_URL=http://localhost:8000/api/v1/whatsapp/webhook; \
+	python $(BACKEND_DIR)/tools/wa_webhook_simulator.py --status
+
+wa-sim-challenge:
+	@echo "$(BLUE)▶ Emitiendo GET challenge (suscripción)...$(NC)"
+	@export WEBHOOK_URL=http://localhost:8000/api/v1/whatsapp/webhook; \
+	python $(BACKEND_DIR)/tools/wa_webhook_simulator.py --challenge
 
 shell-api:
 	@$(DOCKER_COMPOSE) exec api /bin/bash

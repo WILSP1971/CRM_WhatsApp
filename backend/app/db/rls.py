@@ -35,6 +35,7 @@ TENANT_SCOPED_TABLES: list[str] = [
     "chunks",
     "embeddings",
     "rag_drafts",
+    "whatsapp_accounts",
 ]
 
 TENANT_SESSION_VAR = "app.tenant_id"

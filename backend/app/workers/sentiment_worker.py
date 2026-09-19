@@ -43,6 +43,7 @@ from app.core.sentiment_queue import (
     SentimentJob,
     dequeue_sentiment_job,
 )
+from app.core.worker_resilience import resilient_worker_loop
 from app.db.session import SessionLocal, set_tenant_session
 from app.models.message import Message
 from app.services.ai_service import AIClient
@@ -191,18 +192,27 @@ async def run_worker_loop(
     busy-waiting) y, por cada notificación, drena la cola del tenant
     señalado hasta vaciarla. Mismo patrón que
     `app.workers.rag_ingest_worker.run_worker_loop` (SPEC-017).
+
+    Hardening (SPEC-032, deuda SPEC-027/BLACK PANTHER): cada iteración corre
+    envuelta en `resilient_worker_loop` — ante una caída transitoria de
+    Redis/Postgres, se loguea y se espera backoff exponencial en vez de
+    dejar morir el proceso (evita crash-loop de `restart: unless-stopped`).
     """
     redis_client = redis_client or get_redis_client()
     stop_event = stop_event or asyncio.Event()
 
-    logger.info("sentiment_worker_started")
-    while not stop_event.is_set():
+    async def _iteration() -> None:
         result = await redis_client.blpop([NOTIFY_KEY], timeout=block_timeout_seconds)
         if result is None:
-            continue
+            return
         _, tenant_id = result
         while await drain_one(redis_client, tenant_id=tenant_id, timeout_seconds=0):
             pass
+
+    logger.info("sentiment_worker_started")
+    await resilient_worker_loop(
+        _iteration, stop_event=stop_event, worker_name="sentiment_worker"
+    )
     logger.info("sentiment_worker_stopped")
 
 

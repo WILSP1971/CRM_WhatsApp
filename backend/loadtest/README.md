@@ -1,12 +1,42 @@
-# Arnés de carga/latencia — SPEC-022 (RNF-04, THOR)
+# Arnés de carga/latencia — SPEC-022 (RNF-04, THOR) + SPEC-033 (webhook WhatsApp)
 
-Objetivos que este arnés mide (criterios de aceptación SPEC-022):
+Objetivos que este arnés mide (criterios de aceptación SPEC-022/SPEC-033):
 
 | Objetivo | Umbral | Escenario Locust |
 | --- | --- | --- |
-| p95 API no-IA | <= 200 ms | `GET /api/v1/contacts`, `GET /healthz` |
-| p95 RAG (GPU) | <= 6 s | `POST /api/v1/rag/draft` |
+| p95 API no-IA | <= 200 ms | `GET /api/v1/contacts`, `GET /healthz` (`OmniCoreApiUser`) |
+| p95 RAG (GPU) | <= 6 s | `POST /api/v1/rag/draft` (`OmniCoreApiUser`) |
 | Degradación CPU | documentada, no un número fijo | mismo escenario RAG, contra Ollama en modo CPU |
+| **p95 ACK webhook WhatsApp** | **<= 500 ms** | `POST /api/v1/whatsapp/webhook` con firma HMAC válida (`WhatsAppWebhookUser`, SPEC-026/SPEC-033) |
+
+## Escenario de webhook (SPEC-033, RNF-02)
+
+`WhatsAppWebhookUser` firma cada request con HMAC-SHA256 sobre el RAW body
+(igual que Meta / `tests/test_whatsapp_webhook.py`), usando
+`LOADTEST_WHATSAPP_APP_SECRET` (debe coincidir con el `WHATSAPP_APP_SECRET`
+real del backend bajo prueba — nunca un secreto de producción, C3). Mide
+SOLO el ACK síncrono (200 + encolado en `wa:inbound`); el procesamiento
+async (`whatsapp_inbound_worker`, SPEC-027) queda fuera del umbral por
+diseño (SPEC-026 RNF-02: el ACK debe ser rápido precisamente porque no
+espera al procesamiento).
+
+Ejecutar SOLO este escenario (aislado del resto, para no mezclar el ACK del
+webhook con la latencia del login/RAG en el mismo CSV):
+
+```
+LOADTEST_WHATSAPP_APP_SECRET=$WHATSAPP_APP_SECRET \
+LOADTEST_WHATSAPP_PHONE_NUMBER_ID=000000000000001 \
+locust -f backend/loadtest/locustfile.py --host http://localhost:8000 \
+    --headless -u 20 -r 5 -t 1m --csv=loadtest_webhook_report \
+    WhatsAppWebhookUser
+```
+
+Leer `loadtest_webhook_report_stats.csv`: columna `95%` de la fila
+`POST /api/v1/whatsapp/webhook (firma válida)` debe ser <= 500 (ms).
+
+Sin `LOADTEST_WHATSAPP_APP_SECRET`, `WhatsAppWebhookUser` se detiene de
+inmediato (fail-fast, no genera tráfico contra un endpoint que exige HMAC
+válido) — igual que `OmniCoreApiUser` cuando el login falla.
 
 Herramienta elegida: **Locust** (Python, mismo lenguaje que el backend,
 sin dependencias de runtime nuevas — ver `requirements-loadtest.txt`,

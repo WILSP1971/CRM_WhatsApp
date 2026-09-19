@@ -5,6 +5,7 @@ import {
   adaptCitations,
   adaptDraft,
   adaptMessage,
+  adaptWhatsappWindow,
 } from "@/lib/api/adapters";
 import type { BackendConversation, BackendMessage } from "@/lib/api/backendTypes";
 
@@ -38,6 +39,10 @@ describe("adaptMessage", () => {
 
   it("hace fallback a estado 'enviado' ante un estado_entrega desconocido", () => {
     expect(adaptMessage({ ...base, estado_entrega: "raro" }).status).toBe("enviado");
+  });
+
+  it("mapea estado_entrega='failed' (SPEC-029/SPEC-031) 1:1", () => {
+    expect(adaptMessage({ ...base, estado_entrega: "failed" }).status).toBe("failed");
   });
 });
 
@@ -112,6 +117,97 @@ describe("adaptConversation", () => {
   it("hace fallback de canal a 'webchat' ante un valor no reconocido", () => {
     const result = adaptConversation({ ...conversation, canal: "sms" }, []);
     expect(result.channel).toBe("webchat");
+  });
+
+  it("no calcula whatsappWindow para canales distintos de whatsapp", () => {
+    const result = adaptConversation(conversation, []);
+    expect(result.whatsappWindow).toBeUndefined();
+  });
+
+  it("calcula whatsappWindow para canal whatsapp (dentro de ventana)", () => {
+    const whatsappConversation: BackendConversation = { ...conversation, canal: "whatsapp" };
+    const messages: BackendMessage[] = [
+      {
+        id: "m1",
+        tenant_id: "t1",
+        conversation_id: "c1",
+        remitente: "contacto",
+        contenido: "Hola",
+        sentimiento: null,
+        sentimiento_score: null,
+        estado_entrega: "leido",
+        activo: true,
+        created_at: "2026-09-15T14:10:00-05:00",
+        updated_at: "2026-09-15T14:10:00-05:00",
+      },
+    ];
+    const result = adaptConversation(whatsappConversation, messages);
+    expect(result.channel).toBe("whatsapp");
+    expect(result.whatsappWindow).toBeDefined();
+    expect(result.whatsappWindow?.lastInboundAt).toBe("2026-09-15T14:10:00-05:00");
+  });
+});
+
+describe("adaptWhatsappWindow (SPEC-031 RF-02)", () => {
+  const inbound = (createdAt: string): BackendMessage => ({
+    id: "m-in",
+    tenant_id: "t1",
+    conversation_id: "c1",
+    remitente: "contacto",
+    contenido: "Hola",
+    sentimiento: null,
+    sentimiento_score: null,
+    estado_entrega: "leido",
+    activo: true,
+    created_at: createdAt,
+    updated_at: createdAt,
+  });
+  const outbound = (createdAt: string): BackendMessage => ({
+    id: "m-out",
+    tenant_id: "t1",
+    conversation_id: "c1",
+    remitente: "agente",
+    contenido: "Hola, ¿en qué te ayudo?",
+    sentimiento: null,
+    sentimiento_score: null,
+    estado_entrega: "entregado",
+    activo: true,
+    created_at: createdAt,
+    updated_at: createdAt,
+  });
+
+  const now = new Date("2026-09-16T12:00:00Z");
+
+  it("está dentro de ventana con un mensaje entrante de hace 2 horas", () => {
+    const messages = [inbound("2026-09-16T10:00:00Z")];
+    const result = adaptWhatsappWindow(messages, now);
+    expect(result.withinWindow).toBe(true);
+    expect(result.lastInboundAt).toBe("2026-09-16T10:00:00Z");
+  });
+
+  it("está fuera de ventana con un mensaje entrante de hace 25 horas", () => {
+    const messages = [inbound("2026-09-15T11:00:00Z")];
+    const result = adaptWhatsappWindow(messages, now);
+    expect(result.withinWindow).toBe(false);
+    expect(result.lastInboundAt).toBe("2026-09-15T11:00:00Z");
+  });
+
+  it("es fail-closed (fuera de ventana) sin ningún mensaje entrante", () => {
+    const messages = [outbound("2026-09-16T11:59:00Z")];
+    const result = adaptWhatsappWindow(messages, now);
+    expect(result.withinWindow).toBe(false);
+    expect(result.lastInboundAt).toBeNull();
+  });
+
+  it("usa el mensaje entrante MÁS RECIENTE cuando hay varios", () => {
+    const messages = [
+      inbound("2026-09-14T10:00:00Z"),
+      outbound("2026-09-16T09:00:00Z"),
+      inbound("2026-09-16T11:00:00Z"),
+    ];
+    const result = adaptWhatsappWindow(messages, now);
+    expect(result.withinWindow).toBe(true);
+    expect(result.lastInboundAt).toBe("2026-09-16T11:00:00Z");
   });
 });
 

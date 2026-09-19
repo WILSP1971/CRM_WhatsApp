@@ -1,9 +1,10 @@
 """Siembra el tenant/usuario/documento mínimos para `locustfile.py` —
-SPEC-022 (arnés de carga).
+SPEC-022 (arnés de carga) + SPEC-033 (escenario de carga del webhook
+WhatsApp).
 
 Pensado para CI (Postgres real de `services:` del workflow) o un entorno
-local con `docker compose up`. Es idempotente: si el tenant/usuario de
-carga ya existen, no falla (usa `ON CONFLICT DO NOTHING`).
+local con `docker compose up`. Es idempotente: si el tenant/usuario/cuenta
+de WhatsApp de carga ya existen, no falla (usa `ON CONFLICT DO NOTHING`).
 
 Uso:
     DATABASE_URL=postgresql+psycopg://... python -m loadtest.seed_loadtest_user
@@ -28,6 +29,14 @@ from app.security.passwords import hash_password
 TENANT_SLUG = os.getenv("LOADTEST_TENANT_SLUG", "tenant-loadtest")
 EMAIL = os.getenv("LOADTEST_EMAIL", "loadtest@tenant-loadtest.test")
 PASSWORD = os.getenv("LOADTEST_PASSWORD", "LoadTest#2026")
+# SPEC-033: phone_number_id usado por `WhatsAppWebhookUser` (locustfile.py) —
+# debe existir y estar activo en `whatsapp_accounts` para que el routing
+# `phone_number_id -> tenant_id` (SECURITY DEFINER, ADR-008) resuelva al
+# tenant de carga cuando el worker async (fuera del umbral del ACK) procese
+# el evento encolado.
+WHATSAPP_PHONE_NUMBER_ID = os.getenv(
+    "LOADTEST_WHATSAPP_PHONE_NUMBER_ID", "000000000000001"
+)
 
 
 def _database_url() -> str:
@@ -104,6 +113,28 @@ def seed() -> None:
                     for i in range(20)
                 ],
             )
+
+        # Cuenta de WhatsApp del tenant de carga (SPEC-033): permite que el
+        # escenario `WhatsAppWebhookUser` envíe un `phone_number_id` que
+        # resuelve a un tenant real vía `resolve_tenant_by_phone_number_id`
+        # (SECURITY DEFINER). `ON CONFLICT DO NOTHING` sobre `phone_number_id`
+        # (UNIQUE, SPEC-025) hace el seed idempotente entre corridas de CI.
+        conn.execute(
+            sa.text(
+                "INSERT INTO whatsapp_accounts "
+                "(id, tenant_id, phone_number_id, display_phone_number, etiqueta) "
+                "VALUES (:id, :tenant_id, :phone_number_id, :display_phone_number, "
+                "        :etiqueta) "
+                "ON CONFLICT (phone_number_id) DO NOTHING"
+            ),
+            {
+                "id": uuid.uuid4(),
+                "tenant_id": tenant_id,
+                "phone_number_id": WHATSAPP_PHONE_NUMBER_ID,
+                "display_phone_number": "+57 300 000 0000",
+                "etiqueta": "Cuenta de carga (THOR/HAWKEYE)",
+            },
+        )
 
     print(f"[seed_loadtest_user] tenant_slug={TENANT_SLUG} email={EMAIL} listo.")
 

@@ -6,11 +6,28 @@ Fixtures compartidos de pytest para tests de integración contra PostgreSQL real
 Si `DATABASE_URL` no apunta a un Postgres accesible, los tests que dependen de
 este fixture se SKIPEAN automáticamente (no fallan) para no romper el resto de
 la suite en entornos sin Docker (p.ej. este sandbox de implementación).
+
+Roles de BD (ADR-008, RLS efectiva) — MARCADOS PARA CI (requieren Postgres
+real con `init-sql/01-roles-app.sh` aplicado, ver `docker-compose.yml`):
+  - `postgres_engine` (este módulo): conecta con el rol PRIVILEGIADO/owner
+    (`DATABASE_URL`, típicamente `postgres`). Se usa SOLO para bootstrap de
+    fixtures (crear tenants/contactos de prueba fuera de cualquier filtro de
+    RLS) y para verificaciones de "estado administrativo" (p.ej. que un dato
+    no fue alterado). PostgreSQL NUNCA aplica RLS a un superusuario/owner, así
+    que un test que solo use `postgres_engine` para EJERCER el aislamiento
+    sería un falso positivo (el defecto original detectado por BLACK PANTHER
+    en SPEC-025/ADR-008).
+  - `app_engine`: conecta con el rol de APLICACIÓN NO-superusuario
+    `omnicore_app` (NOSUPERUSER NOBYPASSRLS, GRANTs mínimos DML). Es el rol
+    con el que corre `api`/workers en runtime. Los tests que EJERCEN RLS de
+    verdad (aislamiento cross-tenant, `SECURITY DEFINER`) deben usar este
+    fixture, no `postgres_engine`, para no ser falsos positivos.
 """
 
 import os
 import uuid
 from types import SimpleNamespace
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 import sqlalchemy as sa
@@ -21,12 +38,52 @@ from sqlalchemy.orm import Session
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Rol de aplicación NO-superusuario (ADR-008). Debe coincidir con
+# `DB_APP_ROLE`/`omnicore_app` creado por `init-sql/01-roles-app.sh`.
+_APP_ROLE = os.getenv("DB_APP_ROLE", "omnicore_app")
+
 
 def _database_url() -> str:
+    """URL de conexión con el rol PRIVILEGIADO/owner (bootstrap/Alembic).
+
+    Prioridad: `DATABASE_URL_MIGRATIONS` (ADR-008, mismo nombre que usa
+    `alembic/env.py` en runtime real) y, si no está definida, `DATABASE_URL`
+    (compatibilidad con entornos de test que aún no separaron variables).
+    """
     return os.getenv(
-        "DATABASE_URL",
-        "postgresql+psycopg://postgres:postgres@localhost:5432/omnicore_ai_test",
+        "DATABASE_URL_MIGRATIONS",
+        os.getenv(
+            "DATABASE_URL",
+            "postgresql+psycopg://postgres:postgres@localhost:5432/omnicore_ai_test",
+        ),
     )
+
+
+def _app_database_url(owner_url: str) -> str:
+    """URL de conexión con el rol de APLICACIÓN `omnicore_app` (ADR-008).
+
+    Prioridad: `DATABASE_URL_APP` explícita (si el entorno de CI la define)
+    y, si no, se deriva de la URL del owner sustituyendo usuario/contraseña
+    por `DB_APP_ROLE`/`DB_APP_PASSWORD` — evita duplicar host/puerto/db en
+    dos variables cuando basta con cambiar las credenciales.
+    """
+    explicit = os.getenv("DATABASE_URL_APP")
+    if explicit:
+        return explicit
+
+    app_password = os.getenv("DB_APP_PASSWORD")
+    if not app_password:
+        # Sin contraseña de app configurada no se puede derivar una URL
+        # válida; se deja que `_postgres_available` falle al conectar y el
+        # fixture se SKIPee (no es un Postgres con ADR-008 aplicado).
+        return owner_url
+
+    parts = urlsplit(owner_url)
+    netloc_host = parts.hostname or "localhost"
+    if parts.port:
+        netloc_host = f"{netloc_host}:{parts.port}"
+    netloc = f"{_APP_ROLE}:{app_password}@{netloc_host}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
 def _postgres_available(url: str) -> bool:
@@ -48,10 +105,16 @@ def database_url() -> str:
 @pytest.fixture(scope="session")
 def postgres_engine(database_url):
     """
-    Motor conectado a PostgreSQL real con el esquema de SPEC-012 aplicado
-    (`alembic upgrade head`). Si no hay Postgres accesible, se saltan los
+    Motor conectado a PostgreSQL real CON EL ROL PRIVILEGIADO/owner, con el
+    esquema de SPEC-012 aplicado (`alembic upgrade head`, ADR-008: Alembic
+    siempre corre con este rol). Si no hay Postgres accesible, se saltan los
     tests que dependan de este fixture (se documenta en el resumen de
     ejecución, no se marcan como aprobados en falso).
+
+    IMPORTANTE (ADR-008): este motor NO debe usarse para EJERCER RLS (el
+    owner nunca está sujeto a RLS/FORCE RLS). Úsalo solo para bootstrap de
+    datos de fixtures o para verificar estado "fuera de RLS" explícitamente.
+    Para ejercer RLS real usa el fixture `app_engine`.
     """
     if not _postgres_available(database_url):
         pytest.skip(
@@ -61,10 +124,44 @@ def postgres_engine(database_url):
 
     alembic_cfg = Config(os.path.join(BACKEND_DIR, "alembic.ini"))
     alembic_cfg.set_main_option("script_location", os.path.join(BACKEND_DIR, "alembic"))
-    os.environ["DATABASE_URL"] = database_url
+    os.environ["DATABASE_URL_MIGRATIONS"] = database_url
     command.upgrade(alembic_cfg, "head")
 
     engine = sa.create_engine(database_url, pool_pre_ping=True, future=True)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def app_engine(database_url, postgres_engine):
+    """
+    Motor conectado a PostgreSQL real con el rol de APLICACIÓN NO-superusuario
+    `omnicore_app` (ADR-008: NOSUPERUSER NOBYPASSRLS, GRANTs mínimos DML). Es
+    el mismo rol con el que corren `api`/`rag_worker`/`sentiment_worker` en
+    runtime (`docker-compose.yml`).
+
+    A diferencia de `postgres_engine` (owner, nunca sujeto a RLS), las
+    consultas hechas con este motor SÍ están sujetas a Row Level Security
+    (ENABLE+FORCE, ADR-004) — es el motor correcto para EJERCER el
+    aislamiento cross-tenant y la función `SECURITY DEFINER` tal como los
+    ejecutaría la aplicación real.
+
+    REQUIERE Postgres real con `init-sql/01-roles-app.sh` (ADR-008) ya
+    aplicado (rol `omnicore_app` existente con `DB_APP_PASSWORD` conocida).
+    Si el rol de aplicación no está disponible, se SKIPEA (no se marca en
+    falso) — MARCADO PARA CI: correr contra el `db` de `docker-compose.yml`
+    con `.env` completo (incluye `DB_APP_PASSWORD`).
+    """
+    app_url = _app_database_url(database_url)
+    if not _postgres_available(app_url):
+        pytest.skip(
+            "Rol de aplicación 'omnicore_app' no accesible en este entorno "
+            "(falta DB_APP_PASSWORD o init-sql/01-roles-app.sh no se aplicó "
+            "sobre este volumen de Postgres). MARCADO PARA CI: correr contra "
+            "el `db` de docker-compose.yml con `.env` completo (ADR-008)."
+        )
+
+    engine = sa.create_engine(app_url, pool_pre_ping=True, future=True)
     yield engine
     engine.dispose()
 
@@ -78,11 +175,24 @@ def db_session(postgres_engine) -> Session:
 @pytest.fixture
 def two_tenants_with_data(postgres_engine):
     """
-    Crea 2 tenants (A y B) con datos disjuntos (un contacto cada uno) fuera de
-    cualquier RLS de sesión (usando el rol de owner de la migración, que por
-    defecto NO está sujeto a FORCE RLS al ser el dueño de la tabla salvo que se
-    configure lo contrario — aquí insertamos vía `session.begin()` sin fijar
-    `app.tenant_id`, como owner de BD de test, para preparar el fixture).
+    Crea 2 tenants (A y B) con datos disjuntos (un contacto cada uno) usando
+    `postgres_engine` (rol PRIVILEGIADO/owner, ADR-008): a propósito, para
+    preparar el fixture, sin fijar `app.tenant_id`.
+
+    CORRECCIÓN (ADR-008, hallazgo BLACK PANTHER en SPEC-025): estos inserts
+    "pasan" SIN necesidad de fijar `app.tenant_id` NO porque el owner de la
+    tabla esté exento de RLS "salvo que se configure lo contrario" — eso es
+    falso y engañoso. La razón real es una regla FIJA del motor: **PostgreSQL
+    NUNCA aplica Row Level Security a superusuarios ni a roles con
+    `BYPASSRLS`**, ni siquiera con `FORCE ROW LEVEL SECURITY` (`ALTER TABLE
+    ... FORCE ROW LEVEL SECURITY` documentado explícitamente así). El owner
+    de las tablas aquí es el rol privilegiado que ejecuta Alembic
+    (típicamente `postgres`, superusuario), así que este fixture SIEMPRE
+    bypasea RLS por diseño (es intencional: así se preparan los datos de
+    ambos tenants sin restricción). Para EJERCER el aislamiento de verdad hay
+    que usar el fixture `app_engine` (rol `omnicore_app`, NOSUPERUSER
+    NOBYPASSRLS) — ver `tests/test_rls_isolation.py` y
+    `tests/test_whatsapp_routing.py` para los tests que sí ejercen RLS real.
     """
     tenant_a_id = uuid.uuid4()
     tenant_b_id = uuid.uuid4()

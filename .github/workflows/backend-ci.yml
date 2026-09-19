@@ -20,11 +20,18 @@ env:
   # de prueba con la longitud mínima exigida por `Settings` (C3). NUNCA
   # apuntan a un host de IA externo (SPEC-016 aborta el arranque si no).
   ENVIRONMENT: test
-  DATABASE_URL: postgresql+psycopg://postgres:postgres_ci_password@localhost:5432/omnicore_ai_test
-  DB_PASSWORD: postgres_ci_password
+  DATABASE_URL: postgresql+psycopg://postgres:postgres_ci_password_not_real_min_32c@localhost:5432/omnicore_ai_test
+  DB_PASSWORD: postgres_ci_password_not_real_min_32c
   REDIS_URL: redis://localhost:6379
   JWT_SECRET_KEY: ci-only-jwt-secret-key-not-a-real-secret-32c
   OLLAMA_BASE_URL: http://localhost:11434
+  # SPEC-026/SPEC-033 (webhook WhatsApp): valores de CI de >=32 caracteres
+  # (mínimo exigido por `Settings._require_strong_secret`, C3) — NUNCA un
+  # secreto real de Meta/producción. Usados tanto por los tests de firma
+  # HMAC (`tests/test_whatsapp_webhook.py`) como por el escenario de carga
+  # del webhook (`loadtest/locustfile.py::WhatsAppWebhookUser`, RNF-02).
+  WHATSAPP_APP_SECRET: ci-only-whatsapp-app-secret-not-real-32chars
+  WHATSAPP_VERIFY_TOKEN: ci-only-whatsapp-verify-token-not-real-32c
 
 jobs:
   lint-and-static-checks:
@@ -82,7 +89,7 @@ jobs:
         env:
           POSTGRES_DB: omnicore_ai_test
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres_ci_password
+          POSTGRES_PASSWORD: postgres_ci_password_not_real_min_32c
         ports:
           - 5432:5432
         options: >-
@@ -188,7 +195,7 @@ jobs:
         env:
           POSTGRES_DB: omnicore_ai_test
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres_ci_password
+          POSTGRES_PASSWORD: postgres_ci_password_not_real_min_32c
         ports:
           - 5432:5432
         options: >-
@@ -246,6 +253,38 @@ jobs:
             --headless -u 10 -r 5 -t 30s --csv=loadtest_report \
             --exit-code-on-error 0 || true
 
+      - name: "Locust — webhook WhatsApp (SPEC-026/SPEC-033, RNF-02 p95 ACK <= 500ms)"
+        working-directory: backend
+        run: |
+          LOADTEST_WHATSAPP_APP_SECRET="$WHATSAPP_APP_SECRET" \
+          LOADTEST_WHATSAPP_PHONE_NUMBER_ID="000000000000001" \
+          locust -f loadtest/locustfile.py --host http://localhost:8000 \
+            --headless -u 20 -r 5 -t 30s --csv=loadtest_webhook_report \
+            --exit-code-on-error 0 WhatsAppWebhookUser || true
+
+      - name: "Enforce p95 ACK webhook <= 500ms (SPEC-033 RNF-02, a diferencia del RAG NO depende de GPU)"
+        working-directory: backend
+        run: |
+          python -c "
+          import csv, sys
+          path = 'loadtest_webhook_report_stats.csv'
+          try:
+              with open(path, newline='') as fh:
+                  rows = list(csv.DictReader(fh))
+          except FileNotFoundError:
+              print('::error::No se generó loadtest_webhook_report_stats.csv — revisar el paso Locust anterior')
+              sys.exit(1)
+          target = next((r for r in rows if 'whatsapp/webhook' in r.get('Name', '')), None)
+          if target is None:
+              print('::error::No se encontró la fila del webhook en el reporte Locust')
+              sys.exit(1)
+          p95 = float(target['95%'])
+          print(f'p95 ACK webhook = {p95} ms (umbral <= 500 ms, SPEC-033 RNF-02)')
+          if p95 > 500:
+              print(f'::error::p95 ACK webhook ({p95} ms) supera el umbral de 500 ms (SPEC-033 RNF-02)')
+              sys.exit(1)
+          "
+
       - name: Resumen de carga en el job summary
         if: always()
         working-directory: backend
@@ -264,6 +303,20 @@ jobs:
           else
             echo "(sin loadtest_report_stats.csv — revisar log de Locust)" >> "$GITHUB_STEP_SUMMARY"
           fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Carga del webhook WhatsApp (SPEC-033, RNF-02: p95 ACK <= 500ms)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Mide SOLO el ACK síncrono del webhook (200 + encolado en Redis," \
+               "SPEC-026); el procesamiento async (whatsapp_inbound_worker," \
+               "SPEC-027) queda fuera de este umbral por diseño." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f loadtest_webhook_report_stats.csv ]; then
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat loadtest_webhook_report_stats.csv >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "(sin loadtest_webhook_report_stats.csv — revisar log de Locust)" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload load report
         if: always()
@@ -273,6 +326,8 @@ jobs:
           path: |
             backend/loadtest_report_stats.csv
             backend/loadtest_report_failures.csv
+            backend/loadtest_webhook_report_stats.csv
+            backend/loadtest_webhook_report_failures.csv
             backend/api.log
           if-no-files-found: warn
           retention-days: 14

@@ -135,3 +135,36 @@ docker compose config VÁLIDO, `ia_internal internal:true`.
 Cierre a CERRADA pendiente de: correr el pipeline CI contra Postgres/Redis/Ollama reales (los 71 tests skipped,
 coverage ≥80%, cross-tenant RLS end-to-end, egress real, p95 RAG con Locust). Deploy real a prod requiere OK del Lead.
 Deuda técnica registrada arriba (robustez WS 015, os.popen /healthz, CheckConstraint sentimiento, etc.).
+- **SPEC-026 (webhook WhatsApp)** (MEDIO, no bloqueante): M-1 `webhook.py` `enqueue_inbound_webhook_event` sin try/except → si Redis cae, 500 rompe el ACK 200 y Meta reintenta (tormenta); envolver + timeout y política de reintento. M-2 sin límite de tamaño de body → configurar `client_max_body_size` en el proxy TLS (SPEC-034). B-1 replay: dedup por wamid llega en SPEC-027.
+- **Deuda transversal de workers** (MAYOR, no bloqueante, PANTHER SPEC-027): `run_worker_loop` de TODOS los workers (rag_ingest/sentiment/whatsapp_inbound) sin try/except+backoff exponencial ante caída de Redis/Postgres → riesgo crash-loop bajo degradación. Endurecer en una pasada de hardening (o SPEC-033).
+- **SPEC-027 (MAYOR)**: falta test de CONCURRENCIA real del mismo `wamid` (dos hilos/conexiones → count==1). El código maneja IntegrityError; añadir test en SPEC-033/HAWKEYE con Postgres real.
+- **SPEC-028 (MENOR, perf)**: la generación del borrador RAG corre INLINE en la ingesta de WhatsApp → acopla la latencia de ingesta al p95 (~6s) del LLM. Considerar encolar la generación a un worker aparte (patrón rag_ingest_worker) en una pasada de optimización.
+- **SPEC-029 (MENOR, robustez)**: `_validate_graph_host` (graph_client.py) debería rechazar explícitamente userinfo embebido (`parsed.username/password`) por defensa en profundidad (no explotable hoy: base_url fijo). Endurecer en pasada de hardening.
+- **SPEC-030 (MAYOR, robustez)**: `message_service.update_delivery_status` no trata `failed` como terminal internamente (la terminalidad hoy depende de la guarda del `whatsapp_inbound_worker`). Endurecer: que `update_delivery_status` haga no-op si el mensaje ya está `failed`, para que ningún caller futuro lo "reviva". Bajo esfuerzo.
+- **SPEC-032 (MEDIO, def. en profundidad)**: `check-externos-backend.sh` verif.9 no cubre `app/services/ai_service.py` (importa httpx, corre en `api` con egress). No es fuga (config.py valida host interno fail-fast + ia_internal internal:true), pero extender el escáner para exigir que todo httpx fuera de integrations/whatsapp apunte a host interno. B-1: `failed` no está en el dict `orden` de update_delivery_status (manejado por no-op terminal, frágil ante refactor).
+- **CI backend — BLOQUEANTE corregido (HAWKEYE SPEC-033 + IRON MAN)**: `DB_PASSWORD` en `backend-ci.yml` tenía 20 chars < 32 exigidos por `_require_strong_secret` con `ENVIRONMENT=test` → `Settings()` abortaba y el CI (jobs test/load-smoke) nunca habría arrancado. Corregido a ≥32 chars (37) en DATABASE_URL/DB_PASSWORD/POSTGRES_PASSWORD; verificado que `Settings()` ya no aborta y YAML válido.
+
+## Entregable #3 — Canal WhatsApp Business API (PLAN-003) — IMPLEMENTADO (EN_VERIFICACION)
+
+Fecha: 2026-09-19. Las 11 SPECs (SPEC-024..034) implementadas, revisadas y en EN_VERIFICACION.
+Canal WhatsApp Cloud API (Meta) end-to-end reutilizando el pipeline del #2 (persistencia → sentimiento local
+→ RAG ≥3 citas → borrador human-in-the-loop → envío por Graph API). Meta = SOLO transporte; IA 100% local.
+
+| SPEC | Título | Revisión |
+| ---- | ------ | -------- |
+| 024 | Infra egress acotado (IA aislada) 🔴 | IRON MAN (fix: app_workers tenía egress → topología corregida) |
+| 025 | Datos WhatsApp + routing + wamid | BLACK PANTHER (fix BLOQUEANTE: app corría como superusuario → RLS no aplicaba; ADR-008: rol omnicore_app + SECURITY DEFINER) |
+| 026 | Webhook HMAC 🔴 | BLACK WIDOW (firma no evadible, sin fuga timing) |
+| 027 | Ingesta idempotente + enrutado | BLACK PANTHER (fix BLOQUEANTE: cola Redis+worker real) → idempotencia wamid |
+| 028 | Disparo pipeline IA local | BLACK PANTHER (human-in-the-loop intacto, modo degradado) |
+| 029 | Envío Graph API 🔴 | BLACK WIDOW (host allowlist no evadible, sin redirects, tokens/PII protegidos) |
+| 030 | Statuses (sent/delivered/read/failed) | BLACK PANTHER (RLS por wamid, monotónico, failed terminal) |
+| 031 | Integración SPA feature-flag WhatsApp | DAREDEVIL (flag OFF = maqueta intacta) |
+| 032 | Seguridad + egress 🔴 | BLACK WIDOW (VEREDICTO FINAL: excepción .no-externo respetada, IA aislada, guardarraíl anti-regresión) |
+| 033 | Pruebas + carga | HAWKEYE (test concurrencia wamid, carga webhook p95≤500ms; fix BLOQUEANTE CI: DB_PASSWORD<32) |
+| 034 | Docs + runbook + deploy + simulador 🔴 | BLACK WIDOW (sin secretos concretos; simulador firmado local) |
+
+ADRs: ADR-006 (excepción egress transporte WhatsApp con IA aislada), ADR-007 (idempotencia wamid/enrutado), ADR-008 (rol app no-superusuario + SECURITY DEFINER → RLS efectiva).
+Hallazgo transversal mayor: la app corría como superusuario Postgres (RLS no se aplicaba en runtime, afectaba a toda la Fase 2) → CORREGIDO con ADR-008. Egress a Meta acotado por topología (solo api/wa_send_worker) + allowlist por ruta + guardarraíl.
+Estado (sandbox, sin daemon): pytest 296 passed / 121 skipped / 0 failed, black/flake8 limpios, check-externos APROBADO, docker compose config VÁLIDO, ia_internal internal:true, guardarraíl de egress 11/11.
+Cierre a CERRADA pendiente de CI real (Postgres/Redis/Ollama): tests skipped en verde, cobertura ≥80%, p95 ACK webhook, concurrencia wamid, egress real. Deploy a prod requiere OK del Lead + notificación.

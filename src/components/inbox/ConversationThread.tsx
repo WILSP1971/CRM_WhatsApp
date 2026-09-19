@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, CheckCheck, Send } from "lucide-react";
+import { AlertTriangle, Check, CheckCheck, Send } from "lucide-react";
 import { Badge, Button } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { formatTime } from "@/lib/format";
-import { CHANNEL_META, MESSAGE_STATUS_LABEL, SENTIMENT_META } from "@/lib/channels";
+import {
+  CHANNEL_META,
+  MESSAGE_STATUS_LABEL,
+  SENTIMENT_META,
+  WHATSAPP_WINDOW_META,
+} from "@/lib/channels";
 import type { Contact, Conversation, MessageStatus } from "@/lib/types";
 
 interface ConversationThreadProps {
@@ -14,6 +19,11 @@ interface ConversationThreadProps {
 }
 
 function MessageStatusIcon({ status }: { status: MessageStatus }) {
+  if (status === "failed") {
+    return (
+      <AlertTriangle className="h-3.5 w-3.5 text-state-danger-strong" aria-hidden />
+    );
+  }
   if (status === "enviado") {
     return <Check className="h-3.5 w-3.5" aria-hidden />;
   }
@@ -35,6 +45,13 @@ export function ConversationThread({
   const channelMeta = CHANNEL_META[conversation.channel];
   const sentimentMeta = SENTIMENT_META[conversation.sentiment];
   const ChannelIcon = channelMeta.icon;
+  // Indicador de ventana 24h/plantilla (SPEC-031, RF-02): solo WhatsApp real.
+  const whatsappWindowMeta =
+    conversation.channel === "whatsapp" && conversation.whatsappWindow
+      ? conversation.whatsappWindow.withinWindow
+        ? WHATSAPP_WINDOW_META.dentro
+        : WHATSAPP_WINDOW_META.fuera
+      : null;
   const scrollRef = useRef<HTMLDivElement>(null);
   const [localDraft, setLocalDraft] = useState(draftText);
 
@@ -69,12 +86,22 @@ export function ConversationThread({
             </p>
           </div>
         </div>
-        <Badge
-          variant={sentimentMeta.badgeVariant}
-          aria-label={`Sentimiento del hilo: ${sentimentMeta.label}`}
-        >
-          Sentimiento: {sentimentMeta.label}
-        </Badge>
+        <div className="flex flex-none items-center gap-2">
+          {whatsappWindowMeta && (
+            <Badge
+              variant={whatsappWindowMeta.badgeVariant}
+              aria-label={`Ventana de servicio de WhatsApp: ${whatsappWindowMeta.label}`}
+            >
+              {whatsappWindowMeta.label}
+            </Badge>
+          )}
+          <Badge
+            variant={sentimentMeta.badgeVariant}
+            aria-label={`Sentimiento del hilo: ${sentimentMeta.label}`}
+          >
+            Sentimiento: {sentimentMeta.label}
+          </Badge>
+        </div>
       </header>
 
       <div

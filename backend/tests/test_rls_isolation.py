@@ -5,8 +5,23 @@ riesgo R-23, criterio CE-22).
 Requiere PostgreSQL real (el `db` de `docker-compose.yml`, pgvector/pg16) con
 el esquema de SPEC-012 aplicado vía Alembic. Si no hay Postgres accesible
 (p.ej. este sandbox sin daemon Docker), estos tests se SKIPEAN explícitamente
-(ver `tests/conftest.py::postgres_engine`) — NO se marcan como aprobados en
-falso; quedan documentados como pendientes de ejecutar en CI.
+(ver `tests/conftest.py::postgres_engine`/`app_engine`) — NO se marcan como
+aprobados en falso; quedan documentados como pendientes de ejecutar en CI.
+MARCADOS PARA CI: los tests que ejercen RLS real (todos salvo el de
+metadatos ENABLE/FORCE) requieren `app_engine` (rol `omnicore_app`, ADR-008)
+con `init-sql/01-roles-app.sh` ya aplicado sobre el Postgres de destino.
+
+CORRECCIÓN (ADR-008, hallazgo BLACK PANTHER): antes de ADR-008 estos tests
+ejercían RLS conectados con el rol `postgres` (superusuario/owner de la
+migración). **PostgreSQL NUNCA aplica RLS a superusuarios ni a roles con
+`BYPASSRLS`**, ni con `FORCE ROW LEVEL SECURITY` — así que esos tests
+"pasaban" como FALSOS POSITIVOS: el mismo código de la app, conectado como
+superusuario en producción, jamás habría tenido el aislamiento que el test
+decía verificar. Ahora los tests que EJERCEN el aislamiento (cross-tenant
+SELECT/UPDATE/DELETE, sesión sin tenant) usan `app_engine` (rol de
+aplicación NO-superusuario `omnicore_app`, NOSUPERUSER NOBYPASSRLS) — el
+mismo rol con el que corren `api`/workers en runtime — para que el resultado
+del test sea el resultado real que verá la aplicación.
 
 Qué se verifica (criterios de aceptación de SPEC-012):
   1. Con `app.tenant_id = A`, un SELECT sin WHERE sobre `contacts` devuelve
@@ -32,7 +47,11 @@ from app.db.session import set_tenant_session  # noqa: E402
 
 
 def test_rls_enabled_and_forced_on_all_tenant_tables(postgres_engine):
-    """Criterio: RLS ENABLE + FORCE en todas las tablas con tenant_id."""
+    """Criterio: RLS ENABLE + FORCE en todas las tablas con tenant_id.
+
+    Metadato de catálogo (`pg_class.relrowsecurity`/`relforcerowsecurity`):
+    no depende de qué rol consulta, así que usar `postgres_engine` aquí es
+    correcto (no ejerce RLS, solo lee el catálogo)."""
     with postgres_engine.connect() as conn:
         for table in TENANT_SCOPED_TABLES:
             row = conn.execute(
@@ -49,14 +68,17 @@ def test_rls_enabled_and_forced_on_all_tenant_tables(postgres_engine):
 
 
 def test_select_without_where_returns_only_own_tenant_rows(
-    postgres_engine, two_tenants_with_data
+    app_engine, two_tenants_with_data
 ):
     """
     Criterio: con app.tenant_id = A, un SELECT sin WHERE devuelve SOLO filas
     del tenant A (0 filas de B), aunque el query no filtre por tenant_id.
+
+    Usa `app_engine` (rol `omnicore_app`, ADR-008): con el rol owner/superuser
+    este mismo test "pasaría" aunque RLS no se aplicara (falso positivo).
     """
     data = two_tenants_with_data
-    with Session_with_tenant(postgres_engine, data["tenant_a_id"]) as conn:
+    with Session_with_tenant(app_engine, data["tenant_a_id"]) as conn:
         rows = conn.execute(sa.text("SELECT id, tenant_id FROM contacts")).fetchall()
         visible_ids = {row.id for row in rows}
 
@@ -69,13 +91,16 @@ def test_select_without_where_returns_only_own_tenant_rows(
         assert all(row.tenant_id == data["tenant_a_id"] for row in rows)
 
 
-def test_cross_tenant_update_affects_zero_rows(postgres_engine, two_tenants_with_data):
+def test_cross_tenant_update_affects_zero_rows(
+    app_engine, postgres_engine, two_tenants_with_data
+):
     """
     Criterio: un intento de UPDATE de fila de otro tenant afecta 0 filas.
-    Simula: agente del tenant A intenta modificar el contacto del tenant B.
+    Simula: agente del tenant A (rol `omnicore_app`, ADR-008) intenta
+    modificar el contacto del tenant B.
     """
     data = two_tenants_with_data
-    with Session_with_tenant(postgres_engine, data["tenant_a_id"]) as conn:
+    with Session_with_tenant(app_engine, data["tenant_a_id"]) as conn:
         result = conn.execute(
             sa.text("UPDATE contacts SET nombre = 'HACKEADO' WHERE id = :id"),
             {"id": data["contact_b_id"]},
@@ -84,8 +109,9 @@ def test_cross_tenant_update_affects_zero_rows(postgres_engine, two_tenants_with
             result.rowcount == 0
         ), "FUGA CROSS-TENANT: el tenant A pudo actualizar un contacto del tenant B"
 
-    # Verifica, ya sin restricción de tenant (rol admin de test), que el dato
-    # del tenant B permanece intacto.
+    # Verifica, con el rol owner de test (fuera de cualquier RLS a propósito,
+    # ver docstring de `two_tenants_with_data`), que el dato del tenant B
+    # permanece intacto.
     with postgres_engine.connect() as verify_conn:
         row = verify_conn.execute(
             sa.text("SELECT nombre FROM contacts WHERE id = :id"),
@@ -96,10 +122,13 @@ def test_cross_tenant_update_affects_zero_rows(postgres_engine, two_tenants_with
         ), "El dato del tenant B fue alterado"
 
 
-def test_cross_tenant_delete_affects_zero_rows(postgres_engine, two_tenants_with_data):
-    """Criterio: un intento de DELETE de fila de otro tenant afecta 0 filas."""
+def test_cross_tenant_delete_affects_zero_rows(
+    app_engine, postgres_engine, two_tenants_with_data
+):
+    """Criterio: un intento de DELETE de fila de otro tenant afecta 0 filas
+    (rol `omnicore_app`, ADR-008)."""
     data = two_tenants_with_data
-    with Session_with_tenant(postgres_engine, data["tenant_a_id"]) as conn:
+    with Session_with_tenant(app_engine, data["tenant_a_id"]) as conn:
         result = conn.execute(
             sa.text("DELETE FROM contacts WHERE id = :id"),
             {"id": data["contact_b_id"]},
@@ -116,13 +145,15 @@ def test_cross_tenant_delete_affects_zero_rows(postgres_engine, two_tenants_with
         assert row is not None, "El contacto del tenant B fue eliminado indebidamente"
 
 
-def test_session_without_tenant_sees_zero_rows(postgres_engine, two_tenants_with_data):
+def test_session_without_tenant_sees_zero_rows(app_engine, two_tenants_with_data):
     """
     Criterio (fail-closed, ADR-004): una sesión sin app.tenant_id fijado no ve
-    ninguna fila, ni siquiera con SELECT sin WHERE.
+    ninguna fila, ni siquiera con SELECT sin WHERE. Usa `app_engine` (rol
+    `omnicore_app`, ADR-008): con el owner/superuser este test pasaría igual
+    por accidente (nunca sujeto a RLS), sin probar el fail-closed real.
     """
     data = two_tenants_with_data  # noqa: F841 (asegura que existan filas)
-    with postgres_engine.connect() as conn:
+    with app_engine.connect() as conn:
         with conn.begin():
             conn.execute(sa.text("RESET app.tenant_id"))
             rows = conn.execute(sa.text("SELECT id FROM contacts")).fetchall()
