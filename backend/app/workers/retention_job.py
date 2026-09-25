@@ -19,10 +19,18 @@ Variables de entorno relevantes (`app.core.config.Settings`):
     permite auditar el impacto antes de habilitar la purga real en un
     entorno.
 
-Usa la sesión "de plataforma" (`app.db.session.get_db`, sin `tenant_id` de
-sesión fijado) porque recorre todos los tenants; cada fila procesada ya
-lleva su propio `tenant_id` (no hay fuga cross-tenant: cada anonimización
-solo toca la fila candidata, identificada por su propio id).
+Abre la sesión con `app.db.session.SessionLocal` (rol de aplicación
+`omnicore_app`, ADR-008), pero — CORRECCIÓN RLS, mismo hallazgo BLACK
+PANTHER que SPEC-041 (ver `app.services.telefonia.call_retention_job`) — NO
+opera con esa sesión "a secas": `run_retention_job` internamente recorre
+cada tenant ACTIVO y fija `app.tenant_id` (`set_tenant_session`, `SET
+LOCAL`) antes de tocar `contacts`, que tiene RLS ENABLE+FORCE
+(ADR-004/ADR-008). Sin ese `SET LOCAL`, el rol `omnicore_app` (`NOSUPERUSER
+NOBYPASSRLS`) ve CERO filas por diseño (fail-closed) y el job nunca
+encontraría candidatos — este módulo (`retention_job.py`) NO necesita fijar
+el tenant él mismo: delega esa responsabilidad por completo en
+`run_retention_job` (`app.services.retention_service`), que es quien itera
+tenant por tenant.
 """
 
 from __future__ import annotations

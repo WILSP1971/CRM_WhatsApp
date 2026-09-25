@@ -20,6 +20,19 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.1.1
 python-multipart==0.0.6
 pydantic-extra-validators==2.3.1
+# cryptography: cifrado simétrico (Fernet) del audio de llamadas en reposo
+# (SPEC-035/037, ADR-009). Ya llega transitivamente con python-jose, se fija
+# explícito porque app/services/telefonia/audio_store.py depende de ella
+# directamente.
+cryptography==41.0.7
+
+# faster-whisper: STT 100% local (CTranslate2), SPEC-035/038, ADR-009. Los
+# pesos del modelo (large-v3/medium) se montan por volumen en
+# STT_MODEL_DIR — este paquete NUNCA descarga en runtime
+# (app/services/telefonia/stt_engine.py usa local_files_only=True).
+# PROHIBIDO: STT/TTS de terceros en la nube (auditado en
+# check-externos-backend.sh, sección 10).
+faster-whisper==1.0.3
 
 # HTTP y comunicación
 httpx==0.25.2

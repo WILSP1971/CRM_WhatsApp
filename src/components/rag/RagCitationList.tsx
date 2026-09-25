@@ -4,6 +4,13 @@ import type { RagCitation } from "@/lib/types";
 interface RagCitationListProps {
   citations: RagCitation[];
   loading: boolean;
+  /**
+   * Texto anunciado por lectores de pantalla para la lista de citas. Por
+   * defecto asume el uso mock original (`RagPanel`); los consumidores que
+   * muestran citas REALES (p.ej. `CallDetailCard`, SPEC-040) deben pasar un
+   * texto propio para no anunciar "mock vectorial" sobre datos reales.
+   */
+  ariaLabel?: string;
 }
 
 function CitationSkeleton() {
@@ -16,16 +23,17 @@ function CitationSkeleton() {
 }
 
 /** Fragmentos de citas de "base vectorial" (mock) con fuente y score de similitud. */
-export function RagCitationList({ citations, loading }: RagCitationListProps) {
+export function RagCitationList({
+  citations,
+  loading,
+  ariaLabel = "Citas de la base de conocimiento (mock vectorial)",
+}: RagCitationListProps) {
   return (
     <div>
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-muted">
         Citas de la base de conocimiento
       </h3>
-      <ul
-        aria-label="Citas de la base de conocimiento (mock vectorial)"
-        className="flex flex-col gap-2"
-      >
+      <ul aria-label={ariaLabel} className="flex flex-col gap-2">
         {loading ? (
           <>
             <CitationSkeleton />

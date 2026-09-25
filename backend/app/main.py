@@ -14,6 +14,7 @@ import structlog
 
 from app.api.ai import router as ai_router
 from app.api.auth import router as auth_router
+from app.api.calls import router as calls_router
 from app.api.contact_360 import router as contact_360_router
 from app.api.contacts import router as contacts_router
 from app.api.conversations import router as conversations_router
@@ -24,6 +25,7 @@ from app.api.tenants import router as tenants_router
 from app.api.privacy import router as privacy_router
 from app.api.ws_chat import router as ws_chat_router
 from app.integrations.whatsapp.webhook import router as whatsapp_webhook_router
+from app.integrations.pbx.webhook import router as pbx_webhook_router
 from app.core.metrics import observe_http_request, render_latest
 from app.core.redis_client import close_redis_client
 from app.core.request_id import RequestIDMiddleware
@@ -178,12 +180,32 @@ app.include_router(ai_router, prefix="/api/v1")
 app.include_router(rag_router, prefix="/api/v1")
 
 # ============================================================================
+# CANAL DE VOZ — ficha de llamada (transcripción/sentimiento/resumen/borrador
+# citado) para el módulo VoiceBot de la SPA (SPEC-040, SENSIBLE: audio/
+# transcripción es PHI potencial, ADR-009). Solo lectura + streaming de audio
+# on-prem; ninguna lógica de negocio nueva sobre `Call`/`CallTranscript`
+# (SPEC-036..039).
+# ============================================================================
+app.include_router(calls_router, prefix="/api/v1")
+
+# ============================================================================
 # CANAL WHATSAPP — webhook de recepción: challenge GET + firma HMAC-SHA256 +
 # ACK rápido (SPEC-026, SENSIBLE: borde de entrada con Meta, ADR-006). NO
 # hace llamadas salientes a la Graph API (eso es el envío, SPEC-029); solo
 # valida y encola para el worker de ingesta (SPEC-027).
 # ============================================================================
 app.include_router(whatsapp_webhook_router, prefix="/api/v1")
+
+# ============================================================================
+# CANAL VOZ/TELEFONÍA — webhook de ingesta de grabaciones: firma HMAC-SHA256 +
+# ACK rápido (SPEC-037, SENSIBLE: borde de entrada del PBX, ADR-007/ADR-010).
+# Montado SIN prefijo /api/v1: el Caddyfile (SPEC-035) expone EXACTAMENTE
+# `/webhooks/pbx/recordings` tras el reverse proxy TLS, sin reescritura. NO
+# hace llamadas salientes al PBX (eso, solo si es externo, es
+# `recording_fetch_worker`/ADR-010); solo valida y encola para el worker de
+# ingesta (`recording_ingest_worker`, SPEC-037).
+# ============================================================================
+app.include_router(pbx_webhook_router)
 
 # ============================================================================
 # HEALTH CHECK ENDPOINTS (SPEC-011 RF-02)

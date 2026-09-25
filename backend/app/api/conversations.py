@@ -5,6 +5,28 @@ Mismo patrón de seguridad que `app/api/contacts.py`: JWT + `get_tenant_db`
 El `contact_id` de alta se valida contra el propio tenant (RLS ya lo filtra;
 un `contact_id` de otro tenant simplemente no se encuentra -> 404 explícito
 en vez de fallar la FK con un 500).
+
+Exclusión del canal `voz` en `list_conversations` (SPEC-040, decisión de
+diseño documentada — hallazgo BLACK PANTHER sobre SPEC-039): la transcripción
+de cada llamada se materializa internamente como un `Message` dentro de una
+`Conversation` de canal `"voz"` (`stt_worker`, SPEC-039) para reutilizar
+sentimiento/RAG SIN construir un pipeline de IA paralelo. Esa conversación es
+un artefacto INTERNO de reuso, no un hilo de chat con el que un agente deba
+interactuar desde la bandeja omnicanal (Entregable #1): su UI dedicada es la
+ficha de llamada del módulo VoiceBot (`GET /calls/{id}`, SPEC-040), que ya
+expone la misma transcripción/sentimiento/borrador con el contexto propio de
+una llamada (duración, número, dirección, audio). Se optó por FILTRAR
+`canal != "voz"` (opción (a) del análisis de SPEC-040) en vez de exponer
+"voz" como filtro seleccionable en la bandeja: la bandeja está pensada para
+canales de MENSAJERÍA con turnos de ida y vuelta (whatsapp/instagram/
+messenger/webchat, ver `CANALES_VALIDOS` en `app/schemas/conversation.py`),
+mientras que una llamada es un evento cerrado de una sola vez que no admite
+"responder desde la bandeja" (RF-01 SPEC-019 sigue operando sobre la MISMA
+conversación de voz vía los endpoints de `app/api/rag.py`/la ficha de
+llamada, no por la bandeja). Mezclar sin distinción una conversación de voz
+en la lista de chats habría confundido al agente (ver, p.ej., "responder"
+sobre una llamada ya finalizada). Si en el futuro se necesita voz
+seleccionable en la bandeja, es una SPEC nueva de UX (fuera de alcance aquí).
 """
 
 from __future__ import annotations
@@ -28,6 +50,11 @@ from app.schemas.conversation import (
 )
 
 router = APIRouter(prefix="/conversations", tags=["Conversations"])
+
+# Canal interno usado por `stt_worker` (SPEC-039) para materializar la
+# transcripción de una llamada como `Message` reutilizando sentimiento/RAG.
+# Excluido de la bandeja unificada (ver docstring del módulo, SPEC-040).
+_CANAL_VOZ = "voz"
 
 
 def _get_conversation_activa_or_404(
@@ -67,10 +94,11 @@ def list_conversations(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_tenant_db),
 ) -> Page[ConversationOut]:
-    """Lista conversaciones del tenant autenticado (paginado; excluye inactivas)."""
+    """Lista conversaciones del tenant autenticado (paginado; excluye inactivas
+    y excluye el canal `voz`, ver docstring del módulo — SPEC-040)."""
     stmt = (
         select(Conversation)
-        .where(Conversation.activo.is_(True))
+        .where(Conversation.activo.is_(True), Conversation.canal != _CANAL_VOZ)
         .order_by(Conversation.created_at.desc())
     )
     if contact_id is not None:

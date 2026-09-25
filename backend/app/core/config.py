@@ -217,6 +217,281 @@ class Settings:
             os.getenv("WHATSAPP_SEND_BACKOFF_BASE_SECONDS", "1")
         )
 
+        # --- STT local self-hosted (faster-whisper) — SPEC-035/037/038,
+        # SENSIBLE (.no-externo), ADR-009 ---
+        # Modelo/idioma/dispositivo del `stt_worker` (SPEC-038, fuera de
+        # alcance de SPEC-037): se leen aquí también porque `api` los expone
+        # en logs de diagnóstico y porque mantener una única fuente de verdad
+        # (`Settings`) evita que cada módulo relea `os.environ` por su cuenta.
+        self.stt_model: str = os.getenv("STT_MODEL", "large-v3")
+        self.stt_model_dir: str = os.getenv(
+            "STT_MODEL_DIR", "/root/.cache/huggingface/models"
+        )
+        self.stt_language: str = os.getenv("STT_LANGUAGE", "es")
+        self.stt_device: str = os.getenv("STT_DEVICE", "cuda")
+        # Modelo de repliegue (RNF-42, R-42): si `STT_DEVICE=cpu` o la carga
+        # en GPU falla (driver/CUDA ausente, OOM), `stt_worker` cae a este
+        # modelo más liviano en CPU en vez de fallar el job — RTF degradado
+        # pero DOCUMENTADO (SPEC-038), nunca un job perdido silenciosamente.
+        self.stt_fallback_model: str = os.getenv("STT_FALLBACK_MODEL", "medium")
+        self.stt_fallback_device: str = os.getenv("STT_FALLBACK_DEVICE", "cpu")
+        # `STT_COMPUTE_TYPE`: cuantización de CTranslate2 (float16 en GPU,
+        # int8 recomendado en CPU por rendimiento) — parametrizable porque el
+        # tipo óptimo depende del hardware real de despliegue (SUP-44).
+        self.stt_compute_type: str = os.getenv("STT_COMPUTE_TYPE", "float16")
+        self.stt_fallback_compute_type: str = os.getenv(
+            "STT_FALLBACK_COMPUTE_TYPE", "int8"
+        )
+        # VAD (voice activity detection) integrado de faster-whisper: filtra
+        # silencios antes de transcribir (RF de SPEC-038 "VAD para saltar
+        # silencios") y es la base de la heurística de diarización básica de
+        # abajo. Activable/desactivable por env (RF-04).
+        self.stt_vad_filter_enabled: bool = (
+            os.getenv("STT_VAD_FILTER_ENABLED", "true").strip().lower() == "true"
+        )
+        # Diarización básica opcional (RF-02): activable/desactivable por env
+        # sin tocar código. Heurística: alternancia de hablante `agente`/
+        # `cliente` cada vez que el hueco de silencio entre dos segmentos
+        # consecutivos (detectado por VAD) supera este umbral — ver docstring
+        # de `app/services/telefonia/stt_engine.py::_diarizar_segmentos` para
+        # el detalle de la decisión de diseño.
+        self.stt_diarization_enabled: bool = (
+            os.getenv("STT_DIARIZATION_ENABLED", "true").strip().lower() == "true"
+        )
+        self.stt_diarization_silence_gap_seconds: float = float(
+            os.getenv("STT_DIARIZATION_SILENCE_GAP_SECONDS", "1.5")
+        )
+
+        # --- Almacén de audio cifrado en reposo on-prem (SPEC-035/037,
+        # ADR-009) ---
+        # `AUDIO_STORAGE_PATH`: ruta del volumen (montado en `api`/
+        # `recording_ingest_worker`/`stt_worker`) donde se escribe el audio ya
+        # cifrado. `AUDIO_ENCRYPTION_KEY`: clave simétrica del cifrado en
+        # reposo (C3: fail-fast fuera de development, igual que el resto de
+        # secretos — un audio de llamada es dato personal/posible PHI).
+        self.audio_storage_path: str = os.getenv("AUDIO_STORAGE_PATH", "/audio_store")
+        self.audio_encryption_key: str = self._require_strong_secret(
+            "AUDIO_ENCRYPTION_KEY",
+            os.getenv("AUDIO_ENCRYPTION_KEY"),
+            dev_default="dev-only-change-me-audio-encryption-key-32chars",
+        )
+        self.audio_retention_days: int = int(os.getenv("AUDIO_RETENTION_DAYS", "30"))
+
+        # --- Retención/anonimización de audio y transcripción — SPEC-041,
+        # extiende SPEC-021 (HABEAS DATA/GDPR-like), ADR-009 ---
+        # `CALL_TRANSCRIPT_RETENTION_DAYS`: ventana (días) de retención de la
+        # TRANSCRIPCIÓN de la llamada, independiente de `AUDIO_RETENTION_DAYS`
+        # (RF-01 SPEC-041: "retención configurable... de audio y de
+        # transcripción"). Por defecto igual a `DATA_RETENTION_DAYS` (90,
+        # SPEC-021): el texto de la transcripción es dato personal/PHI
+        # potencial pero de menor sensibilidad de almacenamiento que el
+        # binario de audio (SUP-49 fija 30 días para el AUDIO; la SPEC no fija
+        # un default distinto para la transcripción, así que se alinea con la
+        # retención general de datos personales ya aprobada en SPEC-021 en vez
+        # de inventar un tercer valor sin base en una SPEC/ADR aprobados).
+        self.call_transcript_retention_days: int = int(
+            os.getenv("CALL_TRANSCRIPT_RETENTION_DAYS", "90")
+        )
+        # `AUDIO_RETENTION_ACTION`: acción al vencer la retención del AUDIO
+        # (RF-02). `"purge"` (default, SUP-49): borra físicamente el blob del
+        # almacén cifrado y limpia `audio_ref`. `"anonymize"`: alias
+        # documentado de `"purge"` para el audio — a diferencia de un campo de
+        # texto, un blob de audio no tiene una forma "anonimizada" útil
+        # distinta de eliminarlo (no hay PII parcial que tachar dentro de un
+        # WAV); se deja la variable configurable (no hardcodeada, RF-01) para
+        # que un cambio de política futuro sea un cambio de env, pero HOY solo
+        # `"purge"` tiene efecto real sobre el audio. Un valor no reconocido
+        # cae a `"purge"` (fail-safe: nunca retiene audio más allá de la
+        # ventana por un typo de configuración).
+        self.audio_retention_action: str = os.getenv(
+            "AUDIO_RETENTION_ACTION", "purge"
+        ).strip().lower()
+        if self.audio_retention_action not in ("purge", "anonymize"):
+            self.audio_retention_action = "purge"
+        # `CALL_TRANSCRIPT_RETENTION_ACTION`: acción al vencer la retención de
+        # la TRANSCRIPCIÓN (RF-02). `"anonymize"` (default): sobrescribe
+        # `segmentos` con un marcador no identificante (mismo patrón que
+        # `contacts` en `erase_contact_personal_data`, SPEC-021) y conserva la
+        # fila para trazabilidad (WER/idioma/modelo_stt). `"purge"`: además
+        # de anonimizar el texto, aplica borrado lógico (`activo=False`) de
+        # forma explícita si aún no lo estaba (ya ocurre siempre antes por
+        # C2, ver `call_retention_service`).
+        self.call_transcript_retention_action: str = os.getenv(
+            "CALL_TRANSCRIPT_RETENTION_ACTION", "anonymize"
+        ).strip().lower()
+        if self.call_transcript_retention_action not in ("purge", "anonymize"):
+            self.call_transcript_retention_action = "anonymize"
+        # `ENABLE_CALL_RETENTION_PURGE`: por defecto `false` — mismo criterio
+        # que `ENABLE_DATA_ANONYMIZATION` (SPEC-021): el job de retención de
+        # audio/transcripción corre en modo dry-run (solo reporta candidatos)
+        # hasta que se habilite explícitamente en el entorno, para evitar que
+        # un despliegue nuevo purgue audio sin decisión explícita del Lead.
+        self.enable_call_retention_purge: bool = os.getenv(
+            "ENABLE_CALL_RETENTION_PURGE", "false"
+        ).strip().lower() in ("1", "true", "yes")
+
+        # --- Puntos de extensión PHI (ADR-009 endurecido) — NO activos por
+        # defecto, preparados para cuando el Lead confirme dominio de
+        # salud/PHI (SUP-45 hoy fija HABEAS DATA/comercial, no PHI) ---
+        # `PHI_MODE_ENABLED`: interruptor maestro del endurecimiento PHI.
+        # Mientras sea `false` (default), el resto de flags PHI de abajo son
+        # ignorados por el código de aplicación (documentado, no implementado
+        # con lógica condicional en el resto del backend todavía — ese es
+        # justamente el alcance que esta SPEC deja preparado sin activar).
+        self.phi_mode_enabled: bool = os.getenv(
+            "PHI_MODE_ENABLED", "false"
+        ).strip().lower() in ("1", "true", "yes")
+        # `TRANSCRIPT_FIELD_ENCRYPTION_ENABLED`: TODO (SPEC-041 RNF-44, si
+        # PHI) — cuando el Lead confirme PHI y active `PHI_MODE_ENABLED`, este
+        # flag debe activar cifrado de CAMPO (a nivel de columna, no solo de
+        # volumen) de `call_transcripts.segmentos` con una clave separada de
+        # `AUDIO_ENCRYPTION_KEY` (rotación independiente). La lógica de
+        # cifrado/descifrado de campo NO está implementada todavía (esfuerzo
+        # significativo: requiere decidir mecanismo — pgcrypto a nivel de BD
+        # vs. cifrado en aplicación con SQLAlchemy `TypeDecorator`, migración
+        # de datos existentes, y coordinación con `stt_worker`/`app/api/calls.py`
+        # para leer/escribir el campo cifrado — fuera de alcance de SPEC-041,
+        # que solo deja el flag y este TODO documentado). Mientras
+        # `PHI_MODE_ENABLED=false` este flag no tiene efecto.
+        self.transcript_field_encryption_enabled: bool = os.getenv(
+            "TRANSCRIPT_FIELD_ENCRYPTION_ENABLED", "false"
+        ).strip().lower() in ("1", "true", "yes")
+
+        # --- Webhook de grabaciones del PBX (SPEC-037, ADR-007) ---
+        # `WEBHOOK_VERIFY_TOKEN`: token del challenge/verificación inicial (si
+        # el PBX lo soporta, análogo a `WHATSAPP_VERIFY_TOKEN`).
+        # `WEBHOOK_SECRET`: clave HMAC para validar la firma
+        # `X-Webhook-Signature-256` del POST con el fichero + metadatos
+        # (mismo patrón que `WHATSAPP_APP_SECRET`/SPEC-026). CHECKPOINT C3:
+        # fail-fast fuera de `development`.
+        self.webhook_verify_token: str = self._require_strong_secret(
+            "WEBHOOK_VERIFY_TOKEN",
+            os.getenv("WEBHOOK_VERIFY_TOKEN"),
+            dev_default="dev-only-change-me-webhook-verify-token",
+        )
+        self.webhook_secret: str = self._require_strong_secret(
+            "WEBHOOK_SECRET",
+            os.getenv("WEBHOOK_SECRET"),
+            dev_default="dev-only-change-me-webhook-secret-not-real",
+        )
+
+        # --- PBX externo (SOLO transporte de descarga, SPEC-037, ADR-010) ---
+        # Por defecto DESACTIVADO (SUP-42: PBX on-prem que entrega el fichero
+        # directamente por webhook -> sin egress nuevo). Si el Lead confirma
+        # PBX externo (`PBX_EXTERNAL_ENABLED=true`), `recording_fetch_worker`
+        # (`app/services/telefonia/`) descarga SOLO desde `PBX_EXTERNAL_HOST`
+        # (allowlist, `check-externos-backend.sh` sección 11).
+        self.pbx_external_enabled: bool = os.getenv(
+            "PBX_EXTERNAL_ENABLED", "false"
+        ).strip().lower() in ("1", "true", "yes")
+        self.pbx_external_host: str = os.getenv("PBX_EXTERNAL_HOST", "")
+        self.pbx_external_port: int = int(os.getenv("PBX_EXTERNAL_PORT", "443"))
+        # `PBX_EXTERNAL_AUTH_TOKEN`: CHECKPOINT C3, fail-fast CONDICIONADO
+        # (mismo patrón que `WEBHOOK_SECRET`) — solo se exige robusto cuando
+        # `PBX_EXTERNAL_ENABLED=true` (el Lead confirmó PBX externo): un
+        # token débil/ausente en ese escenario permitiría a un PBX
+        # comprometido/atacante autenticarse contra el proveedor real, o
+        # dejaría la descarga sin autenticar. Con `PBX_EXTERNAL_ENABLED=false`
+        # (default, SUP-42, PBX on-prem) NO se exige nada, para no romper el
+        # arranque en desarrollo/on-prem donde esta variable ni se usa.
+        self.pbx_external_auth_token: str = (
+            self._require_strong_secret(
+                "PBX_EXTERNAL_AUTH_TOKEN",
+                os.getenv("PBX_EXTERNAL_AUTH_TOKEN"),
+                dev_default="dev-only-change-me-pbx-external-auth-token",
+            )
+            if self.pbx_external_enabled
+            else os.getenv("PBX_EXTERNAL_AUTH_TOKEN", "")
+        )
+
+        # --- VoiceBot en vivo (Entregable #5, F0, SPEC-044, ADR-011/ADR-012) ---
+        # STT en vivo: modelo ligero para clasificación de intent contra catálogo
+        # cerrado (no transcripción legal, esa es batch con large-v3 de #4).
+        # Modelos: distil-whisper, faster-whisper small/medium cuantizado.
+        self.stt_live_model: str = os.getenv("STT_LIVE_MODEL", "distil-whisper")
+        self.stt_live_language: str = os.getenv("STT_LIVE_LANGUAGE", "es")
+        self.stt_live_device: str = os.getenv("STT_LIVE_DEVICE", "cuda")
+        # Cuantización del modelo STT en vivo (int8 recomendado para GPU
+        # compartida bajo presupuesto de latencia, ADR-011 §3).
+        self.stt_live_compute_type: str = os.getenv(
+            "STT_LIVE_COMPUTE_TYPE", "int8"
+        )
+
+        # TTS en vivo: interfaz conmutable Piper generativo ↔ modo bajo-cómputo
+        # pregrabado (ADR-012 §3, ADR-011 §5). Interfaz permite cambiar sin
+        # rediseño de orquestador (SPEC-048).
+        self.tts_mode: str = os.getenv(
+            "TTS_MODE", "piper"
+        ).strip().lower()  # "piper" o "prerecorded"
+        if self.tts_mode not in ("piper", "prerecorded"):
+            self.tts_mode = "piper"
+        self.piper_voice: str = os.getenv("PIPER_VOICE", "es_CO-pablo-medium")
+        # Fracción de VRAM reservada exclusivamente para TTS en vivo (ADR-011 §2,
+        # ADR-012 §3). Evita contención bajo GPU compartida. Rango: 0.0-1.0
+        # (p.ej. 0.3 = 30% de VRAM para TTS, resto para batch/STT).
+        try:
+            self.tts_vram_fraction: float = float(
+                os.getenv("TTS_VRAM_FRACTION", "0.3")
+            )
+            if not 0.0 <= self.tts_vram_fraction <= 1.0:
+                self.tts_vram_fraction = 0.3
+        except ValueError:
+            self.tts_vram_fraction = 0.3
+
+        # NLU de intent: confianza mínima de clasificación contra catálogo
+        # cerrado (SPEC-045). Respuestas con confianza < umbral se escalan a
+        # humano en vez de responder con bajo confidence.
+        try:
+            self.intent_confidence_threshold: float = float(
+                os.getenv("INTENT_CONFIDENCE_THRESHOLD", "0.7")
+            )
+            if not 0.0 <= self.intent_confidence_threshold <= 1.0:
+                self.intent_confidence_threshold = 0.7
+        except ValueError:
+            self.intent_confidence_threshold = 0.7
+
+        # Concurrencia máxima de llamadas en vivo (C, ADR-011 §4): límite
+        # conservador (1-3 por defecto piloto), fijado empíricamente por THOR
+        # (F6) compartiendo GPU con batch. Al llegar C+1, la nueva llamada
+        # recibe IVR mínimo + escalación (nunca se degrada una activa).
+        self.max_concurrent_calls: int = int(
+            os.getenv("MAX_CONCURRENT_CALLS", "1")
+        )
+
+        # PBX de media en vivo (SPEC-044, SPEC-046, ADR-011 §7): host/puerto
+        # del PBX que transporta media/SIP. Por defecto (vacío): PBX on-prem en
+        # red local, sin egress nuevo (P-M, topología preferida). Si el Lead
+        # confirma PBX externo (cloud), habilitar host/puerto + firewall host +
+        # allowlist CI, cambio sensible → C6.
+        self.pbx_media_host: str = os.getenv("PBX_MEDIA_HOST", "")
+        self.pbx_media_port: int = int(os.getenv("PBX_MEDIA_PORT", "5060"))
+        # PBX_MEDIA_AUTH_TOKEN: credencial del PBX de media (si aplica).
+        # CHECKPOINT C3: solo se exige robusto si PBX_MEDIA_HOST no está vacío
+        # (PBX externo confirmado).
+        self.pbx_media_auth_token: str = (
+            self._require_strong_secret(
+                "PBX_MEDIA_AUTH_TOKEN",
+                os.getenv("PBX_MEDIA_AUTH_TOKEN"),
+                dev_default="dev-only-change-me-pbx-media-auth-token",
+            )
+            if self.pbx_media_host
+            else os.getenv("PBX_MEDIA_AUTH_TOKEN", "")
+        )
+
+        # --- Notas de voz de WhatsApp — límite de duración (SPEC-055, F2,
+        # PLAN-006 R-66) ---
+        # `VOICE_NOTE_MAX_DURATION_SECONDS`: duración máxima (segundos) de
+        # una nota de voz de WhatsApp que se acepta para transcripción
+        # (`stt:jobs`). Default 600 (10 min, P1). Una nota que la excede se
+        # descarta amablemente (auto-respuesta al contacto vía `graph_client`,
+        # `transcripcion_estado="descartada_por_duracion"`), NUNCA se encola
+        # STT (RF-04/RNF-65). Configurable por env para permitir ajustar la
+        # política sin cambio de código (RF-05) y para poder probar el
+        # descarte con un límite reducido en tests.
+        self.voice_note_max_duration_seconds: int = int(
+            os.getenv("VOICE_NOTE_MAX_DURATION_SECONDS", "600")
+        )
+
     # Hosts permitidos para el servicio de IA: nombre de servicio Docker
     # (`ia`, resuelto en la red interna `ia_internal`) o loopback (para
     # ejecutar Ollama directamente en el host durante desarrollo local sin

@@ -6,6 +6,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Badge,
 } from "@/components/ui";
 import { AudioWaveform } from "@/components/voicebot/AudioWaveform";
 import { Dialpad, type CallLineStatus } from "@/components/voicebot/Dialpad";
@@ -13,9 +14,11 @@ import { LiveTranscript } from "@/components/voicebot/LiveTranscript";
 import { RecordingControls } from "@/components/voicebot/RecordingControls";
 import { IntentBadge } from "@/components/voicebot/IntentBadge";
 import { CallHistory } from "@/components/voicebot/CallHistory";
+import { CallDetailCard } from "@/components/voicebot/CallDetailCard";
 import callsData from "@/mocks/calls.json";
 import voiceBotData from "@/mocks/voicebot.json";
 import type { CallRecord, VoiceBotData, VoiceBotIntent } from "@/lib/types";
+import { useCallCenterData } from "@/lib/dataProvider/useCallCenterData";
 
 const calls = callsData as CallRecord[];
 const voiceBot = voiceBotData as VoiceBotData;
@@ -43,6 +46,28 @@ export function CallCenterPage() {
     () => [...calls].sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)),
     [],
   );
+
+  // Ficha de llamada con datos REALES (SPEC-040), tras el feature-flag
+  // `VITE_USE_REAL_API`. Con el flag OFF, `useRealApi` es `false` y nada de
+  // lo de abajo hace una sola llamada de red: la maqueta de arriba (webphone/
+  // onda/transcripción simulada/historial mock) permanece exactamente igual
+  // que en el Entregable #1 (RF-03 SPEC-040).
+  const {
+    useRealApi,
+    calls: realCalls,
+    loadingCalls: loadingRealCalls,
+    selectedCallDetail,
+    loadingDetail,
+    audioUrl,
+    error: realCallsError,
+    selectCall,
+  } = useCallCenterData();
+  const [selectedRealCallId, setSelectedRealCallId] = useState<string | null>(null);
+
+  const handleSelectRealCall = (callId: string) => {
+    setSelectedRealCallId(callId);
+    selectCall(callId);
+  };
 
   const handleCall = () => {
     setStatus("en_llamada");
@@ -165,6 +190,66 @@ export function CallCenterPage() {
           />
         </CardContent>
       </Card>
+
+      {useRealApi && (
+        <>
+          <Card>
+            <CardHeader>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle>Llamadas reales (canal de voz)</CardTitle>
+                <Badge variant="ai">Conectado · API real</Badge>
+              </div>
+              <CardDescription>
+                Datos reales del pipeline de voz (SPEC-036..039): selecciona una
+                llamada para ver su ficha completa.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {realCallsError && !selectedCallDetail && (
+                <p
+                  role="alert"
+                  className="border-state-danger-strong/40 bg-state-danger-strong/10 mb-3 rounded-lg border p-3 text-sm text-state-danger-strong"
+                >
+                  {realCallsError}
+                </p>
+              )}
+              {loadingRealCalls ? (
+                <div
+                  className="h-24 animate-pulse rounded-lg bg-bg-surface-raised motion-reduce:animate-none"
+                  aria-hidden
+                />
+              ) : realCalls.length === 0 ? (
+                <p className="text-sm text-text-muted">
+                  Aún no hay llamadas reales registradas para este tenant.
+                </p>
+              ) : (
+                <ul className="flex flex-col gap-2" aria-label="Llamadas reales del tenant">
+                  {realCalls.map((call) => (
+                    <li key={call.id}>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectRealCall(call.id)}
+                        aria-pressed={selectedRealCallId === call.id}
+                        className="flex w-full items-center justify-between gap-2 rounded-lg border border-border-subtle bg-bg-surface p-3 text-left text-sm hover:bg-bg-surface-raised aria-pressed:border-accent-indigo-strong"
+                      >
+                        <span className="text-text-primary">{call.numero}</span>
+                        <span className="text-text-muted">{call.estado}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+
+          <CallDetailCard
+            detail={selectedCallDetail}
+            loading={loadingDetail}
+            audioUrl={audioUrl}
+            error={selectedRealCallId ? realCallsError : null}
+          />
+        </>
+      )}
     </div>
   );
 }

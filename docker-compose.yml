@@ -142,6 +142,28 @@ services:
       # Datos personales: minimización y retención (SPEC-021, HABEAS DATA/GDPR)
       DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS:-90}
       ENABLE_DATA_ANONYMIZATION: ${ENABLE_DATA_ANONYMIZATION:-false}
+
+      # Retención de transcripción de llamadas (SPEC-041, extiende SPEC-021):
+      # `CALL_TRANSCRIPT_RETENTION_DAYS`/acciones se leen aquí también porque
+      # `api` expone `CallTranscriptOut.anonymized_at` en la ficha de llamada
+      # (SPEC-040) y `Settings` es la fuente única de verdad. El job de purga
+      # de AUDIO en sí (`app.workers.call_retention_job`) NO se ejecuta desde
+      # `api` (no monta el volumen `audio_store`, ver `recording_ingest_worker`/
+      # `stt_worker` más abajo) — solo desde un contenedor con acceso al
+      # almacén cifrado.
+      CALL_TRANSCRIPT_RETENTION_DAYS: ${CALL_TRANSCRIPT_RETENTION_DAYS:-90}
+      AUDIO_RETENTION_ACTION: ${AUDIO_RETENTION_ACTION:-purge}
+      CALL_TRANSCRIPT_RETENTION_ACTION: ${CALL_TRANSCRIPT_RETENTION_ACTION:-anonymize}
+      ENABLE_CALL_RETENTION_PURGE: ${ENABLE_CALL_RETENTION_PURGE:-false}
+      PHI_MODE_ENABLED: ${PHI_MODE_ENABLED:-false}
+      TRANSCRIPT_FIELD_ENCRYPTION_ENABLED: ${TRANSCRIPT_FIELD_ENCRYPTION_ENABLED:-false}
+
+      # Webhook de grabaciones del PBX (SPEC-037, SENSIBLE, ADR-007): `api`
+      # SOLO valida firma/verify_token + encola (`pbx:recordings:inbound`);
+      # NUNCA descarga del PBX ni almacena audio directamente (eso es
+      # `recording_ingest_worker`). C3: sin default débil fuera de development.
+      WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN:?WEBHOOK_VERIFY_TOKEN requerido (C3)}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:?WEBHOOK_SECRET requerido (C3)}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -288,13 +310,17 @@ services:
   # simplemente retoma el siguiente `BLPOP`. Resuelve `phone_number_id ->
   # tenant_id` (función SECURITY DEFINER, ADR-008), fija RLS y persiste
   # contacto/conversación/mensaje bajo el tenant correcto; deduplica por
-  # `wamid` (idempotencia, ADR-007). NO habla con `ia` (Ollama): el disparo
-  # del pipeline IA es SPEC-028, fuera de alcance de este worker.
-  # (SPEC-024: SOLO en `ia_internal internal:true`. Jamás en `app` (que tiene
-  # egress a Meta en SPEC-029). Invariante: sin ruta a internet — este
-  # worker procesa on-prem, recibido y validado por firma en SPEC-026; el
-  # enrutado por número + RLS es la barrera cross-tenant (ADR-007). Habla con
-  # db/redis por la misma red `ia_internal` sin egress.)
+  # `wamid` (idempotencia, ADR-007). Procesa también notas de voz (SPEC-054/055):
+  # descarga el binario de WhatsApp (SPEC-054, `media_client.py`), lo almacena
+  # cifrado, encola STT, y aplica límite de duración con auto-respuesta (SPEC-055).
+  # (SPEC-024/ADR-006 EXCEPCIÓN ACOTADA extendida: además de `ia_internal`,
+  # ahora SÍ está en `app` junto con `api`/`wa_send_worker`, pero SOLO para
+  # egress a `graph.facebook.com` (mismo módulo `app/integrations/whatsapp/`,
+  # descarga + auto-respuesta). El aislamiento de IA (ADR-005) se mantiene:
+  # RA/IA nunca descarga ni recibe audio directo de WhatsApp, `stt_worker`
+  # lee del almacén cifrado on-prem (ADR-009). Enrutado/RLS por tenant igual
+  # que antes, dedup por wamid igual que antes — solo la red/env vars cambian
+  # para soportar descarga de media.)
   whatsapp_inbound_worker:
     build:
       context: ./backend
@@ -318,6 +344,30 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
 
+      # WhatsApp Cloud API — descarga de media (SPEC-054) + auto-respuesta de
+      # descarte por duración (SPEC-055, usando `graph_client` igual que SPEC-029
+      # pero para egreso DENTRO de `app/integrations/whatsapp/`, host fijo
+      # graph.facebook.com, ADR-006). Mismos secretos que `wa_send_worker` porque
+      # reutiliza el cliente de transporte. CHECKPOINT C3: fail-fast fuera de
+      # development, igual que en `api`/`wa_send_worker`.
+      WHATSAPP_TOKEN: ${WHATSAPP_TOKEN:?WHATSAPP_TOKEN requerido (SPEC-054/055, C3)}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v21.0}
+      WHATSAPP_SEND_TIMEOUT_SECONDS: ${WHATSAPP_SEND_TIMEOUT_SECONDS:-10}
+      WHATSAPP_SEND_MAX_RETRIES: ${WHATSAPP_SEND_MAX_RETRIES:-3}
+      WHATSAPP_SEND_BACKOFF_BASE_SECONDS: ${WHATSAPP_SEND_BACKOFF_BASE_SECONDS:-1}
+
+      # Audio: almacén cifrado en reposo on-prem (descarga de notas de voz,
+      # SPEC-054/055, reutiliza volumen ya usado por `recording_ingest_worker`/
+      # `stt_worker`). CHECKPOINT C3: fail-fast fuera de development.
+      AUDIO_STORAGE_PATH: ${AUDIO_STORAGE_PATH:-/audio_store}
+      AUDIO_ENCRYPTION_KEY: ${AUDIO_ENCRYPTION_KEY:?AUDIO_ENCRYPTION_KEY requerido (C3, ADR-009)}
+
+      # Límite de duración de notas de voz (SPEC-055 RF-05, configurable por env).
+      # Default 600 segundos (10 min). Notas que excedan se descartan amablemente
+      # (auto-respuesta) sin encolar STT.
+      VOICE_NOTE_MAX_DURATION_SECONDS: ${VOICE_NOTE_MAX_DURATION_SECONDS:-600}
+
       ENVIRONMENT: ${ENVIRONMENT:-development}
 
       # Secretos (NUNCA hardcoded; desde variables de entorno; sin default débil)
@@ -331,9 +381,164 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      # Volumen cifrado para almacén de audio (en reposo) — compartido con
+      # `recording_ingest_worker` y `stt_worker`
+      - audio_store:/audio_store
+    networks:
+      - app
+      - ia_internal
+    restart: unless-stopped
+
+  # Worker de ingesta de grabaciones (SPEC-037, ADR-007/ADR-010): consume
+  # `pbx:recordings:inbound` (encolado por el webhook expuesto vía Caddy,
+  # SPEC-035), resuelve numero_destino->tenant_id (RLS, ADR-008), deduplica
+  # por call_id (idempotencia, ADR-007), almacena el audio CIFRADO en el
+  # volumen on-prem (`audio_store`) y encola el trabajo STT (`stt:jobs`,
+  # SPEC-038). Sin mapeo de tenant -> descarte auditado, CERO audio persistido.
+  # (Necesita el volumen `audio_store` para escribir el audio cifrado, y
+  # `ia_internal` para hablar con db/redis. NUNCA en `app`: no hace peticiones
+  # salientes, ni siquiera al PBX — la descarga, si aplica, es
+  # `recording_fetch_worker`, un servicio DISTINTO.)
+  recording_ingest_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crm_recording_ingest_worker
+    entrypoint: ["/app/app/workers/init_audio_store.sh"]
+    command: ["python", "-m", "app.workers.recording_ingest_worker"]
+    environment:
+      # Base de datos — RUNTIME (ADR-008): rol de aplicación NO-superusuario
+      # `omnicore_app` (NOSUPERUSER NOBYPASSRLS), igual que `api`/otros
+      # workers. El worker nunca ejecuta DDL, solo DML + la función
+      # SECURITY DEFINER de resolución de tenant (GRANT EXECUTE, ADR-008).
+      DATABASE_URL: postgresql://${DB_APP_ROLE:-omnicore_app}:${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}@db:5432/${DB_NAME:-omnicore_ai}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-omnicore_ai}
+      DB_USER: ${DB_APP_ROLE:-omnicore_app}
+      DB_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}
+
+      # Redis (cola `pbx:recordings:inbound` del webhook + `stt:jobs` de salida)
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      # Audio: almacén cifrado en reposo on-prem (mismo volumen que stt_worker)
+      AUDIO_STORAGE_PATH: ${AUDIO_STORAGE_PATH:-/audio_store}
+      AUDIO_ENCRYPTION_KEY: ${AUDIO_ENCRYPTION_KEY:?AUDIO_ENCRYPTION_KEY requerido (C3, ADR-009)}
+      AUDIO_RETENTION_DAYS: ${AUDIO_RETENTION_DAYS:-30}
+
+      # Retención/anonimización de audio y transcripción (SPEC-041, extiende
+      # SPEC-021, ADR-009): este contenedor SÍ monta el volumen `audio_store`
+      # (abajo), por eso es el candidato natural para ejecutar
+      # `docker compose exec recording_ingest_worker python -m
+      # app.workers.call_retention_job` (invocación manual/cron externo,
+      # QUICKSILVER decide el mecanismo — mismo criterio que `retention_job`
+      # de SPEC-021, que tampoco tiene un servicio compose dedicado).
+      CALL_TRANSCRIPT_RETENTION_DAYS: ${CALL_TRANSCRIPT_RETENTION_DAYS:-90}
+      AUDIO_RETENTION_ACTION: ${AUDIO_RETENTION_ACTION:-purge}
+      CALL_TRANSCRIPT_RETENTION_ACTION: ${CALL_TRANSCRIPT_RETENTION_ACTION:-anonymize}
+      ENABLE_CALL_RETENTION_PURGE: ${ENABLE_CALL_RETENTION_PURGE:-false}
+      PHI_MODE_ENABLED: ${PHI_MODE_ENABLED:-false}
+      TRANSCRIPT_FIELD_ENCRYPTION_ENABLED: ${TRANSCRIPT_FIELD_ENCRYPTION_ENABLED:-false}
+
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+
+      # Secretos (NUNCA hardcoded; desde variables de entorno; sin default débil)
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY requerido}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      # Volumen cifrado para almacén de audio (en reposo) — compartido con stt_worker
+      - audio_store:/audio_store
     networks:
       - ia_internal
     restart: unless-stopped
+    # Nota: SIN red `app`, NUNCA egress (ni siquiera al PBX)
+
+  # Worker de STT local (SPEC-035, SPEC-038, ADR-009): transcripción de audio
+  # 100% local con `faster-whisper` (large-v3, fallback medium).
+  # (SPEC-035/ADR-009: SOLO en `ia_internal internal:true`, NUNCA en `app`.
+  # Jamás habla con el PBX ni internet. Recibe el audio desde el almacén cifrado
+  # on-prem (volumen/MinIO en red interna). La lógica de transcripción es SPEC-038,
+  # este servicio es base sin Pull de modelos en runtime (pesos por volumen). STT
+  # de terceros (Google STT, AWS Transcribe, OpenAI Whisper API, Deepgram,
+  # AssemblyAI, Azure Speech) PROHIBIDOS en auditoría CI (check-externos-backend.sh).
+  # Invariante: ningún egress desde STT/IA; firewall host DROP.)
+  stt_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crm_stt_worker
+    entrypoint: ["/app/app/workers/init_audio_store.sh"]
+    command: ["python", "-m", "app.workers.stt_worker"]
+    environment:
+      # Base de datos — RUNTIME (ADR-008): rol de aplicación NO-superusuario
+      # `omnicore_app` (NOSUPERUSER NOBYPASSRLS), igual que `api`/otros workers.
+      DATABASE_URL: postgresql://${DB_APP_ROLE:-omnicore_app}:${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}@db:5432/${DB_NAME:-omnicore_ai}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-omnicore_ai}
+      DB_USER: ${DB_APP_ROLE:-omnicore_app}
+      DB_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}
+
+      # Redis (cola de ingesta de grabaciones: stt:jobs)
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      # STT (SPEC-035, SPEC-038): modelo local, sin servicios de terceros
+      # faster-whisper large-v3 es-CO (por defecto); fallback medium si GPU insuficiente.
+      STT_MODEL: ${STT_MODEL:-large-v3}
+      STT_MODEL_DIR: ${STT_MODEL_DIR:-/root/.cache/huggingface/models}
+      STT_LANGUAGE: ${STT_LANGUAGE:-es}
+      STT_DEVICE: ${STT_DEVICE:-cuda}
+      # Fallback CPU/medium automático si la carga en STT_DEVICE falla
+      # (RNF-42/R-42, SPEC-038) — RTF degradado documentado, nunca job perdido.
+      STT_FALLBACK_MODEL: ${STT_FALLBACK_MODEL:-medium}
+      STT_FALLBACK_DEVICE: ${STT_FALLBACK_DEVICE:-cpu}
+      STT_COMPUTE_TYPE: ${STT_COMPUTE_TYPE:-float16}
+      STT_FALLBACK_COMPUTE_TYPE: ${STT_FALLBACK_COMPUTE_TYPE:-int8}
+      # VAD (saltar silencios) y diarización básica opcional agente/cliente
+      # por heurística de silencio prolongado (SPEC-038, RF-02/RF-04).
+      STT_VAD_FILTER_ENABLED: ${STT_VAD_FILTER_ENABLED:-true}
+      STT_DIARIZATION_ENABLED: ${STT_DIARIZATION_ENABLED:-true}
+      STT_DIARIZATION_SILENCE_GAP_SECONDS: ${STT_DIARIZATION_SILENCE_GAP_SECONDS:-1.5}
+
+      # Audio: almacén cifrado en reposo on-prem (volumen cifrado o MinIO local)
+      # AUDIO_STORAGE_PATH: ruta del volumen en el contenedor para archivo local cifrado
+      # o credenciales de MinIO (si aplica, SPEC-035 Almacén #2)
+      AUDIO_STORAGE_PATH: ${AUDIO_STORAGE_PATH:-/audio_store}
+      AUDIO_ENCRYPTION_KEY: ${AUDIO_ENCRYPTION_KEY:?AUDIO_ENCRYPTION_KEY requerido (C3, ADR-009)}
+      AUDIO_RETENTION_DAYS: ${AUDIO_RETENTION_DAYS:-30}
+
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+
+      # Secretos (NUNCA hardcoded; desde variables de entorno; sin default débil)
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY requerido}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      # Volumen cifrado para almacén de audio (en reposo)
+      - audio_store:/audio_store
+      # Pesos de whisper/faster-whisper montados por volumen (sin pull en runtime, ADR-009)
+      - whisper_models:/root/.cache/huggingface/models
+    networks:
+      - ia_internal
+    restart: unless-stopped
+    # Nota: SIN red `app`, NUNCA salida a internet
 
   # Worker de ENVÍO saliente por WhatsApp (SPEC-029, ADR-006): consume la
   # cola Redis persistente `wa:outbound` (`app.core.whatsapp_outbound_queue`)
@@ -403,6 +608,248 @@ services:
       - ia_internal
     restart: unless-stopped
 
+  # Reverse proxy TLS (SPEC-035, ADR-010): expone SOLO el path del webhook de
+  # grabaciones (/webhooks/pbx/recordings). Nunca STT/IA ni BD.
+  # En desarrollo: Caddy auto-genera TLS autofirmado para localhost.
+  # En producción: usar certificado válido (Let's Encrypt vía ACME).
+  # (SPEC-035: entregado con el proxy genérico; webhook específico del PBX
+  # es SPEC-037 — la ruta exacta depende del conector que se implemente.)
+  caddy:
+    image: caddy:2-alpine
+    container_name: crm_caddy
+    ports:
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Persistencia de certificados (TLS)
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      # Dominio de listening (desarrollo: localhost, producción: reemplazar)
+      CADDY_DOMAIN: ${CADDY_DOMAIN:-localhost}
+    networks:
+      - app
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    # Nota: Caddy accede solo a `api` (red `app`), nunca a `ia_internal`
+
+  # Worker de descarga de grabaciones (SPEC-035, SPEC-037, ADR-010).
+  # (ENTREGADO INERTE — solo se levanta si PBX_EXTERNAL_ENABLED=true y profiles activos)
+  #
+  # La infraestructura del worker está lista (container image, env vars, volúmenes),
+  # pero por SUP-42 (PBX preferido on-prem), este servicio NO se levanta con
+  # `docker compose up` normal. Se activa SOLO si:
+  # 1. El Lead confirma PBX EXTERNO (PBX_EXTERNAL_ENABLED=true).
+  # 2. Se ejecuta `docker compose --profile pbx-externo up`.
+  #
+  # En ia_internal + app: necesita hablar con api (red app) para reportar
+  # descarga, y con db/redis (red ia_internal) para registrar metadatos;
+  # pero egress acotado SOLO al host del PBX (firewall host + allowlist en
+  # check-externos-backend.sh, ADR-010).
+  #
+  # SPEC-037 (conector de ingesta) define la lógica exacta (reconexión,
+  # reintentos, parseo de respuesta, transformación a eventos de llamada).
+  recording_fetch_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crm_recording_fetch_worker
+    command: ["python", "-m", "app.workers.recording_fetch_worker"]
+    environment:
+      # Base de datos — RUNTIME (ADR-008): rol de aplicación NO-superusuario
+      DATABASE_URL: postgresql://${DB_APP_ROLE:-omnicore_app}:${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}@db:5432/${DB_NAME:-omnicore_ai}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-omnicore_ai}
+      DB_USER: ${DB_APP_ROLE:-omnicore_app}
+      DB_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}
+
+      # Redis (cola de ingesta de grabaciones: recording:fetch:*)
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      # PBX externo — CONTINGENCIA si PBX_EXTERNAL_ENABLED=true (ADR-010)
+      # Por defecto (false): estas vars se ignoran, sin egress nuevo.
+      # Si true: egress permitido SOLO al host del PBX vía firewall host.
+      PBX_EXTERNAL_HOST: ${PBX_EXTERNAL_HOST:-}
+      PBX_EXTERNAL_PORT: ${PBX_EXTERNAL_PORT:-443}
+      PBX_EXTERNAL_AUTH_TOKEN: ${PBX_EXTERNAL_AUTH_TOKEN:-}
+      WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN:?WEBHOOK_VERIFY_TOKEN requerido (C3)}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:?WEBHOOK_SECRET requerido (C3)}
+
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+
+      # Secretos
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY requerido}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    networks:
+      - app
+      - ia_internal
+    profiles: ["pbx-externo"]
+    restart: unless-stopped
+    # Nota: accesible solo si PBX_EXTERNAL_ENABLED=true y `--profile pbx-externo` está activo
+
+  # ========================================================================
+  # VoiceBot en vivo — Entregable #5, F0 (SPEC-044, ADR-011/ADR-012)
+  # ========================================================================
+  #
+  # Servicios de voz en vivo (STT, TTS, NLU de intent) en red `ia_internal`
+  # sin egress (mismo aislamiento que IA/inferencia local de #4). El
+  # `voice_gateway` (conector SIP/media en vivo) está en red `app` pero con
+  # egress acotado SOLO al host del PBX de media si es externo (por defecto
+  # on-prem sin egress nuevo, P-M aprobado, ADR-011 §10).
+
+  # Voice STT en vivo (SPEC-044, SPEC-047): transcripción streaming ligera
+  # (distil-whisper o faster-whisper small/medium cuantizado) para clasificar
+  # intent contra catálogo cerrado. Modelo: `STT_LIVE_MODEL` (env).
+  # Red: `ia_internal internal:true` sin egress (NUNCA internet/PBX).
+  # Audio: recibe bytes de `voice_gateway` por red interna; NUNCA desde
+  # internet ni del PBX directamente.
+  # GPU: comparte con `stt_worker` batch bajo mecanismo de prioridad
+  # (ADR-011): señal Redis `voice:active_calls` pausa el batch mientras haya
+  # ≥1 llamada en vivo (implementado en `stt_worker.py`).
+  # (ENTREGADO INERTE en F0: imagen placeholder; lógica streaming en SPEC-047)
+  voice_stt:
+    image: python:3.11-slim
+    container_name: crm_voice_stt
+    command: ["python", "-c", "print('voice_stt: placeholder inerte, implementado en SPEC-047')"]
+    environment:
+      # Configuración de STT en vivo (F0: placeholders; SPEC-047 los usa)
+      STT_LIVE_MODEL: ${STT_LIVE_MODEL:-distil-whisper}
+      STT_LIVE_LANGUAGE: ${STT_LIVE_LANGUAGE:-es}
+      STT_LIVE_DEVICE: ${STT_LIVE_DEVICE:-cuda}
+      STT_LIVE_COMPUTE_TYPE: ${STT_LIVE_COMPUTE_TYPE:-int8}
+      # Confianza mínima de clasificación de intent (SPEC-045)
+      INTENT_CONFIDENCE_THRESHOLD: ${INTENT_CONFIDENCE_THRESHOLD:-0.7}
+
+      # Base de datos y Redis (para logging de sesiones en vivo, métricas)
+      DATABASE_URL: postgresql://${DB_APP_ROLE:-omnicore_app}:${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}@db:5432/${DB_NAME:-omnicore_ai}
+      REDIS_URL: redis://redis:6379
+
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY requerido}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      # Pesos de STT liviano montados por volumen (sin descarga en runtime)
+      - voice_stt_models:/root/.cache/huggingface/models
+    networks:
+      - ia_internal
+    restart: unless-stopped
+    # Nota: SIN red `app`, NUNCA egress
+
+  # Voice TTS en vivo (SPEC-044, SPEC-048): síntesis de voz local con Piper
+  # (voces es-CO) o modo bajo-cómputo (banco de audios pregrabados).
+  # Red: `ia_internal internal:true` sin egress (NUNCA audio a terceros,
+  # ADR-012). Entrega audio al `voice_gateway` por red interna.
+  # GPU: consume VRAM compartida (reserva de fracción configurable);
+  # interfaz conmutable Piper ↔ pregrabado para viabilidad bajo GPU compartida
+  # (ADR-011 §5, ADR-012 §3).
+  # (ENTREGADO INERTE en F0: imagen placeholder; lógica de síntesis en SPEC-048)
+  voice_tts:
+    image: python:3.11-slim
+    container_name: crm_voice_tts
+    command: ["python", "-c", "print('voice_tts: placeholder inerte, implementado en SPEC-048')"]
+    environment:
+      # Configuración de TTS en vivo (F0: placeholders)
+      TTS_MODE: ${TTS_MODE:-piper}  # "piper" o "prerecorded" (interfaz conmutable)
+      PIPER_VOICE: ${PIPER_VOICE:-es_CO-pablo-medium}
+      # Reserva de VRAM para TTS en vivo (fracción de GPU, 0.0-1.0)
+      TTS_VRAM_FRACTION: ${TTS_VRAM_FRACTION:-0.3}
+
+      # Base de datos y Redis (para logging de sesiones, métricas)
+      DATABASE_URL: postgresql://${DB_APP_ROLE:-omnicore_app}:${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}@db:5432/${DB_NAME:-omnicore_ai}
+      REDIS_URL: redis://redis:6379
+
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY requerido}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      # Voces Piper es-CO montadas por volumen (sin descarga en runtime)
+      - voice_piper_voices:/root/.local/share/piper
+      # Banco de audios pregrabados para respuestas del catálogo cerrado
+      - voice_prerecorded_audio:/voice_prerecorded_audio
+    networks:
+      - ia_internal
+    restart: unless-stopped
+    # Nota: SIN red `app`, NUNCA egress
+
+  # NLU de intent (clasificador de intención contra catálogo cerrado, SPEC-045 F1)
+  # Red: `ia_internal internal:true` sin egress. Entrega clasificación al
+  # `voice_gateway` por red interna. Por F0, implementado como placeholder
+  # dentro del `voice_stt` o como servicio separado simple (decidir en SPEC-045).
+  # (ENTREGADO INERTE en F0: combinado con voice_stt arriba o separado mínimo;
+  # lógica completa de NLU determinista en SPEC-045)
+
+  # Voice Gateway — conector de media en vivo (SPEC-044, SPEC-046)
+  # Red: `app` (para potencial egress al PBX si es externo) + `ia_internal`
+  # (para hablar con voice_stt/voice_tts/NLU por red interna). Egress ACOTADO
+  # al host del PBX de media (por defecto inerte, sin egress; si PBX externo
+  # requiere egress, se activa por env + firewall host + allowlist CI, ADR-011 §7).
+  # Puerto: WSS/WS para media (voz en vivo), SIP si aplica (decidir en SPEC-046).
+  # Reverse proxy TLS/WSS integrado en Caddy (extiende SPEC-035 webhook path).
+  # (ENTREGADO INERTE en F0: imagen placeholder; conector SIP/media real en SPEC-046)
+  voice_gateway:
+    image: python:3.11-slim
+    container_name: crm_voice_gateway
+    command: ["python", "-c", "print('voice_gateway: placeholder inerte, implementado en SPEC-046')"]
+    environment:
+      # Host del PBX de media en vivo (si PBX externo, ADR-011 §7)
+      # Por defecto (vacío): PBX on-prem en red local, SIN egress nuevo (P-M)
+      PBX_MEDIA_HOST: ${PBX_MEDIA_HOST:-}
+      PBX_MEDIA_PORT: ${PBX_MEDIA_PORT:-5060}
+      PBX_MEDIA_AUTH_TOKEN: ${PBX_MEDIA_AUTH_TOKEN:-}
+
+      # Configuración de concurrencia de llamadas en vivo
+      # C: límite de concurrencia (1-3 por defecto piloto, fijado empíricamente
+      # por THOR en F6 bajo GPU compartida). Al llegar C+1: IVR mínimo + escalación.
+      MAX_CONCURRENT_CALLS: ${MAX_CONCURRENT_CALLS:-1}
+
+      # Base de datos y Redis
+      DATABASE_URL: postgresql://${DB_APP_ROLE:-omnicore_app}:${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}@db:5432/${DB_NAME:-omnicore_ai}
+      REDIS_URL: redis://redis:6379
+
+      # TLS/WSS (Caddy genera certificados; dominio desde env)
+      CADDY_DOMAIN: ${CADDY_DOMAIN:-localhost}
+
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY requerido}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    networks:
+      - app
+      - ia_internal
+    restart: unless-stopped
+    # Nota: en `app` para egress potencial; `ia_internal` para hablar con voz/NLU
+
 networks:
   # Red de TRANSPORTE (SPEC-024 F0, SPEC-029 F4): SOLO `api` (y `wa_send_worker` en SPEC-029)
   # CON egress a internet (permitido SOLO a graph.facebook.com via firewall host / proxy allowlist)
@@ -428,4 +875,36 @@ volumes:
   redis_data:
     driver: local
   ollama_models:
+    driver: local
+  # Almacén de audio cifrado en reposo (SPEC-035, ADR-009). En producción,
+  # este volumen DEBE estar cifrado a nivel del host (LUKS/dm-crypt/ZFS/storage
+  # nativa). En desarrollo local, suficiente volumen local con permisos mínimos
+  # (modo 0700 en el entrypoint del stt_worker).
+  audio_store:
+    driver: local
+  # Pesos de faster-whisper (large-v3, fallback medium) montados por volumen
+  # (ADR-009): descarga manual pre-deployment, nunca en runtime. NUNCA desde
+  # Hugging Face por internet en el contenedor (isolado en ia_internal).
+  whisper_models:
+    driver: local
+  # Persistencia de certificados TLS generados por Caddy (SPEC-035)
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+  # Pesos de STT liviano para voz en vivo (SPEC-044, SPEC-047): distil-whisper
+  # o faster-whisper small/medium cuantizado. Montado por volumen (sin descarga
+  # en runtime, similar a whisper_models pero para modelos más livianos).
+  # Descarga manual pre-deployment.
+  voice_stt_models:
+    driver: local
+  # Voces Piper es-CO para síntesis TTS en vivo (SPEC-044, ADR-012). Montado
+  # por volumen (sin descarga en runtime). Descarga manual pre-deployment.
+  voice_piper_voices:
+    driver: local
+  # Banco de audios pregrabados para respuestas del catálogo cerrado (SPEC-044,
+  # SPEC-045, ADR-012): audios concatenables/editables de forma manual o
+  # generados en bulk por TTS pre-deployment (modo bajo-cómputo, cero GPU en
+  # vivo, ADR-011 §5). Montado por volumen; SPEC-045 lo puebla.
+  voice_prerecorded_audio:
     driver: local

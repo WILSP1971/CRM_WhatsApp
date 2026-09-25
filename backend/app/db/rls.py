@@ -36,6 +36,9 @@ TENANT_SCOPED_TABLES: list[str] = [
     "embeddings",
     "rag_drafts",
     "whatsapp_accounts",
+    "calls",
+    "call_transcripts",
+    "pbx_lines",
 ]
 
 TENANT_SESSION_VAR = "app.tenant_id"

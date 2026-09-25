@@ -1,20 +1,43 @@
-"""Guardarraíl anti-regresión de la topología de egress — SPEC-032
-(RF-01/RF-02, ADR-006, criterio central "verificación de egress auditable y
-reproducible").
+"""Guardarraíl anti-regresión de la topología de egress — SPEC-032/SPEC-035
+(RF-01/RF-02, ADR-006/ADR-009/ADR-010, criterio central "verificación de
+egress auditable y reproducible").
 
 Parsea `docker-compose.yml` (raíz del repo) y falla si algún servicio de IA
-gana una ruta de egress: la invariante de topología (ADR-006 §2, PLAN-003
-§3.2) es que SOLO `api` y `wa_send_worker` están en la red `app` (bridge CON
-egress); `ia`, `rag_worker`, `sentiment_worker`, `whatsapp_inbound_worker`,
-`db` y `redis` viven EXCLUSIVAMENTE en `ia_internal` (`internal: true`, sin
-salida a internet).
+o de datos gana una ruta de egress: la invariante de topología (ADR-006 §2,
+PLAN-003 §3.2) es que SOLO un conjunto explícito y acotado de servicios está
+en la red `app` (bridge CON salida al host/internet); `ia`, `rag_worker`,
+`sentiment_worker`, `whatsapp_inbound_worker`, `stt_worker`, `db` y `redis`
+viven EXCLUSIVAMENTE en `ia_internal` (`internal: true`, sin salida a
+internet).
+
+SPEC-035 (ADR-009/ADR-010) añade a la red `app`:
+- `caddy`: reverse proxy TLS que expone SOLO el path del webhook de
+  grabaciones (ingress hacia `api`, no egress de inferencia/audio).
+- `recording_fetch_worker`: EXCEPCIÓN ACOTADA análoga a `wa_send_worker`
+  (ADR-006) — egress restringido por allowlist al único host del PBX,
+  SOLO si el PBX es externo (ADR-010). Entregado inerte bajo
+  `profiles: ["pbx-externo"]`: no se levanta con `docker compose up` por
+  defecto (SUP-42, PBX preferido on-prem).
+
+`stt_worker` (SPEC-035/ADR-009) es STT 100% local: hereda el aislamiento de
+la IA y permanece EXCLUSIVAMENTE en `ia_internal`, igual que `ia`/
+`rag_worker`/`sentiment_worker` — nunca gana la red `app`.
+
+SPEC-037 añade `recording_ingest_worker` (consumidor de `pbx:recordings:
+inbound`, resolución de tenant + dedup por `call_id` + almacenamiento
+cifrado + encolado STT): permanece EXCLUSIVAMENTE en `ia_internal`, igual
+que `whatsapp_inbound_worker` — NUNCA hace peticiones salientes, ni siquiera
+al PBX (esa excepción acotada, si aplica, es `recording_fetch_worker`, un
+servicio DISTINTO).
 
 Esto complementa `check-externos-backend.sh` (que audita referencias de
-código: URLs/SDKs/imports) con una verificación ESTRUCTURAL de la topología
-de red declarada en `docker-compose.yml` — si un cambio futuro añadiera la
-red `app` a un servicio de IA (por error o a propósito), este test falla
-ANTES de que llegue a producción, sin depender de un firewall/captura de red
-real (esa evidencia real se documenta aparte, ver runbook).
+código: URLs/SDKs/imports, incluida la allowlist por ruta del host del PBX
+dentro de `app/services/telefonia/`) con una verificación ESTRUCTURAL de la
+topología de red declarada en `docker-compose.yml` — si un cambio futuro
+añadiera la red `app` a un servicio de IA/STT (por error o a propósito),
+este test falla ANTES de que llegue a producción, sin depender de un
+firewall/captura de red real (esa evidencia real se documenta aparte, ver
+runbook).
 """
 
 from __future__ import annotations
@@ -26,20 +49,53 @@ import yaml
 
 _COMPOSE_PATH = Path(__file__).resolve().parents[2] / "docker-compose.yml"
 
-# Invariante de topología (ADR-006 §2): estos servicios NUNCA deben tener
-# egress a internet (permanecen únicamente en `ia_internal internal:true`).
+# Invariante de topología (ADR-006 §2, ADR-009): estos servicios NUNCA deben
+# tener egress a internet (permanecen únicamente en `ia_internal
+# internal:true`). `stt_worker` (SPEC-035/ADR-009, STT 100% local) hereda el
+# mismo aislamiento que `ia`/`rag_worker`/`sentiment_worker`. Los servicios
+# de voz en vivo (`voice_stt`, `voice_tts`, SPEC-044) también permanecen
+# aislados en `ia_internal` sin egress (ADR-011).
 _SERVICIOS_SIN_EGRESS_ESPERADO = {
     "ia",
     "rag_worker",
     "sentiment_worker",
-    "whatsapp_inbound_worker",
+    "stt_worker",
+    "recording_ingest_worker",
+    "voice_stt",
+    "voice_tts",
     "db",
     "redis",
 }
 
-# Únicos servicios autorizados a tener egress (ADR-006 §1): transporte hacia
-# `graph.facebook.com` exclusivamente, nunca inferencia.
-_SERVICIOS_CON_EGRESS_PERMITIDO = {"api", "wa_send_worker"}
+# Únicos servicios autorizados a tener egress/salida por la red `app`
+# (ADR-006 §1, ADR-010, ADR-011):
+# - `api`/`wa_send_worker`: transporte hacia `graph.facebook.com`
+#   exclusivamente, nunca inferencia (ADR-006).
+# - `whatsapp_inbound_worker`: EXCEPCIÓN ACOTADA (SPEC-054/SPEC-055, extendida
+#   ADR-006) — descarga de notas de voz desde `graph.facebook.com` (host ya
+#   autorizado, mismo módulo `app/integrations/whatsapp/` que `wa_send_worker`)
+#   + auto-respuesta de descarte por duración (SPEC-055, reutilizando
+#   `graph_client` de SPEC-029). NUNCA inferencia: IA/STT reciben del almacén
+#   cifrado on-prem (ADR-009). Dedup por wamid/RLS igual que antes (SPEC-027).
+# - `caddy`: reverse proxy TLS (SPEC-035) que expone SOLO el path del
+#   webhook de grabaciones; no habla con `ia_internal` ni hace egress de
+#   inferencia/audio, solo enruta ingress hacia `api`.
+# - `recording_fetch_worker`: EXCEPCIÓN ACOTADA (SPEC-035/ADR-010) — egress
+#   restringido por allowlist al único host del PBX, SOLO si el PBX es
+#   externo; vive bajo `profiles: ["pbx-externo"]` (inerte por defecto).
+# - `voice_gateway`: EXCEPCIÓN ACOTADA (SPEC-044/ADR-011 §7) — conector de
+#   media en vivo que está en `app` pero con egress limitado por firewall
+#   host SOLO al PBX de media si es externo (por defecto inerte en on-prem,
+#   sin egress nuevo); también en `ia_internal` para hablar con voice_stt/
+#   voice_tts/NLU por red interna.
+_SERVICIOS_CON_EGRESS_PERMITIDO = {
+    "api",
+    "wa_send_worker",
+    "whatsapp_inbound_worker",
+    "caddy",
+    "recording_fetch_worker",
+    "voice_gateway",
+}
 
 # Red con egress a internet (bridge normal, sin `internal: true`).
 _RED_CON_EGRESS = "app"
@@ -82,9 +138,9 @@ def test_ia_internal_network_has_internal_true():
 
 @pytest.mark.parametrize("service_name", sorted(_SERVICIOS_SIN_EGRESS_ESPERADO))
 def test_ia_and_data_services_have_no_egress_network(service_name):
-    """RF-01 SPEC-032: un servicio de IA/datos con la red `app` (egress)
-    añadida sería una fuga de topología — este test la detecta y falla la
-    build ANTES de que se despliegue.
+    """RF-01 SPEC-032/SPEC-035: un servicio de IA/STT/datos con la red `app`
+    (egress) añadida sería una fuga de topología — este test la detecta y
+    falla la build ANTES de que se despliegue.
     """
     compose = _load_compose()
     services = compose["services"]
@@ -94,7 +150,8 @@ def test_ia_and_data_services_have_no_egress_network(service_name):
     assert _RED_CON_EGRESS not in networks, (
         f"REGRESIÓN DE EGRESS: el servicio '{service_name}' está en la red "
         f"'{_RED_CON_EGRESS}' (con salida a internet). Invariante violada "
-        "(ADR-006 §2): SOLO 'api'/'wa_send_worker' pueden tener egress."
+        f"(ADR-006 §2/ADR-009): SOLO {sorted(_SERVICIOS_CON_EGRESS_PERMITIDO)} "
+        "pueden tener esa red."
     )
     assert _RED_SIN_EGRESS in networks, (
         f"El servicio '{service_name}' debería estar en '{_RED_SIN_EGRESS}' "
@@ -104,9 +161,10 @@ def test_ia_and_data_services_have_no_egress_network(service_name):
 
 @pytest.mark.parametrize("service_name", sorted(_SERVICIOS_CON_EGRESS_PERMITIDO))
 def test_only_api_and_wa_send_worker_have_egress_network(service_name):
-    """RF-02 SPEC-032: `api`/`wa_send_worker` SÍ deben tener la red `app`
-    (excepción acotada de egress, ADR-006) — si alguno la pierde, el canal
-    real deja de funcionar (webhook/envío)."""
+    """RF-02 SPEC-032/SPEC-035: `api`/`wa_send_worker` (ADR-006) y
+    `caddy`/`recording_fetch_worker` (ADR-010, SPEC-035) SÍ deben tener la
+    red `app` (excepción acotada de egress/ingress) — si alguno la pierde,
+    el canal real deja de funcionar (webhook/envío/proxy TLS/descarga PBX)."""
     compose = _load_compose()
     services = compose["services"]
     assert service_name in services, f"Servicio '{service_name}' no existe en compose"

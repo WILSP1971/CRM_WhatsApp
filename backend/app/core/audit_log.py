@@ -27,7 +27,10 @@ Qué se registra (metadatos de acceso, NUNCA el dato personal en sí):
   - `resource`, `resource_id`: QUÉ se accedió (tabla + id), nunca el
     contenido (nombre, teléfono, email, mensajes) del contacto.
   - `action`: verbo de la operación (`read`, `list`, `export`, `erase`,
-    `anonymize`, `create`, `update`, `delete_logical`).
+    `anonymize`, `purge`, `create`, `update`, `delete_logical`). `purge`
+    (SPEC-041) se distingue de `anonymize`: purga es eliminación FÍSICA del
+    blob/contenido (p.ej. el audio del almacén cifrado), anonymize es
+    sobrescritura por un marcador no identificante que conserva la fila.
   - `timestamp`: ISO-8601 (añadido automáticamente por el procesador
     `TimeStamper` de `structlog`, configurado en `app/main.py`).
 
@@ -56,6 +59,7 @@ VALID_ACTIONS = frozenset(
         "export",
         "erase",
         "anonymize",
+        "purge",
     }
 )
 

@@ -56,6 +56,48 @@ degradados sin propagar excepciones fuera de `process_job` salvo el caso
 explícito de `TenantMismatchError`, que aquí no aplica porque el tenant se
 resuelve DENTRO de `process_job`, nunca se recibe de un job forjado).
 
+Rama `audio` (SPEC-055, F2, ADITIVA — NO afecta el camino de `tipo=="text"`
+descrito arriba, RNF-64) — `_process_audio_message_event`:
+  1. Mismo enrutado/idempotencia por `wamid` que el paso 4 de arriba (guarda
+     compartida, `_message_wamid_exists`/UNIQUE de BD): una reentrega del
+     mismo `wamid` de una nota de voz es no-op, igual que un mensaje de
+     texto (RF-02/ADR-007, sin nada nuevo).
+  2. Crea el `Message(tipo="audio", contenido=None, transcripcion_estado=
+     "pendiente")` en la `Conversation` real (SPEC-053) — NUNCA una entidad
+     `call`/`call_transcript` (ADR-013).
+  3. Invoca `media_client.download_and_store_voice_note` (SPEC-054) para
+     poblar `audio_ref`/`mime_type` cifrados; en fallo de descarga esa misma
+     función ya marca `transcripcion_estado="error"` y NO propaga.
+  4. Límite de duración (RF-04/RF-05, `Settings.voice_note_max_duration_
+     seconds`, default 600s/10min): si `event.audio_duracion_seg` es
+     conocido y excede el límite, DESCARTE AMABLE — auto-respuesta al
+     contacto vía `graph_client.send_text_message` (mismo transporte de
+     SPEC-029, sin egress nuevo), `transcripcion_estado=
+     "descartada_por_duracion"`, NO se encola en `stt:jobs`, auditado
+     (log). R-68 (duración desconocida, documentado en `inbound_parser.py`):
+     Meta NUNCA envía duración en el payload real hoy, así que
+     `event.audio_duracion_seg` es SIEMPRE `None` en producción — en ese
+     caso NO hay dato para comparar contra el límite en este punto de la
+     ingesta (fail-open respecto al límite: se encola igual), y la
+     resolución completa de R-68 (aplicar el límite sobre la duración REAL
+     medida por el motor STT al decodificar el audio) queda para SPEC-056,
+     que sí tiene acceso al audio decodificado. Esta rama SÍ deja el
+     mecanismo listo y probado (test con límite reducido inyectando una
+     duración conocida en el evento) para el día en que Meta la envíe o un
+     cálculo de duración post-descarga se añada.
+  5. Si dentro del límite (o duración desconocida) y `audio_ref` quedó
+     poblado tras la descarga: encola en `stt:jobs`
+     (`app.core.stt_queue.enqueue_stt_job`) con `destino="message:{id}"`
+     (contrato extendido de SPEC-055/consumido por SPEC-056) — si la
+     descarga falló (`transcripcion_estado=="error"`, sin `audio_ref`), NO
+     se encola (nada que transcribir).
+  6. Idempotencia (RF-02, sin nada nuevo salvo la guarda semántica añadida
+     aquí): además del dedup por `wamid` del paso 1, si el `Message` ya
+     tiene `transcripcion_estado` en `{"ok", "descartada_por_duracion"}`
+     (reentrega procesada tras la guarda de wamid perder la carrera, o
+     evento reprocesado manualmente) NO se re-encola ni se reenvía la
+     auto-respuesta.
+
 Statuses de entrega (SPEC-030, ADR-007) — `_process_status_event`:
   1. Parsea `value.statuses[]` (`inbound_parser.parse_status_events`), un
      callback por cada `wamid` de un mensaje SALIENTE (SPEC-029).
@@ -91,7 +133,9 @@ import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.redis_client import get_redis_client
+from app.core.stt_queue import enqueue_stt_job
 from app.core.whatsapp_queue import (
     INBOUND_QUEUE_KEY,
     InboundWebhookJob,
@@ -99,6 +143,7 @@ from app.core.whatsapp_queue import (
 )
 from app.core.worker_resilience import resilient_worker_loop
 from app.db.session import SessionLocal, set_tenant_session
+from app.integrations.whatsapp.graph_client import GraphApiClient
 from app.integrations.whatsapp.inbound_parser import (
     InboundEventParseError,
     InboundMessageEvent,
@@ -106,9 +151,11 @@ from app.integrations.whatsapp.inbound_parser import (
     parse_inbound_message_events,
     parse_status_events,
 )
+from app.integrations.whatsapp.media_client import download_and_store_voice_note
 from app.models.contact import Contact
 from app.models.conversation import Conversation
 from app.models.message import ESTADO_ENTREGA_FAILED, Message
+from app.models.whatsapp_account import WhatsappAccount
 from app.services.ai_service import AIClient, AIServiceError
 from app.services.message_service import (
     create_message,
@@ -122,6 +169,21 @@ logger = structlog.get_logger(__name__)
 
 _CANAL_WHATSAPP = "whatsapp"
 _REMITENTE_CONTACTO = "contacto"
+_TIPO_AUDIO = "audio"
+
+# Estados de `transcripcion_estado` (SPEC-053) que, si ya están asignados,
+# indican que ESTE evento de audio ya fue procesado por completo (SPEC-055
+# RF-02, idempotencia): no se re-encola ni se reenvía la auto-respuesta de
+# descarte ante una reentrega/reproceso del mismo mensaje.
+_TRANSCRIPCION_ESTADOS_TERMINALES = {"ok", "descartada_por_duracion"}
+
+# Texto de la auto-respuesta de descarte por duración (RNF-65, CE-64): clara
+# para el contacto, sin tecnicismos internos ni datos sensibles.
+_MENSAJE_DESCARTE_POR_DURACION = (
+    "Tu nota de voz es muy larga para procesarla automáticamente. "
+    "Por favor, resúmela en un mensaje más corto o escríbenos tu consulta "
+    "por texto y con gusto te ayudamos."
+)
 
 # Mapeo de status de Meta (SPEC-030) -> vocabulario interno de
 # `messages.estado_entrega` (SPEC-015/025). `failed` se maneja aparte
@@ -343,7 +405,17 @@ def _process_message_event(
     de `get_redis_client()`/`AIClient()` reales); en producción ambos se
     resuelven perezosamente (factories reales) para no abrir conexiones
     innecesarias en el camino de descarte/duplicado (arriba de este docstring).
+
+    SPEC-055 (F2, aditivo, RNF-64): `tipo=="audio"` se delega ÍNTEGRAMENTE a
+    `_process_audio_message_event` — el resto de esta función (texto y
+    cualquier otro tipo no-audio) NO se modifica respecto a SPEC-027/028.
     """
+    if event.tipo == _TIPO_AUDIO:
+        _process_audio_message_event(
+            db, event, event_id=event_id, redis_client=redis_client
+        )
+        return
+
     tenant_id = _resolve_tenant_id(db, phone_number_id=event.phone_number_id)
     if tenant_id is None:
         logger.warning(
@@ -423,6 +495,267 @@ def _process_message_event(
         conversation_id=conversation.id,
         query=message.contenido,
     )
+
+
+def _resolve_outbound_phone_number_id(
+    db: Session, *, tenant_id: uuid.UUID
+) -> str | None:
+    """Número EMISOR para la auto-respuesta de descarte (SPEC-029, mismo
+    criterio EXACTO que `wa_send_worker._resolve_phone_number_id`, reutilizado
+    aquí en vez de reimplementado): prioriza la cuenta activa registrada en
+    `whatsapp_accounts` del tenant; si no hay ninguna, cae al fallback
+    `Settings.whatsapp_phone_number_id`."""
+    account = db.scalar(
+        sa.select(WhatsappAccount).where(WhatsappAccount.activo.is_(True)).limit(1)
+    )
+    if account is not None:
+        return account.phone_number_id
+    return get_settings().whatsapp_phone_number_id
+
+
+def _send_duration_discard_reply_best_effort(
+    db: Session,
+    *,
+    tenant_id: uuid.UUID,
+    to: str,
+    message_id: uuid.UUID,
+    graph_client: GraphApiClient | None = None,
+) -> None:
+    """Auto-respuesta de descarte por duración (RF-04 SPEC-055, RNF-65,
+    CE-64): reutiliza el MISMO transporte de SPEC-029
+    (`graph_client.send_text_message`), sin egress nuevo (Restricción
+    SENSIBLE de SPEC-055). Best-effort: si el envío falla (Graph API
+    caída/rechazo), el descarte YA quedó auditado por el llamador (log +
+    `transcripcion_estado`) y NO se bloquea/reintenta desde aquí — un fallo
+    de la auto-respuesta no debe impedir que la nota quede correctamente
+    marcada como descartada."""
+    phone_number_id = _resolve_outbound_phone_number_id(db, tenant_id=tenant_id)
+    if not phone_number_id:
+        logger.warning(
+            "whatsapp_inbound_audio_discard_reply_no_phone_number_id",
+            tenant_id=str(tenant_id),
+            message_id=str(message_id),
+        )
+        return
+
+    client = graph_client or GraphApiClient()
+    try:
+        client.send_text_message(
+            phone_number_id=phone_number_id,
+            to=to,
+            text=_MENSAJE_DESCARTE_POR_DURACION,
+            idempotency_key=str(message_id),
+        )
+    except Exception:  # noqa: BLE001 — best-effort, el descarte ya quedó auditado
+        logger.warning(
+            "whatsapp_inbound_audio_discard_reply_failed",
+            tenant_id=str(tenant_id),
+            message_id=str(message_id),
+            exc_info=True,
+        )
+
+
+def _process_audio_message_event(
+    db: Session,
+    event: InboundMessageEvent,
+    *,
+    event_id: str,
+    redis_client: redis_asyncio.Redis | None = None,
+    media_client=None,
+    graph_client: GraphApiClient | None = None,
+) -> None:
+    """Procesa UNA nota de voz de WhatsApp (`tipo=="audio"`, SPEC-055, F2):
+    idempotencia por `wamid` (RF-02, ADR-007, sin nada nuevo), creación del
+    `Message(tipo="audio")` en la conversación real (SPEC-053), descarga
+    cifrada (SPEC-054), límite de duración (RF-04/RF-05) y encolado en
+    `stt:jobs` con `destino="message:{id}"` (RF-03).
+
+    `redis_client`/`media_client`/`graph_client` son SOLO para pruebas
+    (inyectan dobles en vez de instancias/factories reales — mismo patrón que
+    `_process_message_event`).
+    """
+    tenant_id = _resolve_tenant_id(db, phone_number_id=event.phone_number_id)
+    if tenant_id is None:
+        logger.warning(
+            "whatsapp_inbound_unmapped_phone_number_id_discarded",
+            phone_number_id=event.phone_number_id,
+            wamid=event.wamid,
+            event_id=event_id,
+        )
+        return
+
+    try:
+        with db.begin():
+            set_tenant_session(db, str(tenant_id))
+
+            if _message_wamid_exists(db, wamid=event.wamid):
+                # RF-02: reentrega de Meta con el mismo wamid -> no-op
+                # idempotente, MISMA guarda que el camino de texto (sin
+                # descargar de nuevo ni volver a encolar STT).
+                logger.info(
+                    "whatsapp_inbound_duplicate_wamid_skipped",
+                    wamid=event.wamid,
+                    tenant_id=str(tenant_id),
+                    event_id=event_id,
+                )
+                return
+
+            contact = _get_or_create_contact(
+                db,
+                tenant_id=tenant_id,
+                wa_id=event.wa_id,
+                contact_name=event.contact_name,
+            )
+            conversation = _get_or_create_conversation(
+                db, tenant_id=tenant_id, contact_id=contact.id
+            )
+            message = Message(
+                tenant_id=tenant_id,
+                conversation_id=conversation.id,
+                remitente=_REMITENTE_CONTACTO,
+                contenido=None,
+                tipo=_TIPO_AUDIO,
+                transcripcion_estado="pendiente",
+                estado_entrega="enviado",
+            )
+            db.add(message)
+            db.flush()
+            db.refresh(message)
+            message.wamid = event.wamid
+            db.flush()
+    except IntegrityError:
+        # Condición de carrera entre workers/reintentos concurrentes sobre el
+        # MISMO wamid — mismo criterio EXACTO que el camino de texto.
+        db.rollback()
+        logger.info(
+            "whatsapp_inbound_duplicate_wamid_race_detected",
+            wamid=event.wamid,
+            tenant_id=str(tenant_id),
+            event_id=event_id,
+        )
+        return
+
+    logger.info(
+        "whatsapp_inbound_audio_message_persisted",
+        tenant_id=str(tenant_id),
+        wamid=event.wamid,
+        message_id=str(message.id),
+        conversation_id=str(conversation.id),
+        event_id=event_id,
+    )
+
+    # A partir de aquí el `Message` de audio YA está persistido con commit
+    # propio (transacción anterior cerrada arriba) — el resto (descarga,
+    # límite de duración, auto-respuesta, encolado STT) opera en su PROPIA
+    # transacción, mismo patrón que `_generate_rag_draft_best_effort` (RLS se
+    # fija de nuevo porque la transacción anterior ya cerró).
+    if not event.media_id:
+        # Defensa: un `type=="audio"` sin `audio.id` es un payload malformado
+        # de Meta (no debería ocurrir en producción real) — se audita y se
+        # deja el mensaje en "pendiente" sin reventar el worker.
+        logger.error(
+            "whatsapp_inbound_audio_missing_media_id",
+            tenant_id=str(tenant_id),
+            message_id=str(message.id),
+            event_id=event_id,
+        )
+        return
+
+    with db.begin():
+        set_tenant_session(db, str(tenant_id))
+        message = db.get(Message, message.id)
+        if message is None:
+            return  # defensivo: no debería ocurrir (ya persistido arriba)
+
+        if message.transcripcion_estado in _TRANSCRIPCION_ESTADOS_TERMINALES:
+            # RF-02 idempotencia: un reproceso del mismo evento (p.ej. tras
+            # perder la carrera de wamid en un intento previo que SÍ llegó a
+            # completar esta segunda fase) no debe re-descargar/re-encolar/
+            # reenviar la auto-respuesta.
+            logger.info(
+                "whatsapp_inbound_audio_already_finalized_skipped",
+                tenant_id=str(tenant_id),
+                message_id=str(message.id),
+                transcripcion_estado=message.transcripcion_estado,
+                event_id=event_id,
+            )
+            return
+
+        download_and_store_voice_note(
+            db, message, media_id=event.media_id, client=media_client
+        )
+
+        if not message.audio_ref:
+            # La descarga falló (SPEC-054 ya marcó transcripcion_estado=
+            # "error" y auditó el motivo) — nada que encolar.
+            logger.warning(
+                "whatsapp_inbound_audio_download_failed_skipping_stt",
+                tenant_id=str(tenant_id),
+                message_id=str(message.id),
+                event_id=event_id,
+            )
+            return
+
+        limite_seg = get_settings().voice_note_max_duration_seconds
+        excede_limite = (
+            event.audio_duracion_seg is not None
+            and event.audio_duracion_seg > limite_seg
+        )
+
+        if excede_limite:
+            # RF-04/RNF-65 (R-66): descarte amable + auditado, NUNCA
+            # silencioso — NO se encola STT.
+            message.transcripcion_estado = "descartada_por_duracion"
+            db.flush()
+            logger.warning(
+                "whatsapp_inbound_audio_discarded_by_duration",
+                tenant_id=str(tenant_id),
+                message_id=str(message.id),
+                audio_duracion_seg=event.audio_duracion_seg,
+                limite_seg=limite_seg,
+                event_id=event_id,
+            )
+            _send_duration_discard_reply_best_effort(
+                db,
+                tenant_id=tenant_id,
+                to=event.wa_id,
+                message_id=message.id,
+                graph_client=graph_client,
+            )
+            return
+
+        # R-68 (documentado en `inbound_parser.py`/docstring del módulo):
+        # `event.audio_duracion_seg` es HOY siempre `None` en producción real
+        # (Meta no la envía) — en ese caso no hay dato para comparar contra
+        # el límite en este punto de la ingesta, así que se encola igual
+        # (fail-open respecto al límite de duración; SPEC-056 resuelve el
+        # límite real sobre la duración medida por el motor STT).
+        try:
+            asyncio.run(
+                enqueue_stt_job(
+                    redis_client or get_redis_client(),
+                    call_id=str(message.id),
+                    audio_ref=message.audio_ref,
+                    tenant_id=str(tenant_id),
+                    destino=f"message:{message.id}",
+                )
+            )
+        except Exception:  # noqa: BLE001 — best-effort, no bloquea la ingesta
+            logger.error(
+                "whatsapp_inbound_audio_stt_enqueue_failed",
+                tenant_id=str(tenant_id),
+                message_id=str(message.id),
+                event_id=event_id,
+                exc_info=True,
+            )
+            return
+
+        logger.info(
+            "whatsapp_inbound_audio_stt_job_enqueued",
+            tenant_id=str(tenant_id),
+            message_id=str(message.id),
+            event_id=event_id,
+        )
 
 
 def _get_message_by_wamid(db: Session, *, wamid: str) -> Message | None:

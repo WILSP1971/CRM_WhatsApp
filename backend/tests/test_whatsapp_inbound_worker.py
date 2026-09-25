@@ -35,12 +35,14 @@ Cubre (SPEC-028, pipeline IA local disparado desde la ingesta):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import fakeredis.aioredis
+import httpx
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
@@ -1296,3 +1298,519 @@ def test_process_job_status_batch_with_message_events_processes_both(
             {"wamid": wamid_in},
         ).scalar_one()
     assert count_in == 1
+
+
+# ---------------------------------------------------------------------------
+# SPEC-055 (F2) — parser/worker extendido a type=="audio" + límite de
+# duración + encolado en stt:jobs con destino="message:{id}"
+#
+# Todos los tests MOCKEAN el transporte HTTP de Meta (`httpx.MockTransport`,
+# MISMO patrón que `tests/test_whatsapp_media_client.py`): cero llamadas de
+# red reales, tanto para la descarga (GraphMediaClient) como para la
+# auto-respuesta de descarte (GraphApiClient).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def audio_store_tmp(tmp_path):
+    """Redirige `AUDIO_STORAGE_PATH` (SPEC-035, `audio_store.store_audio`) a
+    un directorio temporal — MISMO fixture que `test_whatsapp_media_client.py`
+    (SPEC-054), necesario porque `download_and_store_voice_note` real
+    persiste el binario cifrado en disco."""
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    original = settings.audio_storage_path
+    settings.audio_storage_path = str(tmp_path)
+    yield tmp_path
+    settings.audio_storage_path = original
+
+
+def _audio_inbound_job(
+    *,
+    phone_number_id: str,
+    wamid: str,
+    wa_id: str = "573001112233",
+    media_id: str = "media-id-abc123",
+    mime_type: str = "audio/ogg; codecs=opus",
+    duration: int | None = None,
+) -> InboundWebhookJob:
+    audio_obj = {"id": media_id, "mime_type": mime_type}
+    if duration is not None:
+        audio_obj["duration"] = duration
+    raw_body = json.dumps(
+        {
+            "object": "whatsapp_business_account",
+            "entry": [
+                {
+                    "id": "biz-1",
+                    "changes": [
+                        {
+                            "field": "messages",
+                            "value": {
+                                "metadata": {"phone_number_id": phone_number_id},
+                                "contacts": [
+                                    {"wa_id": wa_id, "profile": {"name": "Cliente"}}
+                                ],
+                                "messages": [
+                                    {
+                                        "id": wamid,
+                                        "from": wa_id,
+                                        "type": "audio",
+                                        "audio": audio_obj,
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    return InboundWebhookJob(raw_body=raw_body)
+
+
+def _media_download_handler(audio_bytes: bytes = b"contenido-nota-de-voz-test"):
+    """Doble-GET simulado (resuelve URL temporal + descarga binario), MISMO
+    patrón que `test_whatsapp_media_client.py`."""
+
+    def handler(request):
+        if "/v" in request.url.path and request.url.path.split("/")[-1].startswith(
+            "media-id"
+        ):
+            return httpx.Response(
+                200,
+                json={
+                    "url": "https://graph.facebook.com/media-temp/xyz",
+                    "mime_type": "audio/ogg; codecs=opus",
+                    "file_size": len(audio_bytes),
+                },
+            )
+        return httpx.Response(200, content=audio_bytes)
+
+    return handler
+
+
+def _build_graph_media_client(handler):
+    from app.integrations.whatsapp.media_client import GraphMediaClient
+
+    transport = httpx.MockTransport(handler)
+    httpx_client = httpx.Client(transport=transport)
+    return GraphMediaClient(
+        access_token="test-token-not-real",
+        api_version="v21.0",
+        client=httpx_client,
+        max_retries=1,
+        backoff_base_seconds=0,
+    )
+
+
+def _build_graph_api_client_capturing_sends(sent_messages: list[dict]):
+    from app.integrations.whatsapp.graph_client import GraphApiClient
+
+    def handler(request):
+        import json as _json
+
+        sent_messages.append(_json.loads(request.content))
+        return httpx.Response(200, json={"messages": [{"id": "wamid.OUT.reply"}]})
+
+    transport = httpx.MockTransport(handler)
+    httpx_client = httpx.Client(transport=transport)
+    return GraphApiClient(
+        access_token="test-token-not-real",
+        api_version="v21.0",
+        client=httpx_client,
+        max_retries=1,
+        backoff_base_seconds=0,
+    )
+
+
+def _get_audio_message_row(postgres_engine, wamid: str):
+    with postgres_engine.connect() as conn:
+        return conn.execute(
+            sa.text(
+                "SELECT id, tipo, contenido, audio_ref, transcripcion_estado, "
+                "mime_type FROM messages WHERE wamid = :wamid"
+            ),
+            {"wamid": wamid},
+        ).one_or_none()
+
+
+# (a) webhook con type=="audio" crea Message(tipo="audio", contenido=NULL)
+# idempotente y dispara la descarga (SPEC-054)
+
+
+def test_process_job_audio_message_creates_message_and_downloads(
+    postgres_engine, monkeypatch, audio_store_tmp
+):
+    from app.workers import whatsapp_inbound_worker as worker_module
+
+    tenant_id = _crear_tenant(postgres_engine, "TenantWaAudioBasic")
+    phone_number_id = f"pni-audio-{uuid.uuid4().hex[:10]}"
+    wamid = f"wamid.audio.{uuid.uuid4().hex}"
+    _crear_whatsapp_account(postgres_engine, tenant_id, phone_number_id)
+
+    media_client = _build_graph_media_client(_media_download_handler())
+
+    def _fake_download(db, message, *, media_id, client=None):
+        from app.integrations.whatsapp.media_client import (
+            download_and_store_voice_note as real_download,
+        )
+
+        return real_download(db, message, media_id=media_id, client=media_client)
+
+    monkeypatch.setattr(
+        worker_module, "download_and_store_voice_note", _fake_download
+    )
+
+    redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    job = _audio_inbound_job(phone_number_id=phone_number_id, wamid=wamid)
+
+    process_job(
+        job,
+        session_factory=_session_factory(postgres_engine),
+        redis_client=redis_client,
+    )
+
+    row = _get_audio_message_row(postgres_engine, wamid)
+    assert row is not None, "Debe crearse el Message de la nota de voz"
+    assert row.tipo == "audio"
+    assert row.contenido is None
+    assert row.audio_ref is not None, "La descarga (SPEC-054) debe haberse disparado"
+    assert row.transcripcion_estado == "pendiente"
+
+
+# (b) nota dentro del límite se encola en stt:jobs con destino="message:{id}"
+
+
+def test_process_job_audio_within_limit_enqueues_stt_job_with_message_destino(
+    postgres_engine, monkeypatch, audio_store_tmp
+):
+    from app.core.stt_queue import dequeue_stt_job
+    from app.workers import whatsapp_inbound_worker as worker_module
+
+    tenant_id = _crear_tenant(postgres_engine, "TenantWaAudioEnqueue")
+    phone_number_id = f"pni-audioenq-{uuid.uuid4().hex[:10]}"
+    wamid = f"wamid.audio.{uuid.uuid4().hex}"
+    _crear_whatsapp_account(postgres_engine, tenant_id, phone_number_id)
+
+    media_client = _build_graph_media_client(_media_download_handler())
+
+    def _fake_download(db, message, *, media_id, client=None):
+        from app.integrations.whatsapp.media_client import (
+            download_and_store_voice_note as real_download,
+        )
+
+        return real_download(db, message, media_id=media_id, client=media_client)
+
+    monkeypatch.setattr(
+        worker_module, "download_and_store_voice_note", _fake_download
+    )
+
+    redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    # Duración conocida (30s) DENTRO del límite (default 600s).
+    job = _audio_inbound_job(
+        phone_number_id=phone_number_id, wamid=wamid, duration=30
+    )
+
+    process_job(
+        job,
+        session_factory=_session_factory(postgres_engine),
+        redis_client=redis_client,
+    )
+
+    row = _get_audio_message_row(postgres_engine, wamid)
+    assert row is not None
+    assert row.transcripcion_estado == "pendiente"
+
+    stt_job = asyncio.run(dequeue_stt_job(redis_client))
+
+    assert stt_job is not None, "Debe encolarse un job en stt:jobs"
+    assert stt_job.destino == f"message:{row.id}"
+    assert stt_job.call_id == str(row.id)
+    assert stt_job.audio_ref == row.audio_ref
+
+
+# (c) nota que excede el límite: auto-respuesta, NO encola STT, marca
+# transcripcion_estado="descartada_por_duracion", auditado.
+
+
+def test_process_job_audio_exceeds_limit_discards_with_auto_reply(
+    postgres_engine, monkeypatch, audio_store_tmp
+):
+    from app.core.stt_queue import dequeue_stt_job
+    from app.workers import whatsapp_inbound_worker as worker_module
+
+    tenant_id = _crear_tenant(postgres_engine, "TenantWaAudioExceeds")
+    phone_number_id = f"pni-audioexc-{uuid.uuid4().hex[:10]}"
+    wamid = f"wamid.audio.{uuid.uuid4().hex}"
+    _crear_whatsapp_account(postgres_engine, tenant_id, phone_number_id)
+
+    media_client = _build_graph_media_client(_media_download_handler())
+
+    def _fake_download(db, message, *, media_id, client=None):
+        from app.integrations.whatsapp.media_client import (
+            download_and_store_voice_note as real_download,
+        )
+
+        return real_download(db, message, media_id=media_id, client=media_client)
+
+    monkeypatch.setattr(
+        worker_module, "download_and_store_voice_note", _fake_download
+    )
+
+    sent_messages: list[dict] = []
+    graph_client = _build_graph_api_client_capturing_sends(sent_messages)
+    original_process_audio = worker_module._process_audio_message_event
+
+    def _process_audio_with_graph_client(db, event, *, event_id, redis_client=None):
+        return original_process_audio(
+            db,
+            event,
+            event_id=event_id,
+            redis_client=redis_client,
+            graph_client=graph_client,
+        )
+
+    monkeypatch.setattr(
+        worker_module, "_process_audio_message_event", _process_audio_with_graph_client
+    )
+
+    redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    # Duración (900s = 15 min) EXCEDE el límite default (600s = 10 min).
+    job = _audio_inbound_job(
+        phone_number_id=phone_number_id, wamid=wamid, duration=900
+    )
+
+    process_job(
+        job,
+        session_factory=_session_factory(postgres_engine),
+        redis_client=redis_client,
+    )
+
+    row = _get_audio_message_row(postgres_engine, wamid)
+    assert row is not None
+    assert row.transcripcion_estado == "descartada_por_duracion"
+
+    stt_job = asyncio.run(dequeue_stt_job(redis_client))
+    assert stt_job is None, "No debe encolarse STT para una nota descartada"
+
+    assert len(sent_messages) == 1, "Debe enviarse exactamente una auto-respuesta"
+    assert "nota de voz" in sent_messages[0]["text"]["body"].lower()
+
+
+# (d) reentrega del mismo wamid no crea segundo Message ni segundo job STT
+
+
+def test_process_job_audio_duplicate_wamid_does_not_duplicate_message_or_job(
+    postgres_engine, monkeypatch, audio_store_tmp
+):
+    from app.core.stt_queue import dequeue_stt_job
+    from app.workers import whatsapp_inbound_worker as worker_module
+
+    tenant_id = _crear_tenant(postgres_engine, "TenantWaAudioDup")
+    phone_number_id = f"pni-audiodup-{uuid.uuid4().hex[:10]}"
+    wamid = f"wamid.audio.{uuid.uuid4().hex}"
+    _crear_whatsapp_account(postgres_engine, tenant_id, phone_number_id)
+
+    media_client = _build_graph_media_client(_media_download_handler())
+
+    def _fake_download(db, message, *, media_id, client=None):
+        from app.integrations.whatsapp.media_client import (
+            download_and_store_voice_note as real_download,
+        )
+
+        return real_download(db, message, media_id=media_id, client=media_client)
+
+    monkeypatch.setattr(
+        worker_module, "download_and_store_voice_note", _fake_download
+    )
+
+    redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    job = _audio_inbound_job(
+        phone_number_id=phone_number_id, wamid=wamid, duration=20
+    )
+
+    process_job(
+        job, session_factory=_session_factory(postgres_engine), redis_client=redis_client
+    )
+    process_job(
+        job, session_factory=_session_factory(postgres_engine), redis_client=redis_client
+    )
+
+    with postgres_engine.connect() as conn:
+        count = conn.execute(
+            sa.text("SELECT count(*) FROM messages WHERE wamid = :wamid"),
+            {"wamid": wamid},
+        ).scalar_one()
+    assert count == 1, "Reentrega del mismo wamid no debe crear un segundo Message"
+
+    jobs_dequeued = []
+    while True:
+        j = asyncio.run(dequeue_stt_job(redis_client))
+        if j is None:
+            break
+        jobs_dequeued.append(j)
+
+    assert len(jobs_dequeued) == 1, (
+        "Reentrega del mismo wamid no debe encolar un segundo job STT "
+        f"(se encolaron {len(jobs_dequeued)})"
+    )
+
+
+# (e) límite configurable por env: con límite reducido, una nota que antes
+# estaba dentro del default ahora se descarta.
+
+
+def test_process_job_audio_configurable_limit_via_env_triggers_discard(
+    postgres_engine, monkeypatch, audio_store_tmp
+):
+    from app.core.config import get_settings
+    from app.workers import whatsapp_inbound_worker as worker_module
+
+    tenant_id = _crear_tenant(postgres_engine, "TenantWaAudioLimitEnv")
+    phone_number_id = f"pni-audiolimenv-{uuid.uuid4().hex[:10]}"
+    wamid = f"wamid.audio.{uuid.uuid4().hex}"
+    _crear_whatsapp_account(postgres_engine, tenant_id, phone_number_id)
+
+    media_client = _build_graph_media_client(_media_download_handler())
+
+    def _fake_download(db, message, *, media_id, client=None):
+        from app.integrations.whatsapp.media_client import (
+            download_and_store_voice_note as real_download,
+        )
+
+        return real_download(db, message, media_id=media_id, client=media_client)
+
+    monkeypatch.setattr(
+        worker_module, "download_and_store_voice_note", _fake_download
+    )
+
+    sent_messages: list[dict] = []
+    graph_client = _build_graph_api_client_capturing_sends(sent_messages)
+    original_process_audio = worker_module._process_audio_message_event
+
+    def _process_audio_with_graph_client(db, event, *, event_id, redis_client=None):
+        return original_process_audio(
+            db,
+            event,
+            event_id=event_id,
+            redis_client=redis_client,
+            graph_client=graph_client,
+        )
+
+    monkeypatch.setattr(
+        worker_module, "_process_audio_message_event", _process_audio_with_graph_client
+    )
+
+    # Límite reducido a 10 segundos (mucho menor que el default de 600s):
+    # una nota de 30s, que estaría DENTRO del default, ahora EXCEDE.
+    settings = get_settings()
+    original_limit = settings.voice_note_max_duration_seconds
+    settings.voice_note_max_duration_seconds = 10
+    try:
+        redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        job = _audio_inbound_job(
+            phone_number_id=phone_number_id, wamid=wamid, duration=30
+        )
+
+        process_job(
+            job,
+            session_factory=_session_factory(postgres_engine),
+            redis_client=redis_client,
+        )
+    finally:
+        settings.voice_note_max_duration_seconds = original_limit
+
+    row = _get_audio_message_row(postgres_engine, wamid)
+    assert row is not None
+    assert row.transcripcion_estado == "descartada_por_duracion", (
+        "Con el límite reducido a 10s, una nota de 30s debe descartarse"
+    )
+    assert len(sent_messages) == 1
+
+
+# (f) WhatsApp de texto sigue exactamente el camino actual (no-regresión)
+
+
+def test_process_job_text_message_unaffected_by_audio_branch(postgres_engine):
+    """RNF-64/R-70: un mensaje de texto sigue el camino EXACTO de SPEC-027,
+    sin pasar por ninguna rama de audio ni tocar transcripcion_estado."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantWaTextoNoRegresion")
+    phone_number_id = f"pni-textonoreg-{uuid.uuid4().hex[:10]}"
+    wamid = f"wamid.{uuid.uuid4().hex}"
+    _crear_whatsapp_account(postgres_engine, tenant_id, phone_number_id)
+
+    job = _inbound_job(
+        phone_number_id=phone_number_id, wamid=wamid, texto="Hola, texto normal"
+    )
+
+    process_job(job, session_factory=_session_factory(postgres_engine))
+
+    with postgres_engine.connect() as conn:
+        row = conn.execute(
+            sa.text(
+                "SELECT tipo, contenido, transcripcion_estado, audio_ref "
+                "FROM messages WHERE wamid = :wamid"
+            ),
+            {"wamid": wamid},
+        ).one_or_none()
+
+    assert row is not None
+    assert row.tipo == "texto"
+    assert row.contenido == "Hola, texto normal"
+    assert row.transcripcion_estado is None
+    assert row.audio_ref is None
+
+
+# (g) cero call/call_transcript creados por la ingesta de audio
+
+
+def test_process_job_audio_creates_zero_call_or_call_transcript_rows(
+    postgres_engine, monkeypatch, audio_store_tmp
+):
+    from app.workers import whatsapp_inbound_worker as worker_module
+
+    tenant_id = _crear_tenant(postgres_engine, "TenantWaAudioNoCall")
+    phone_number_id = f"pni-audionocall-{uuid.uuid4().hex[:10]}"
+    wamid = f"wamid.audio.{uuid.uuid4().hex}"
+    _crear_whatsapp_account(postgres_engine, tenant_id, phone_number_id)
+
+    media_client = _build_graph_media_client(_media_download_handler())
+
+    def _fake_download(db, message, *, media_id, client=None):
+        from app.integrations.whatsapp.media_client import (
+            download_and_store_voice_note as real_download,
+        )
+
+        return real_download(db, message, media_id=media_id, client=media_client)
+
+    monkeypatch.setattr(
+        worker_module, "download_and_store_voice_note", _fake_download
+    )
+
+    with postgres_engine.begin() as conn:
+        calls_antes = conn.execute(sa.text("SELECT count(*) FROM calls")).scalar_one()
+        transcripts_antes = conn.execute(
+            sa.text("SELECT count(*) FROM call_transcripts")
+        ).scalar_one()
+
+    redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    job = _audio_inbound_job(phone_number_id=phone_number_id, wamid=wamid)
+
+    process_job(
+        job,
+        session_factory=_session_factory(postgres_engine),
+        redis_client=redis_client,
+    )
+
+    with postgres_engine.begin() as conn:
+        calls_despues = conn.execute(
+            sa.text("SELECT count(*) FROM calls")
+        ).scalar_one()
+        transcripts_despues = conn.execute(
+            sa.text("SELECT count(*) FROM call_transcripts")
+        ).scalar_one()
+
+    assert calls_despues == calls_antes
+    assert transcripts_despues == transcripts_antes

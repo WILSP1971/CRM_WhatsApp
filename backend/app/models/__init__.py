@@ -15,6 +15,9 @@ from app.models.chunk import Chunk  # noqa: F401
 from app.models.embedding import Embedding  # noqa: F401
 from app.models.rag_draft import RagDraft  # noqa: F401
 from app.models.whatsapp_account import WhatsappAccount  # noqa: F401
+from app.models.call import Call  # noqa: F401
+from app.models.call_transcript import CallTranscript  # noqa: F401
+from app.models.pbx_line import PbxLine  # noqa: F401
 
 __all__ = [
     "Tenant",
@@ -27,4 +30,7 @@ __all__ = [
     "Embedding",
     "RagDraft",
     "WhatsappAccount",
+    "Call",
+    "CallTranscript",
+    "PbxLine",
 ]

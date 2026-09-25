@@ -112,3 +112,69 @@ export interface WsErrorEvent {
 }
 
 export type WsServerEvent = WsOutgoingMessageEvent | WsDeliveryStatusEvent | WsErrorEvent;
+
+/* ---------- Canal de voz — ficha de llamada (SPEC-040) ----------
+ *
+ * Rutas exactas de `backend/app/api/calls.py` (montadas bajo `/api/v1`):
+ *   GET /calls
+ *   GET /calls/{id}
+ *   GET /calls/{id}/audio (binario, no JSON — ver `callsApi.ts`)
+ */
+
+export interface BackendCall {
+  id: string;
+  tenant_id: string;
+  call_id: string;
+  numero: string;
+  direccion: "entrante" | "saliente";
+  duracion: number | null;
+  estado: string;
+  contact_id: string | null;
+  conversation_id: string | null;
+  resumen: string | null;
+  audio_disponible: boolean;
+  activo: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BackendTranscriptSegment {
+  inicio: number;
+  fin: number;
+  texto: string;
+  hablante: string;
+}
+
+export interface BackendCallTranscript {
+  id: string;
+  call_id: string;
+  segmentos: BackendTranscriptSegment[];
+  idioma: string;
+  modelo_stt: string;
+  wer: number | null;
+}
+
+export interface BackendCallSentiment {
+  sentimiento: string | null;
+  sentimiento_score: number | null;
+}
+
+export interface BackendCallRagDraft {
+  id: string;
+  conversation_id: string;
+  content: string;
+  content_original: string;
+  model: string;
+  citations: BackendCitation[];
+  estado: string;
+  edited_by: string | null;
+  approved_by: string | null;
+  sent_message_id: string | null;
+}
+
+export interface BackendCallDetail {
+  call: BackendCall;
+  transcript: BackendCallTranscript | null;
+  sentiment: BackendCallSentiment;
+  rag_draft: BackendCallRagDraft | null;
+}

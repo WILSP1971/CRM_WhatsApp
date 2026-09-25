@@ -82,12 +82,15 @@
  */
 
 import type {
+  BackendCall,
+  BackendCallDetail,
   BackendCitation,
   BackendConversation,
   BackendDraft,
   BackendMessage,
 } from "@/lib/api/backendTypes";
 import type {
+  CallDirection,
   Channel,
   Contact,
   Conversation,
@@ -96,6 +99,8 @@ import type {
   MessageStatus,
   RagCitation,
   RagDraft,
+  RealCallDetail,
+  RealCallRecord,
   Sentiment,
   WhatsappServiceWindow,
 } from "@/lib/types";
@@ -267,5 +272,83 @@ export function adaptDraft(draft: BackendDraft): RagDraft {
     conversationId: draft.conversation_id,
     text: draft.content,
     generatedAt: draft.created_at,
+  };
+}
+
+/* ---------- Canal de voz — ficha de llamada (SPEC-040) ---------- */
+
+const VALID_CALL_DIRECTIONS: readonly CallDirection[] = ["entrante", "saliente"];
+
+function adaptCallDirection(direccion: string): CallDirection {
+  return (VALID_CALL_DIRECTIONS as string[]).includes(direccion)
+    ? (direccion as CallDirection)
+    : "entrante";
+}
+
+/** Adapta el resumen de listado (`BackendCall`, `GET /calls`) al contrato de
+ * la ficha real de llamada (nota: SIN transcripción/sentimiento/borrador —
+ * esos solo vienen en el detalle, `GET /calls/{id}`, para no sobrecargar el
+ * listado). */
+export function adaptCall(call: BackendCall): RealCallRecord {
+  return {
+    id: call.id,
+    contactId: call.contact_id,
+    conversationId: call.conversation_id,
+    callId: call.call_id,
+    numero: call.numero,
+    direccion: adaptCallDirection(call.direccion),
+    duracionSeconds: call.duracion,
+    estado: call.estado,
+    resumen: call.resumen,
+    audioDisponible: call.audio_disponible,
+    createdAt: call.created_at,
+  };
+}
+
+/**
+ * Adapta la ficha completa de una llamada (SPEC-040, `GET /calls/{id}`):
+ * transcripción real (segmentos + timestamps + hablante), sentimiento,
+ * resumen y borrador citado (`≥3` citas, RF-02 SPEC-040). Reutiliza
+ * `adaptSentiment`/`adaptCitations` (mismas funciones que la Bandeja/RAG) en
+ * vez de duplicar la lógica de mapeo.
+ */
+export function adaptCallDetail(detail: BackendCallDetail): RealCallDetail {
+  const draft = detail.rag_draft;
+  return {
+    call: adaptCall(detail.call),
+    transcript: detail.transcript
+      ? {
+          id: detail.transcript.id,
+          callId: detail.transcript.call_id,
+          segmentos: detail.transcript.segmentos.map((segmento) => ({
+            inicio: segmento.inicio,
+            fin: segmento.fin,
+            texto: segmento.texto,
+            hablante: segmento.hablante,
+          })),
+          idioma: detail.transcript.idioma,
+          modeloStt: detail.transcript.modelo_stt,
+          wer: detail.transcript.wer,
+        }
+      : null,
+    sentiment:
+      detail.sentiment.sentimiento !== null
+        ? adaptSentiment(detail.sentiment.sentimiento)
+        : null,
+    sentimentScore: detail.sentiment.sentimiento_score,
+    ragDraft: draft
+      ? {
+          id: draft.id,
+          conversationId: draft.conversation_id,
+          content: draft.content,
+          contentOriginal: draft.content_original,
+          model: draft.model,
+          citations: adaptCitations(draft.conversation_id, draft.citations),
+          estado: draft.estado,
+          editedBy: draft.edited_by,
+          approvedBy: draft.approved_by,
+          sentMessageId: draft.sent_message_id,
+        }
+      : null,
   };
 }

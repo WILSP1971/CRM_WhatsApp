@@ -16,6 +16,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar código de la aplicación
 COPY . .
 
+# Hacer ejecutable el script de inicialización del almacén de audio (SPEC-035)
+RUN chmod +x /app/app/workers/init_audio_store.sh
+
 # Exponer puerto (definido por variable de entorno en compose)
 EXPOSE 8000
 

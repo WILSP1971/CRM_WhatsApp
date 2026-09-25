@@ -38,6 +38,36 @@ Forma del payload (WhatsApp Cloud API, formato estable de Meta):
 `value.messages[]` (mensajes ENTRANTES) es alcance de SPEC-027;
 `value.statuses[]` (callbacks de estado de mensajes SALIENTES) es SPEC-030,
 parseado por `parse_status_events` en este mismo módulo.
+
+Forma del mensaje de nota de voz (`type=="audio"`, SPEC-055, F2, extiende
+SPEC-027 de forma ADITIVA): el objeto de mensaje trae un sub-objeto `audio`,
+formato ESTABLE de Meta (verificado contra la documentación de Media
+Messages de WhatsApp Cloud API, mismo criterio que SPEC-054):
+
+    {
+      "id": "<wamid>",
+      "from": "<wa_id>",
+      "timestamp": "...",
+      "type": "audio",
+      "audio": {
+        "id": "<media_id>",
+        "mime_type": "audio/ogg; codecs=opus"
+      }
+    }
+
+R-68 (duración desconocida, documentado): el objeto `audio` de Meta NUNCA
+incluye una duración (verificado al implementar SPEC-054, ver docstring de
+`media_client.py` y el comentario de `Message.audio_duracion_seg`) — no hay
+campo `duration`/`seconds` en el payload real. Por eso `audio_duracion_seg`
+se extrae de forma DEFENSIVA (`message["audio"].get("duration")` u otra
+clave hipotética que Meta pudiera añadir en el futuro, nunca asumida
+presente) y hoy será SIEMPRE `None` en producción real. El worker de
+ingesta (SPEC-055) documenta y aplica la resolución completa de R-68 (ver
+`whatsapp_inbound_worker.py`): con duración desconocida, la nota NO se
+descarta por duración en el momento de la ingesta (fail-open respecto al
+límite, ya que no hay dato para comparar) — se encola para transcripción,
+que es hoy el único punto donde se conoce la duración real del audio
+decodificado.
 """
 
 from __future__ import annotations
@@ -62,6 +92,17 @@ class InboundMessageEvent:
     marcador, no se descarta el mensaje).
     `contact_name`: nombre de perfil de WhatsApp del contacto, si Meta lo
     envía (`contacts[].profile.name`), solo informativo.
+
+    Campos de media de audio (SPEC-055, F2, ADITIVOS — `None` para
+    tipos/mensajes distintos de `"audio"`, sin afectar el camino de texto,
+    RNF-64):
+    `media_id`: `message["audio"]["id"]` — id de media de Meta, insumo de
+    `media_client.download_and_store_voice_note` (SPEC-054).
+    `mime_type`: `message["audio"]["mime_type"]`, si Meta lo envía en el
+    propio mensaje (además del que se resuelve en la descarga, SPEC-054).
+    `audio_duracion_seg`: duración en segundos, SOLO si Meta la incluyera en
+    el payload (hoy NUNCA la incluye, ver R-68 en el docstring del módulo) —
+    extracción puramente defensiva, no se asume presente.
     """
 
     wamid: str
@@ -70,6 +111,9 @@ class InboundMessageEvent:
     tipo: str
     texto: str | None
     contact_name: str | None = None
+    media_id: str | None = None
+    mime_type: str | None = None
+    audio_duracion_seg: int | None = None
 
 
 def parse_inbound_message_events(raw_body: str) -> list[InboundMessageEvent]:
@@ -124,6 +168,29 @@ def parse_inbound_message_events(raw_body: str) -> list[InboundMessageEvent]:
                 if tipo == "text":
                     texto = (message.get("text") or {}).get("body")
 
+                # SPEC-055 (F2, aditivo): tipos distintos de "audio" NUNCA
+                # tocan estos campos (quedan en None, RNF-64 no-regresión).
+                media_id = None
+                mime_type = None
+                audio_duracion_seg = None
+                if tipo == "audio":
+                    audio_payload = message.get("audio") or {}
+                    media_id = audio_payload.get("id")
+                    mime_type = audio_payload.get("mime_type")
+                    # R-68 (documentado en el docstring del módulo): Meta NO
+                    # envía duración en el payload real hoy; se extrae de
+                    # forma defensiva por si un valor futuro apareciera bajo
+                    # alguna de estas claves, sin asumir su presencia.
+                    duracion_raw = (
+                        audio_payload.get("duration")
+                        or audio_payload.get("seconds")
+                    )
+                    if duracion_raw is not None:
+                        try:
+                            audio_duracion_seg = int(duracion_raw)
+                        except (TypeError, ValueError):
+                            audio_duracion_seg = None
+
                 events.append(
                     InboundMessageEvent(
                         wamid=wamid,
@@ -132,6 +199,9 @@ def parse_inbound_message_events(raw_body: str) -> list[InboundMessageEvent]:
                         tipo=tipo,
                         texto=texto,
                         contact_name=contacts_by_wa_id.get(wa_id),
+                        media_id=media_id,
+                        mime_type=mime_type,
+                        audio_duracion_seg=audio_duracion_seg,
                     )
                 )
 

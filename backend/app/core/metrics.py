@@ -12,11 +12,16 @@ ya declarado en `requirements.txt`). Cubre:
   2. `ai_request_duration_seconds`: latencia de las llamadas al servicio de
      IA local (Ollama) por operación (`chat`/`embed`), la métrica que THOR
      usa para verificar el objetivo RNF-04 (p95 RAG ≤ 6 s GPU).
+  3. `stt_rtf` / `stt_queue_latency_seconds` / `stt_jobs_total`: RTF (real
+     time factor), latencia de cola batch y tasa de error del `stt_worker`
+     (SPEC-038, RNF-42/R-42), emitidas exclusivamente por
+     `app.workers.stt_worker` — el único consumidor de `stt:jobs`.
 
 No se instrumenta ningún cliente externo: el único emisor de
 `ai_request_duration_seconds` es `app.services.ai_service.AIClient`
 (CHECKPOINT SENSIBLE, `.no-externo`), que solo habla con el host interno
-validado en `app/core/config.py`.
+validado en `app/core/config.py`. El único emisor de las métricas STT es
+`app.workers.stt_worker`, que transcribe 100% local (ADR-009, sin egress).
 """
 
 from __future__ import annotations
@@ -69,6 +74,49 @@ AI_REQUEST_ERRORS_TOTAL = Counter(
     labelnames=("operation", "error_type"),
     registry=REGISTRY,
 )
+
+# --- STT (SPEC-038, ADR-009) ------------------------------------------------
+
+STT_RTF = Histogram(
+    "stt_rtf",
+    "Real-Time Factor del stt_worker (tiempo de proceso / duración del audio), por modelo/dispositivo",
+    labelnames=("model", "device"),
+    registry=REGISTRY,
+    # RNF-42: objetivo RTF <= 1.0 en GPU large-v3; fallback CPU medium con
+    # RTF degradado (puede superar varias veces 1.0), de ahí el rango amplio.
+    buckets=(0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2, 3, 5, 8, 12, 20),
+)
+
+STT_QUEUE_LATENCY_SECONDS = Histogram(
+    "stt_queue_latency_seconds",
+    "Latencia entre el encolado del trabajo STT (job_id, SPEC-037) y su consumo por stt_worker",
+    registry=REGISTRY,
+    buckets=(0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600, 1800),
+)
+
+STT_JOBS_TOTAL = Counter(
+    "stt_jobs_total",
+    "Trabajos STT procesados por stt_worker, por resultado (ok/error/duplicado)",
+    labelnames=("resultado",),
+    registry=REGISTRY,
+)
+
+
+def observe_stt_rtf(*, model: str, device: str, rtf: float) -> None:
+    """Registra el RTF de una transcripción completada (RNF-42)."""
+    STT_RTF.labels(model=model, device=device).observe(rtf)
+
+
+def observe_stt_queue_latency(latency_seconds: float) -> None:
+    """Registra la latencia de cola batch (encolado -> consumo) de un job STT."""
+    STT_QUEUE_LATENCY_SECONDS.observe(latency_seconds)
+
+
+def increment_stt_jobs(*, resultado: str) -> None:
+    """Incrementa el contador de trabajos STT procesados por resultado
+    (`ok`/`error`/`duplicado`) — base de la tasa de error exportada a
+    `/metrics` (RF de SPEC-038)."""
+    STT_JOBS_TOTAL.labels(resultado=resultado).inc()
 
 
 def render_latest() -> tuple[bytes, str]:

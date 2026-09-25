@@ -178,3 +178,69 @@ export interface VoiceBotData {
   transcripts: Record<string, TranscriptLine[]>;
   callIntentMap: Record<string, string>;
 }
+
+/* ---------- Ficha de llamada real (SPEC-040) — datos reales tras VITE_USE_REAL_API ----------
+ *
+ * Contratos NUEVOS, exclusivos del modo real (`USE_REAL_API === true`,
+ * `GET /calls`/`GET /calls/{id}`, `backend/app/api/calls.py`): NO reemplazan
+ * `CallRecord`/`VoiceBotData` (que siguen siendo el contrato de la maqueta
+ * mock, SPEC-006, intacto con el flag OFF). El componente de ficha de
+ * llamada del módulo VoiceBot alterna entre ambos igual que `InboxPage`
+ * alterna `Conversation` mock/real (SPEC-020).
+ */
+
+/** Un segmento de la transcripción real (inicio/fin en segundos, SPEC-038). */
+export interface RealTranscriptSegment {
+  inicio: number;
+  fin: number;
+  texto: string;
+  hablante: string;
+}
+
+export interface RealCallTranscript {
+  id: string;
+  callId: string;
+  segmentos: RealTranscriptSegment[];
+  idioma: string;
+  modeloStt: string;
+  wer: number | null;
+}
+
+/** Borrador RAG citado de la llamada (SPEC-019/039); reutiliza `RagCitation`
+ * (misma forma que el panel RAG de la Bandeja) con `≥3` citas trazables. */
+export interface RealCallRagDraft {
+  id: string;
+  conversationId: string;
+  content: string;
+  contentOriginal: string;
+  model: string;
+  citations: RagCitation[];
+  estado: string;
+  editedBy: string | null;
+  approvedBy: string | null;
+  sentMessageId: string | null;
+}
+
+export interface RealCallRecord {
+  id: string;
+  contactId: string | null;
+  conversationId: string | null;
+  callId: string;
+  numero: string;
+  direccion: CallDirection;
+  duracionSeconds: number | null;
+  estado: string;
+  resumen: string | null;
+  /** `true` si hay audio para reproducir (sujeto a retención, SPEC-041, aún
+   * no implementada); `false` si nunca hubo audio o ya fue purgado. */
+  audioDisponible: boolean;
+  createdAt: string;
+}
+
+export interface RealCallDetail {
+  call: RealCallRecord;
+  transcript: RealCallTranscript | null;
+  sentiment: Sentiment | null;
+  sentimentScore: number | null;
+  ragDraft: RealCallRagDraft | null;
+}

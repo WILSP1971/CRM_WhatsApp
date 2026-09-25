@@ -38,7 +38,12 @@ class MessageOut(BaseModel):
     tenant_id: uuid.UUID
     conversation_id: uuid.UUID
     remitente: str
-    contenido: str
+    # Nullable (SPEC-053/056): un `Message(tipo="audio")` nace sin `contenido`
+    # hasta que el worker STT lo transcribe; el schema de salida debe reflejar
+    # la misma nulabilidad que `Message.contenido` en el modelo/BD, o
+    # cualquier endpoint que sirva ese mensaje falla con 500
+    # (ResponseValidationError de Pydantic).
+    contenido: str | None
     sentimiento: str | None
     sentimiento_score: float | None
     estado_entrega: str

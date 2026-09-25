@@ -29,8 +29,11 @@ NC='\033[0m' # No Color
 
 echo -e "${YELLOW}[check-externos-backend] Auditando backend por referencias externas de IA...${NC}"
 
-# Patrones PROHIBIDOS: URLs y SDKs de terceros
+# Patrones PROHIBIDOS: URLs y SDKs de terceros (inferencia IA + STT/TTS)
+# SPEC-035/ADR-009: STT/TTS de terceros PROHIBIDOS — audio (dato personal/PHI)
+# jamás a terceros. Inferencia (ADR-005) igual: solo Ollama local en ia_internal.
 declare -a FORBIDDEN_URLS=(
+    # Inferencia (SPEC-016, ADR-005)
     "api.openai.com"
     "api.anthropic.com"
     "generativelanguage.googleapis.com"
@@ -46,9 +49,36 @@ declare -a FORBIDDEN_URLS=(
     "groq.com"
     "api.groq.com"
     "vllm.ai"
+    # STT de terceros (SPEC-035, ADR-009: STT local con faster-whisper, sin audio a terceros)
+    "speech.googleapis.com"
+    "transcribe.googleapis.com"
+    "transcribestreaming.googleapis.com"
+    "transcribe.us-east-1.amazonaws.com"
+    "transcribestreaming.us-east-1.amazonaws.com"
+    "api.transcribe.aws"
+    "api-inference.huggingface.co"
+    "api.deepgram.com"  # Deepgram STT
+    "api.assemblyai.com"  # AssemblyAI
+    "speech.microsoft.com"  # Azure Speech / Cognitive Services
+    "api.azure.microsoft.com"
+    "westus.tts.speech.microsoft.com"
+    # TTS de terceros (SPEC-044, ADR-012: TTS local con Piper o pregrabado)
+    "api.elevenlabs.io"
+    "polly.us-east-1.amazonaws.com"
+    "tts.googleapis.com"
+    "texttospeech.googleapis.com"
+    "api.elevenlabs.co"
+    "play.ht"
+    "api.playht.com"
+    "api.playai.com"
+    "api.deepgram.com"  # Deepgram también tiene TTS
+    "api.coqui-cloud.com"
+    "tts\.ai"
+    "api\.mutagen\.ai"
 )
 
 declare -a FORBIDDEN_SDKS=(
+    # Inferencia (SPEC-016, ADR-005)
     "openai"
     "anthropic"
     "google-generativeai"
@@ -58,6 +88,43 @@ declare -a FORBIDDEN_SDKS=(
     "huggingface_hub"
     "together"
     "groq"
+    # STT/TTS de terceros (SPEC-035, ADR-009, SPEC-044)
+    "google-cloud-speech"
+    "google-cloud-text-to-speech"
+    "azure-cognitiveservices-speech"
+    "deepgram-sdk"
+    "deepgram"
+    "assemblyai"
+    # NOTA (WOLVERINE, corrección post SPEC-044): `boto3`/`google-auth` son
+    # SDKs COMPLETOS y dependencias transitivas comunes de features no
+    # relacionadas con IA (p.ej. `boto3` para S3/SES, `google-auth` para
+    # OAuth). Bloquear el paquete entero aquí (`requirements.txt`/`import X`
+    # literal) es desproporcionado y genera falsos positivos reales en fases
+    # futuras — se eliminan de esta lista. El USO concreto peligroso
+    # (`boto3` + Transcribe/Polly, `google.auth` + Speech) SÍ sigue
+    # prohibido: acotado como patrón de texto libre en la sección 10
+    # (`STT_TTS_FORBIDDEN_PATTERNS`, ver `boto3.*transcribe`/`boto3.*polly`/
+    # `google\.auth.*speech` más abajo), que evalúa con `grep -ri` sobre todo
+    # el árbol de `app/` y no depende de que el import/uso estén en la misma
+    # línea de una forma rígida.
+    # NOTA (WOLVERINE): `librosa`/`pyannote` son librerías de procesamiento
+    # de audio 100% LOCALES y legítimas (sin egress) — `pyannote` incluso se
+    # menciona en `stt_engine.py` como posible opción de diarización local
+    # futura (SPEC-047). NO se prohíben por defecto. Si en el futuro se corre
+    # bajo un allowlist de módulo (mismo patrón que STT/PBX en las secciones
+    # 11/12 de este script: permitido SOLO dentro de
+    # `app/services/telefonia/`), documentar aquí el cambio de política.
+    # TTS de terceros (SPEC-044, ADR-012)
+    "elevenlabs"
+    "playht"
+    "google-cloud-texttospeech"
+    "azure-text-to-speech"
+    "openai-python"
+    # NOTA (WOLVERINE): `mutagen` es una librería ESTÁNDAR de metadata de
+    # audio local (lectura/escritura de tags ID3, etc.), sin relación con
+    # TTS de terceros. NO se prohíbe el paquete completo — el caso real de
+    # preocupación (uso de `mutagen` como wrapper de un backend TTS online)
+    # ya está acotado con precisión en la sección 10 (`mutagen.*tts`).
 )
 
 # Función para buscar y reportar
@@ -186,29 +253,68 @@ check_ai_base_url_file "${BACKEND_DIR}/.env.example"
 check_ai_base_url_file "$(dirname "${BACKEND_DIR}")/.env.example"
 check_ai_base_url_file "${DC_FILE:-docker-compose.yml}"
 
-# Auditoría de transporte acotado (SPEC-024, ADR-006): graph.facebook.com SOLO en módulo WhatsApp
-echo -e "\n${YELLOW}7. Verificando allowlist de transporte (graph.facebook.com SOLO en WhatsApp módulo)...${NC}"
+# Auditoría de transporte acotado (SPEC-024/SPEC-054, ADR-006): graph.facebook.com
+# SOLO en módulo WhatsApp. Estado real (corrección BLACK WIDOW post SPEC-054): el
+# módulo WhatsApp YA NO es un placeholder — `graph_client.py` (envío, SPEC-024/029)
+# y `media_client.py` (descarga de media entrante, SPEC-054) contienen
+# `graph.facebook.com` real. Esta sección verifica ACTIVAMENTE contra el código
+# real (no por vacuidad) con el MISMO estilo de allowlist por ruta con
+# grep/allowlist que las secciones 11/12 (PBX) de este script.
+echo -e "\n${YELLOW}7. Verificando allowlist por ruta de graph.facebook.com (SOLO en módulo WhatsApp, SPEC-024/054, ADR-006)...${NC}"
 
-# Busca graph.facebook.com en TODA la carpeta app/
-if grep -r "graph\.facebook\.com" "${BACKEND_DIR}/app" 2>/dev/null | grep -v "__pycache__"; then
-    # Encontró referencias. Ahora verifica que TODAS estén en app/integrations/whatsapp/
-    matches=$(grep -r "graph\.facebook\.com" "${BACKEND_DIR}/app" 2>/dev/null | grep -v "__pycache__" || true)
+GRAPH_ALLOWED_MODULES=(
+    "app/integrations/whatsapp"
+)
+GRAPH_ALLOWED_PATH_REGEX=$(IFS='|'; echo "${GRAPH_ALLOWED_MODULES[*]}")
 
-    if [ -n "$matches" ]; then
-        # Filtra solo los matches que NO están en app/integrations/whatsapp/
-        outside_whatsapp=$(echo "$matches" | grep -v "app/integrations/whatsapp/" || true)
+GRAPH_VIOLATION=0
+matches=$(grep -r "graph\.facebook\.com" "${BACKEND_DIR}/app" 2>/dev/null | grep -v "__pycache__" || true)
 
-        if [ -n "$outside_whatsapp" ]; then
-            echo -e "${RED}    ✗ FALLO: graph.facebook.com encontrado FUERA del módulo WhatsApp:${NC}"
-            echo "$outside_whatsapp" | sed 's/^/      /'
-            EXIT_CODE=1
-        else
-            echo -e "${GREEN}    ✓ OK: graph.facebook.com solo en app/integrations/whatsapp/ (transporte permitido)${NC}"
-        fi
+if [ -n "$matches" ]; then
+    outside_whatsapp=$(echo "$matches" | grep -vE "${GRAPH_ALLOWED_PATH_REGEX}" || true)
+
+    if [ -n "$outside_whatsapp" ]; then
+        echo -e "${RED}    ✗ FALLO: graph.facebook.com encontrado FUERA del módulo WhatsApp (debe estar SOLO en ${GRAPH_ALLOWED_MODULES[*]}):${NC}"
+        echo "$outside_whatsapp" | sed 's/^/      /'
+        GRAPH_VIOLATION=1
+    else
+        echo -e "${GREEN}    ✓ OK: graph.facebook.com solo en ${GRAPH_ALLOWED_MODULES[*]} (transporte real: graph_client.py envío SPEC-024/029, media_client.py descarga SPEC-054)${NC}"
     fi
 else
-    # No encontró, lo cual es OK en F0 (módulo aún es placeholder)
-    echo -e "${GREEN}    ✓ OK: graph.facebook.com no aparece en código (F0, placeholder)${NC}"
+    # No debería ocurrir hoy (el módulo ya tiene transporte real, no placeholder);
+    # se deja como aviso, no como fallo, por si el código se reestructura.
+    echo -e "${YELLOW}    ⚠ AVISO: graph.facebook.com no aparece en código (inesperado: el módulo ya no es placeholder desde SPEC-024/054)${NC}"
+fi
+
+if [ $GRAPH_VIOLATION -ne 0 ]; then
+    EXIT_CODE=1
+fi
+
+# Verificar que el módulo de STT/IA NO importa el cliente de descarga de media de
+# WhatsApp (RF-05 SPEC-054, ADR-009: el STT nunca descarga, solo lee del almacén
+# ya poblado por `media_client.py`). Mismo estilo de verificación activa que la
+# comprobación de PBX en la sección 11 (STT_IA_MODULES).
+echo -e "\n${YELLOW}    → Verificando que STT/IA NO importan el cliente de descarga de media de WhatsApp (SPEC-054, ADR-009)...${NC}"
+declare -a MEDIA_CLIENT_FORBIDDEN_IMPORT_MODULES=(
+    "${BACKEND_DIR}/app/workers/stt_worker.py"
+    "${BACKEND_DIR}/app/workers/sentiment_worker.py"
+    "${BACKEND_DIR}/app/workers/rag_ingest_worker.py"
+    "${BACKEND_DIR}/app/services/rag"
+)
+
+for mod in "${MEDIA_CLIENT_FORBIDDEN_IMPORT_MODULES[@]}"; do
+    if [ -f "$mod" ] || [ -d "$mod" ]; then
+        if grep -rE "media_client|download_and_store_voice_note|GraphMediaClient" "$mod" 2>/dev/null | grep -v "__pycache__"; then
+            echo -e "${RED}    ✗ FALLO: módulo de STT/IA importa/referencia el cliente de descarga de media de WhatsApp (prohibido, RF-05 SPEC-054, ADR-009):${NC}"
+            GRAPH_VIOLATION=1
+        fi
+    fi
+done
+
+if [ $GRAPH_VIOLATION -eq 0 ]; then
+    echo -e "${GREEN}    ✓ OK: media_client/download_and_store_voice_note/GraphMediaClient NO son importables desde STT/IA (SPEC-054, ADR-009)${NC}"
+else
+    EXIT_CODE=1
 fi
 
 # Verificar que el módulo WhatsApp NO importe Ollama ni servicios de IA (separación: transporte ≠ inferencia)
@@ -224,18 +330,25 @@ if [ -d "$WHATSAPP_MODULE" ]; then
         "from.*app.workers"
     )
 
+    WHATSAPP_VIOLATION=0
     for pattern in "${WHATSAPP_FORBIDDEN_IMPORTS[@]}"; do
         if grep -r "$pattern" "$WHATSAPP_MODULE" 2>/dev/null | grep -v "__pycache__"; then
             echo -e "${RED}    ✗ FALLO: patrón prohibido '$pattern' encontrado en módulo WhatsApp${NC}"
-            EXIT_CODE=1
+            WHATSAPP_VIOLATION=1
         fi
     done
 
-    if [ $EXIT_CODE -eq 0 ]; then
-        echo -e "${GREEN}    ✓ OK: módulo WhatsApp no tiene imports de IA (separación de responsabilidades)${NC}"
+    if [ $WHATSAPP_VIOLATION -eq 0 ]; then
+        echo -e "${GREEN}    ✓ OK: módulo WhatsApp no tiene imports de IA (separación de responsabilidades: graph_client.py/media_client.py son transporte puro, SPEC-024/054)${NC}"
+    else
+        EXIT_CODE=1
     fi
 else
-    echo -e "${GREEN}    ✓ OK: módulo WhatsApp aún es placeholder (F0)${NC}"
+    # Estado real (corrección BLACK WIDOW): el módulo WhatsApp existe desde
+    # SPEC-024 y ya no es un placeholder — esta rama documenta el caso
+    # defensivo (directorio ausente), no el estado esperado del proyecto.
+    echo -e "${RED}    ✗ FALLO: módulo WhatsApp (${WHATSAPP_MODULE}) no existe — inesperado desde SPEC-024${NC}"
+    EXIT_CODE=1
 fi
 
 # Verificar que módulos de IA NO importen httpx ni clientes HTTP de transporte a Meta
@@ -256,6 +369,215 @@ done
 
 if [ $EXIT_CODE -eq 0 ]; then
     echo -e "${GREEN}    ✓ OK: módulos de IA no importan httpx (sin egress a Meta)${NC}"
+fi
+
+# SPEC-035/ADR-009: STT/TTS de terceros PROHIBIDOS — test negativo
+# SPEC-044: extiende con TTS de terceros (ElevenLabs, AWS Polly, Google TTS, Azure Speech TTS,
+# OpenAI TTS, Coqui-cloud, PlayHT, Deepgram TTS, etc.)
+echo -e "\n${YELLOW}10. Verificando STT/TTS de terceros (SPEC-035, SPEC-044, ADR-009)...${NC}"
+declare -a STT_TTS_FORBIDDEN_PATTERNS=(
+    # STT de terceros (SPEC-035)
+    "deepgram"
+    "assemblyai"
+    "google.*speech"
+    "aws.*transcribe"
+    "boto3.*transcribe"  # AWS SDK boto3 + submódulo Transcribe (WOLVERINE: boto3 completo ya no está en FORBIDDEN_SDKS)
+    "transcribestreaming"
+    "speech.microsoft.com"
+    "azure.*cognitive.*speech"
+    "openai.*whisper"
+    "faster.whisper.*remote"  # Si existe un client remoto (prohibido)
+
+    # TTS de terceros (SPEC-044, ADR-012: audio local solo)
+    "elevenlabs"
+    # NOTA (WOLVERINE, corrección post SPEC-044): se eliminó el patrón suelto
+    # "polly" (sin acotar) — coincidía con cualquier subcadena "polly" en
+    # nombres propios/variables legítimos (falso positivo confirmado:
+    # `echo "polly_gonzalez_field = 1" | grep -i polly` da match). Ya está
+    # cubierto con precisión por "aws.*polly" (línea de abajo).
+    "aws.*polly"
+    "boto3.*polly"  # AWS SDK boto3 + submódulo Polly (WOLVERINE: boto3 completo ya no está en FORBIDDEN_SDKS)
+    "google.*texttospeech"
+    "texttospeech"
+    "openai.*audio.*speech"
+    "openai.*tts"
+    "azure.*speech.*synthesize"
+    "azure.*cognitiveservices.*speech"
+    "playht"
+    "deepgram.*tts"
+    "coqui.*cloud"
+    "tts\.ai"  # Punto escapado (WOLVERINE): sin escapar coincidía con "xttsyai", etc.
+    "mutagen.*tts"
+    "pyttsx3.*online"  # Si se usa versión con backend online
+)
+
+STT_VIOLATION=0
+for pattern in "${STT_TTS_FORBIDDEN_PATTERNS[@]}"; do
+    if grep -ri "$pattern" "${BACKEND_DIR}/app" 2>/dev/null | grep -v "__pycache__" | grep -v "\.pyc"; then
+        echo -e "${RED}    ✗ FALLO: patrón STT/TTS prohibido '$pattern' detectado en código de aplicación${NC}"
+        grep -ri "$pattern" "${BACKEND_DIR}/app" 2>/dev/null | grep -v "__pycache__" | sed 's/^/      /'
+        STT_VIOLATION=1
+    fi
+done
+
+if [ $STT_VIOLATION -eq 0 ]; then
+    echo -e "${GREEN}    ✓ OK: STT/TTS de terceros no encontrados (solo local con faster-whisper, ADR-009)${NC}"
+else
+    EXIT_CODE=1
+fi
+
+# SPEC-035/ADR-010: Allowlist por RUTA del host del PBX (si PBX externo)
+# El host del PBX se permite SOLO dentro de:
+# - app/services/telefonia/ (app/integrations/pbx, app/integrations/recording):
+#   transporte de descarga real (cliente HTTP que hace la petición al PBX).
+# - app/core/config.py: fuente de verdad de `Settings` (mismo patrón que
+#   TODAS las demás variables de entorno del proyecto — WHATSAPP_TOKEN,
+#   JWT_SECRET_KEY, etc. — se leen y documentan en `config.py`; no es el
+#   cliente de transporte).
+# - app/workers/recording_fetch_worker.py: SOLO referencia
+#   `settings.pbx_external_host` para logging/diagnóstico (arranque y logs
+#   informativos); la petición HTTP real está delegada exclusivamente a
+#   `app/services/telefonia/pbx_client.download_recording` (ADR-010).
+# Si el host/variable aparece fuera de estos módulos, falla el CI. STT/IA
+# nunca lo importa (verificado por separado más abajo).
+echo -e "\n${YELLOW}11. Verificando allowlist por ruta del host del PBX (SPEC-035, ADR-010)...${NC}"
+
+PBX_ALLOWED_MODULES=(
+    "app/services/telefonia"
+    "app/integrations/pbx"
+    "app/integrations/recording"
+    "app/core/config\.py"
+    "app/workers/recording_fetch_worker\.py"
+)
+
+# Busca referencias de credenciales/host del PBX (patrones como PBX_HOST,
+# ASTERISK_HOST, FRESWITCH_HOST, PBX_EXTERNAL_HOST -variable real usada por
+# SPEC-037/pbx_client.py/config.py-, etc.)
+PBX_HOST_PATTERNS=(
+    "PBX_HOST"
+    "PBX_EXTERNAL_HOST"
+    "pbx_external_host"
+    "ASTERISK_HOST"
+    "FRESWITCH_HOST"
+    "PBX_URL"
+    "PBX_IP"
+    "pbx_host"
+    "asterisk"
+    "freswitch"
+)
+
+# Patrón único alternado (en vez de encadenar múltiples `-v -E` vía `eval`,
+# que hace que grep interprete los patrones intermedios como RUTAS DE FICHERO
+# inexistentes, falla con código de error, y con el `|| true` de abajo la
+# violación real queda enmascarada — bug detectado por BLACK WIDOW).
+PBX_ALLOWED_PATH_REGEX=$(IFS='|'; echo "${PBX_ALLOWED_MODULES[*]}")
+
+PBX_VIOLATION=0
+for pattern in "${PBX_HOST_PATTERNS[@]}"; do
+    matches=$(grep -r "$pattern" "${BACKEND_DIR}/app" 2>/dev/null | grep -v "__pycache__" || true)
+
+    if [ -n "$matches" ]; then
+        # Si encontró referencias, verifica que todas estén en módulos permitidos
+        outside_allowed=$(echo "$matches" | grep -vE "${PBX_ALLOWED_PATH_REGEX}" || true)
+
+        if [ -n "$outside_allowed" ]; then
+            echo -e "${RED}    ✗ FALLO: ${pattern} encontrado FUERA de módulos permitidos (debe estar SOLO en ${PBX_ALLOWED_MODULES[*]}):${NC}"
+            echo "$outside_allowed" | sed 's/^/      /'
+            PBX_VIOLATION=1
+        fi
+    fi
+done
+
+# STT/IA que importan cliente de descarga del PBX (prohibido)
+echo -e "\n${YELLOW}    → Verificando que STT/IA NO importan cliente de descarga del PBX...${NC}"
+declare -a STT_IA_MODULES=(
+    "${BACKEND_DIR}/app/workers/stt_worker.py"
+    "${BACKEND_DIR}/app/workers/sentiment_worker.py"
+    "${BACKEND_DIR}/app/workers/rag_ingest_worker.py"
+    "${BACKEND_DIR}/app/services/rag"
+)
+
+for mod in "${STT_IA_MODULES[@]}"; do
+    if [ -f "$mod" ] || [ -d "$mod" ]; then
+        if grep -r "pbx\|PBX\|asterisk\|freswitch\|recording.*fetch\|download.*pbx" "$mod" 2>/dev/null | grep -v "__pycache__"; then
+            echo -e "${RED}    ✗ FALLO: STT/IA módulo importa/llama a descarga del PBX (prohibido, ADR-010):${NC}"
+            PBX_VIOLATION=1
+        fi
+    fi
+done
+
+if [ $PBX_VIOLATION -eq 0 ]; then
+    echo -e "${GREEN}    ✓ OK: allowlist por ruta del PBX respetado (SOLO en módulos de transporte, ADR-010)${NC}"
+else
+    EXIT_CODE=1
+fi
+
+# SPEC-044/ADR-011: Allowlist por RUTA del host del PBX de MEDIA en vivo (si PBX externo)
+# El host del PBX de media (para voz en vivo, SIP/media) se permite SOLO dentro de:
+# - app/integrations/voice_gateway/ o app/services/telefonia/ (conector SIP/media en vivo)
+# - app/core/config.py (fuente de verdad de `Settings`)
+# - app/workers/voice_gateway.py (si existiera como worker, SPEC-046)
+# Si el host/variable aparece fuera de estos módulos (ej. en stt_worker, voice_stt, voice_tts),
+# falla el CI (violación de seguridad: audio/inferencia exponiendo credenciales del PBX).
+echo -e "\n${YELLOW}12. Verificando allowlist por ruta del host del PBX de MEDIA (SPEC-044, ADR-011)...${NC}"
+
+PBX_MEDIA_ALLOWED_MODULES=(
+    "app/services/telefonia"
+    "app/integrations/voice_gateway"
+    "app/core/config\.py"
+)
+
+# Patrones de variables/referencias del PBX de media
+PBX_MEDIA_HOST_PATTERNS=(
+    "PBX_MEDIA_HOST"
+    "pbx_media_host"
+    "PBX_MEDIA_PORT"
+    "pbx_media_port"
+    "PBX_MEDIA_AUTH"
+    "pbx_media_auth"
+)
+
+PBX_MEDIA_ALLOWED_PATH_REGEX=$(IFS='|'; echo "${PBX_MEDIA_ALLOWED_MODULES[*]}")
+
+PBX_MEDIA_VIOLATION=0
+for pattern in "${PBX_MEDIA_HOST_PATTERNS[@]}"; do
+    matches=$(grep -r "$pattern" "${BACKEND_DIR}/app" 2>/dev/null | grep -v "__pycache__" || true)
+
+    if [ -n "$matches" ]; then
+        # Si encontró referencias, verifica que todas estén en módulos permitidos
+        outside_allowed=$(echo "$matches" | grep -vE "${PBX_MEDIA_ALLOWED_PATH_REGEX}" || true)
+
+        if [ -n "$outside_allowed" ]; then
+            echo -e "${RED}    ✗ FALLO: ${pattern} encontrado FUERA de módulos permitidos (debe estar SOLO en ${PBX_MEDIA_ALLOWED_MODULES[*]}):${NC}"
+            echo "$outside_allowed" | sed 's/^/      /'
+            PBX_MEDIA_VIOLATION=1
+        fi
+    fi
+done
+
+# Verificar que voice_stt, voice_tts, NLU NO importan cliente de transporte del PBX de media
+echo -e "\n${YELLOW}    → Verificando que voice_stt/voice_tts/NLU NO importan cliente de PBX de media...${NC}"
+declare -a VOICE_MODULES=(
+    "${BACKEND_DIR}/app/services/telefonia/voice_stt.py"
+    "${BACKEND_DIR}/app/services/telefonia/voice_tts.py"
+    "${BACKEND_DIR}/app/workers/stt_worker.py"
+    "${BACKEND_DIR}/app/workers/sentiment_worker.py"
+    "${BACKEND_DIR}/app/workers/rag_ingest_worker.py"
+)
+
+for mod in "${VOICE_MODULES[@]}"; do
+    if [ -f "$mod" ] || [ -d "$mod" ]; then
+        if grep -r "PBX_MEDIA\|pbx_media\|voice_gateway\|media.*pbx" "$mod" 2>/dev/null | grep -v "__pycache__"; then
+            echo -e "${RED}    ✗ FALLO: módulo de voz/IA menciona PBX de media (prohibido, debe estar solo en voice_gateway, ADR-011):${NC}"
+            PBX_MEDIA_VIOLATION=1
+        fi
+    fi
+done
+
+if [ $PBX_MEDIA_VIOLATION -eq 0 ]; then
+    echo -e "${GREEN}    ✓ OK: allowlist por ruta del PBX de media respetado (SOLO en voice_gateway, ADR-011)${NC}"
+else
+    EXIT_CODE=1
 fi
 
 # Resumen

@@ -87,6 +87,82 @@ def test_parse_non_text_message_has_none_texto():
     assert events[0].texto is None
 
 
+# ---------------------------------------------------------------------------
+# SPEC-055 (F2) — parser extendido a type=="audio" (aditivo, RNF-64)
+# ---------------------------------------------------------------------------
+
+
+def _audio_payload(
+    *,
+    phone_number_id="123456",
+    wamid="wamid.AUDIO1",
+    wa_id="573001112233",
+    media_id="media-id-abc123",
+    mime_type="audio/ogg; codecs=opus",
+    duration=None,
+):
+    audio_obj = {"id": media_id, "mime_type": mime_type}
+    if duration is not None:
+        audio_obj["duration"] = duration
+    return json.dumps(
+        {
+            "object": "whatsapp_business_account",
+            "entry": [
+                {
+                    "id": "biz-1",
+                    "changes": [
+                        {
+                            "field": "messages",
+                            "value": {
+                                "metadata": {"phone_number_id": phone_number_id},
+                                "contacts": [{"wa_id": wa_id}],
+                                "messages": [
+                                    {
+                                        "id": wamid,
+                                        "from": wa_id,
+                                        "type": "audio",
+                                        "audio": audio_obj,
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
+def test_parse_audio_message_extracts_media_id_and_mime_type():
+    events = parse_inbound_message_events(_audio_payload())
+
+    assert len(events) == 1
+    event = events[0]
+    assert event.tipo == "audio"
+    assert event.texto is None
+    assert event.media_id == "media-id-abc123"
+    assert event.mime_type == "audio/ogg; codecs=opus"
+    assert event.audio_duracion_seg is None  # R-68: Meta no la envía hoy
+
+
+def test_parse_audio_message_extracts_duration_when_present():
+    """R-68 (defensivo): si un payload SÍ trae 'duration' (futuro/simulado en
+    tests), el parser la extrae — sin asumir que Meta la envía siempre."""
+    events = parse_inbound_message_events(_audio_payload(duration=45))
+
+    assert events[0].audio_duracion_seg == 45
+
+
+def test_parse_text_message_media_fields_are_none():
+    """RNF-64: los campos de media nuevos son None para tipo=='text', sin
+    tocar el camino existente."""
+    events = parse_inbound_message_events(_payload())
+
+    assert events[0].media_id is None
+    assert events[0].mime_type is None
+    assert events[0].audio_duracion_seg is None
+
+
 def test_parse_ignores_statuses_field():
     raw = json.dumps(
         {

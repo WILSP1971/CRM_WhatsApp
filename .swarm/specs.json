@@ -1,20 +1,21 @@
 {
   "proyecto": "CRM_WhatsApp — OmniCore AI",
   "clasificacion": "SENSIBLE",
-  "actualizado": "2026-09-18T00:00:00-05:00",
+  "actualizado": "2026-09-25T00:00:00-05:00",
   "contadores": {
-    "next_plan": 4,
-    "next_spec": 35,
-    "next_adr": 9,
-    "total_specs": 34,
+    "next_plan": 7,
+    "next_spec": 62,
+    "next_adr": 14,
+    "total_specs": 61,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 0,
+      "APROBADA": 7,
       "EN_PROGRESO": 0,
-      "EN_VERIFICACION": 24,
-      "CERRADA": 10
+      "EN_VERIFICACION": 36,
+      "CERRADA": 10,
+      "ARCHIVADA": 8
     },
-    "actualizado": "2026-09-19"
+    "actualizado": "2026-09-25"
   },
   "planes": [
     {
@@ -81,6 +82,76 @@
         "ADR-006",
         "ADR-007"
       ]
+    },
+    {
+      "id": "PLAN-004",
+      "titulo": "Fase 4 OmniCore AI: transcripcion + analisis ASINCRONO de llamadas con STT LOCAL (faster-whisper es-CO), NO VoiceBot en vivo (Entregable #4)",
+      "archivo": ".swarm/PLAN-004.md",
+      "estado": "EN_VERIFICACION",
+      "origen": "prompt-lab/PROMPT-OPTIMIZADO-FASE4.md",
+      "sensible": true,
+      "specs_propuestas": [
+        "SPEC-035",
+        "SPEC-036",
+        "SPEC-037",
+        "SPEC-038",
+        "SPEC-039",
+        "SPEC-040",
+        "SPEC-041",
+        "SPEC-042",
+        "SPEC-043"
+      ],
+      "adrs_recomendados": [
+        "ADR-009",
+        "ADR-010"
+      ]
+    },
+    {
+      "id": "PLAN-005",
+      "titulo": "Fase 5 OmniCore AI: VoiceBot conversacional EN VIVO (STT streaming + TTS LOCAL + IVR de catalogo cerrado + barge-in) sobre GPU COMPARTIDA con el batch de #4 (Entregable #5)",
+      "archivo": ".swarm/PLAN-005.md",
+      "estado": "PAUSADA",
+      "origen": "prompt-lab/PROMPT-OPTIMIZADO-FASE5.md",
+      "sensible": true,
+      "specs_propuestas": [
+        "SPEC-044",
+        "SPEC-045",
+        "SPEC-046",
+        "SPEC-047",
+        "SPEC-048",
+        "SPEC-049",
+        "SPEC-050",
+        "SPEC-051",
+        "SPEC-052"
+      ],
+      "adrs_recomendados": [
+        "ADR-011",
+        "ADR-012"
+      ],
+      "nota": "Archivado 2026-09-25: el Lead confirmó que el CRM correrá sin GPU y que el alcance real deseado es notas de voz asíncronas por WhatsApp (no VoiceBot telefónico en vivo). SPEC-044 (F0) quedó implementada y verificada, código conservado por si se retoma en el futuro con GPU disponible. SPEC-045..052 NO se implementan."
+    },
+    {
+      "id": "PLAN-006",
+      "titulo": "Fase 5 (redefinida) OmniCore AI: voz ASINCRONA en WhatsApp - notas de voz descargadas + transcritas con STT LOCAL, respondidas con TEXTO (human-in-the-loop), extiende Message (NO crea call), sin GPU, sin egress nuevo (Entregable #5)",
+      "archivo": ".swarm/PLAN-006.md",
+      "estado": "APROBADO",
+      "origen": "prompt-lab/PROMPT-OPTIMIZADO-FASE5-NOTAS-VOZ-WHATSAPP.md",
+      "sensible": true,
+      "specs_propuestas": [
+        "SPEC-053",
+        "SPEC-054",
+        "SPEC-055",
+        "SPEC-056",
+        "SPEC-057",
+        "SPEC-058",
+        "SPEC-059",
+        "SPEC-060",
+        "SPEC-061"
+      ],
+      "adrs_recomendados": [
+        "ADR-013"
+      ],
+      "nota": "Reemplaza el alcance de PLAN-005 (archivado por falta de GPU). Reutiliza stt_engine.py, audio_store.py cifrado (SPEC-035), retencion SPEC-041 y el pipeline IA local (SPEC-017/018/019/028/029). La nota de voz se modela como extension aditiva de Message (tipo audio + audio_ref opcional), NO como call/call_transcript. Enganche STT: sink parametrizado por 'destino' en el stt_worker existente (call/message), sin tocar stt_engine.py. Idempotencia por wamid (ADR-007, sin call_id). Descarga de media desde graph.facebook.com dentro del modulo WhatsApp ya autorizado (ADR-006) - SIN egress nuevo. Respuesta SOLO texto (TTS aplazado, P2). Limite 10 min con descarte amable (P1). NO genera specs hasta 'APROBADO PLAN-006'."
     }
   ],
   "specs": [
@@ -764,6 +835,607 @@
         "SPEC-032",
         "SPEC-033"
       ]
+    },
+    {
+      "id": "SPEC-035",
+      "titulo": "Infra STT local + almacen de audio cifrado + auditoria de egress",
+      "archivo": ".swarm/specs/SPEC-035.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F0",
+      "plan": "PLAN-004",
+      "sensible": true,
+      "responsable": "QUICKSILVER",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "HAWKEYE"
+      ],
+      "depende_de": [
+        "SPEC-011",
+        "SPEC-024"
+      ]
+    },
+    {
+      "id": "SPEC-036",
+      "titulo": "Datos de voz: call / call_transcript + RLS efectiva + idempotencia por call_id",
+      "archivo": ".swarm/specs/SPEC-036.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F1",
+      "plan": "PLAN-004",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-035",
+        "SPEC-012"
+      ]
+    },
+    {
+      "id": "SPEC-037",
+      "titulo": "Conector de ingesta de grabaciones (transporte) + almacenamiento cifrado + idempotencia por call_id",
+      "archivo": ".swarm/specs/SPEC-037.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F2",
+      "plan": "PLAN-004",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "THOR",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-036",
+        "SPEC-035"
+      ]
+    },
+    {
+      "id": "SPEC-038",
+      "titulo": "Worker STT faster-whisper es-CO + diarizacion basica (batch, sin egress)",
+      "archivo": ".swarm/specs/SPEC-038.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F3",
+      "plan": "PLAN-004",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "THOR",
+        "HAWKEYE",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-037",
+        "SPEC-036"
+      ]
+    },
+    {
+      "id": "SPEC-039",
+      "titulo": "Enriquecimiento IA local sobre la transcripcion (reutiliza SPEC-017/018/019)",
+      "archivo": ".swarm/specs/SPEC-039.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F4",
+      "plan": "PLAN-004",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "THOR",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-038",
+        "SPEC-017",
+        "SPEC-018",
+        "SPEC-019"
+      ]
+    },
+    {
+      "id": "SPEC-040",
+      "titulo": "Integracion SPA: ficha de llamada por feature-flag (VoiceBot SPEC-006 de mock a datos reales)",
+      "archivo": ".swarm/specs/SPEC-040.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F5",
+      "plan": "PLAN-004",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "DAREDEVIL",
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-038",
+        "SPEC-039",
+        "SPEC-020",
+        "SPEC-006",
+        "SPEC-041"
+      ]
+    },
+    {
+      "id": "SPEC-041",
+      "titulo": "Retencion/anonimizacion de audio + seguridad (extiende SPEC-021)",
+      "archivo": ".swarm/specs/SPEC-041.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F6",
+      "plan": "PLAN-004",
+      "sensible": true,
+      "responsable": "BLACK WIDOW",
+      "revisan": [
+        "BLACK PANTHER",
+        "CAPTAIN AMERICA",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-035",
+        "SPEC-036",
+        "SPEC-021"
+      ]
+    },
+    {
+      "id": "SPEC-042",
+      "titulo": "Pruebas + carga (RTF/THOR) + observabilidad del canal de voz",
+      "archivo": ".swarm/specs/SPEC-042.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F7",
+      "plan": "PLAN-004",
+      "sensible": true,
+      "responsable": "HAWKEYE",
+      "revisan": [
+        "THOR",
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "CAPTAIN AMERICA"
+      ],
+      "depende_de": [
+        "SPEC-035",
+        "SPEC-036",
+        "SPEC-037",
+        "SPEC-038",
+        "SPEC-039",
+        "SPEC-040",
+        "SPEC-041",
+        "SPEC-043"
+      ]
+    },
+    {
+      "id": "SPEC-043",
+      "titulo": "Documentacion, runbook de voz, simulador de grabaciones y deploy on-prem",
+      "archivo": ".swarm/specs/SPEC-043.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F8",
+      "plan": "PLAN-004",
+      "sensible": true,
+      "responsable": "QUICKSILVER",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "HAWKEYE"
+      ],
+      "depende_de": [
+        "SPEC-041",
+        "SPEC-042"
+      ]
+    },
+    {
+      "id": "SPEC-044",
+      "titulo": "Infra de voz en vivo + GPU compartida priorizada + auditoria de egress",
+      "archivo": ".swarm/specs/SPEC-044.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F0",
+      "plan": "PLAN-005",
+      "sensible": true,
+      "responsable": "QUICKSILVER",
+      "revisan": [
+        "BLACK PANTHER",
+        "THOR",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "HAWKEYE"
+      ],
+      "depende_de": [
+        "SPEC-011",
+        "SPEC-024",
+        "SPEC-035"
+      ]
+    },
+    {
+      "id": "SPEC-045",
+      "titulo": "Catalogo cerrado de intents + NLU determinista (sin LLM generativo en vivo)",
+      "archivo": ".swarm/specs/SPEC-045.md",
+      "estado": "ARCHIVADA",
+      "fase": "F1",
+      "plan": "PLAN-005",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-044",
+        "SPEC-016",
+        "SPEC-017"
+      ]
+    },
+    {
+      "id": "SPEC-046",
+      "titulo": "Conector de media en vivo (extiende SPEC-037 de grabacion a stream) + declaracion de voz sintetica",
+      "archivo": ".swarm/specs/SPEC-046.md",
+      "estado": "ARCHIVADA",
+      "fase": "F2",
+      "plan": "PLAN-005",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "THOR",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-044",
+        "SPEC-037"
+      ]
+    },
+    {
+      "id": "SPEC-047",
+      "titulo": "STT streaming liviano en vivo sobre GPU compartida",
+      "archivo": ".swarm/specs/SPEC-047.md",
+      "estado": "ARCHIVADA",
+      "fase": "F3",
+      "plan": "PLAN-005",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "THOR",
+        "HAWKEYE",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-044",
+        "SPEC-046"
+      ]
+    },
+    {
+      "id": "SPEC-048",
+      "titulo": "Bucle de dialogo (NLU->respuesta de catalogo RAG/pregrabada->TTS) + barge-in",
+      "archivo": ".swarm/specs/SPEC-048.md",
+      "estado": "ARCHIVADA",
+      "fase": "F4",
+      "plan": "PLAN-005",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "THOR",
+        "HAWKEYE",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-045",
+        "SPEC-047",
+        "SPEC-017"
+      ]
+    },
+    {
+      "id": "SPEC-049",
+      "titulo": "Escalacion a humano con contexto + monitor de llamadas en vivo en la SPA (feature-flag)",
+      "archivo": ".swarm/specs/SPEC-049.md",
+      "estado": "ARCHIVADA",
+      "fase": "F5",
+      "plan": "PLAN-005",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "DAREDEVIL",
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-048",
+        "SPEC-045",
+        "SPEC-018",
+        "SPEC-046",
+        "SPEC-020"
+      ]
+    },
+    {
+      "id": "SPEC-050",
+      "titulo": "Latencia/GPU compartida (THOR) + fijacion de C + politica de degradacion/bajo-computo",
+      "archivo": ".swarm/specs/SPEC-050.md",
+      "estado": "ARCHIVADA",
+      "fase": "F6",
+      "plan": "PLAN-005",
+      "sensible": true,
+      "responsable": "THOR",
+      "revisan": [
+        "HAWKEYE",
+        "BLACK PANTHER",
+        "WOLVERINE",
+        "BLACK WIDOW",
+        "CAPTAIN AMERICA"
+      ],
+      "depende_de": [
+        "SPEC-044",
+        "SPEC-047",
+        "SPEC-048",
+        "SPEC-049",
+        "SPEC-052"
+      ]
+    },
+    {
+      "id": "SPEC-051",
+      "titulo": "Seguridad del vector voz/TTS + persistencia de la llamada en vivo + retencion (reutiliza #4)",
+      "archivo": ".swarm/specs/SPEC-051.md",
+      "estado": "ARCHIVADA",
+      "fase": "F7",
+      "plan": "PLAN-005",
+      "sensible": true,
+      "responsable": "BLACK WIDOW",
+      "revisan": [
+        "BLACK PANTHER",
+        "CAPTAIN AMERICA",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-044",
+        "SPEC-046",
+        "SPEC-047",
+        "SPEC-048",
+        "SPEC-036",
+        "SPEC-041",
+        "SPEC-039"
+      ]
+    },
+    {
+      "id": "SPEC-052",
+      "titulo": "Documentacion, runbook de voz en vivo, simulador de llamada en vivo y deploy on-prem",
+      "archivo": ".swarm/specs/SPEC-052.md",
+      "estado": "ARCHIVADA",
+      "fase": "F8",
+      "plan": "PLAN-005",
+      "sensible": true,
+      "responsable": "QUICKSILVER",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "HAWKEYE",
+        "THOR"
+      ],
+      "depende_de": [
+        "SPEC-050",
+        "SPEC-051"
+      ]
+    },
+    {
+      "id": "SPEC-053",
+      "titulo": "Modelo de datos: extension aditiva de Message para nota de voz de WhatsApp (tipo audio + audio_ref)",
+      "archivo": ".swarm/specs/SPEC-053.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F0",
+      "plan": "PLAN-006",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-012",
+        "SPEC-025"
+      ]
+    },
+    {
+      "id": "SPEC-054",
+      "titulo": "Descarga de media de WhatsApp (transporte, sin egress nuevo) + almacenamiento cifrado",
+      "archivo": ".swarm/specs/SPEC-054.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F1",
+      "plan": "PLAN-006",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "THOR",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-053",
+        "SPEC-035",
+        "SPEC-024"
+      ]
+    },
+    {
+      "id": "SPEC-055",
+      "titulo": "inbound_parser extendido a type==audio + limite de duracion + encolado en stt:jobs",
+      "archivo": ".swarm/specs/SPEC-055.md",
+      "estado": "EN_VERIFICACION",
+      "fase": "F2",
+      "plan": "PLAN-006",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-053",
+        "SPEC-054",
+        "SPEC-027",
+        "SPEC-029"
+      ]
+    },
+    {
+      "id": "SPEC-056",
+      "titulo": "Enganche STT: sink parametrizado por destino en el stt_worker existente (sink message escribe en Message.contenido)",
+      "archivo": ".swarm/specs/SPEC-056.md",
+      "estado": "APROBADA",
+      "fase": "F3",
+      "plan": "PLAN-006",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "THOR",
+        "HAWKEYE",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-055",
+        "SPEC-053",
+        "SPEC-038"
+      ]
+    },
+    {
+      "id": "SPEC-057",
+      "titulo": "Enriquecimiento IA local sobre la transcripcion de la nota de voz (reutiliza SPEC-028/039 sin cambios)",
+      "archivo": ".swarm/specs/SPEC-057.md",
+      "estado": "APROBADA",
+      "fase": "F4",
+      "plan": "PLAN-006",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "THOR",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-056",
+        "SPEC-028",
+        "SPEC-017",
+        "SPEC-018",
+        "SPEC-019",
+        "SPEC-029"
+      ]
+    },
+    {
+      "id": "SPEC-058",
+      "titulo": "Retencion/cifrado extendido al audio_ref de mensajeria (extiende SPEC-041, un solo regimen)",
+      "archivo": ".swarm/specs/SPEC-058.md",
+      "estado": "APROBADA",
+      "fase": "F5",
+      "plan": "PLAN-006",
+      "sensible": true,
+      "responsable": "BLACK WIDOW",
+      "revisan": [
+        "BLACK PANTHER",
+        "CAPTAIN AMERICA",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-053",
+        "SPEC-035",
+        "SPEC-041",
+        "SPEC-021"
+      ]
+    },
+    {
+      "id": "SPEC-059",
+      "titulo": "SPA: badge discreto transcrito de audio en la ficha de conversacion (reproductor pospuesto, P3)",
+      "archivo": ".swarm/specs/SPEC-059.md",
+      "estado": "APROBADA",
+      "fase": "F6",
+      "plan": "PLAN-006",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "DAREDEVIL",
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-053",
+        "SPEC-056",
+        "SPEC-020",
+        "SPEC-031"
+      ]
+    },
+    {
+      "id": "SPEC-060",
+      "titulo": "Pruebas + seguridad + observabilidad del slice de notas de voz (cero regresion #1-#4)",
+      "archivo": ".swarm/specs/SPEC-060.md",
+      "estado": "APROBADA",
+      "fase": "F7",
+      "plan": "PLAN-006",
+      "sensible": true,
+      "responsable": "HAWKEYE",
+      "revisan": [
+        "THOR",
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "CAPTAIN AMERICA"
+      ],
+      "depende_de": [
+        "SPEC-053",
+        "SPEC-054",
+        "SPEC-055",
+        "SPEC-056",
+        "SPEC-057",
+        "SPEC-058",
+        "SPEC-059",
+        "SPEC-061"
+      ]
+    },
+    {
+      "id": "SPEC-061",
+      "titulo": "Documentacion, runbook, simulador de nota de voz y deploy on-prem",
+      "archivo": ".swarm/specs/SPEC-061.md",
+      "estado": "APROBADA",
+      "fase": "F8",
+      "plan": "PLAN-006",
+      "sensible": true,
+      "responsable": "QUICKSILVER",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "HAWKEYE"
+      ],
+      "depende_de": [
+        "SPEC-058",
+        "SPEC-060"
+      ]
     }
   ],
   "adrs": [
@@ -830,6 +1502,46 @@
       "estado": "Aceptada",
       "fecha": "2026-09-18",
       "plan": "PLAN-003"
+    },
+    {
+      "id": "ADR-009",
+      "titulo": "STT 100% local + aislamiento del stt_worker + retencion/anonimizacion del audio (dato personal/posible PHI)",
+      "archivo": ".swarm/adrs/ADR-009-stt-local-aislamiento-retencion-audio.md",
+      "estado": "Aceptada",
+      "fecha": "2026-09-19",
+      "plan": "PLAN-004"
+    },
+    {
+      "id": "ADR-010",
+      "titulo": "Egress acotado del PBX externo para descarga de grabaciones (analogo a ADR-006) - SOLO si el PBX es externo",
+      "archivo": ".swarm/adrs/ADR-010-egress-acotado-pbx-externo.md",
+      "estado": "Aceptada",
+      "fecha": "2026-09-19",
+      "plan": "PLAN-004"
+    },
+    {
+      "id": "ADR-011",
+      "titulo": "GPU COMPARTIDA priorizada para el VoiceBot en vivo + egress acotado del PBX de media en vivo",
+      "archivo": ".swarm/adrs/ADR-011-gpu-compartida-priorizada-egress-pbx-media-vivo.md",
+      "estado": "Aceptada",
+      "fecha": "2026-09-21",
+      "plan": "PLAN-005"
+    },
+    {
+      "id": "ADR-012",
+      "titulo": "TTS 100% local (Piper/Coqui) + declaracion obligatoria de voz sintetica",
+      "archivo": ".swarm/adrs/ADR-012-tts-local-declaracion-voz-sintetica.md",
+      "estado": "Aceptada",
+      "fecha": "2026-09-21",
+      "plan": "PLAN-005"
+    },
+    {
+      "id": "ADR-013",
+      "titulo": "La nota de voz de WhatsApp se modela como extension de Message/Conversation (no como call) y la respuesta es solo texto (TTS de salida aplazado)",
+      "archivo": ".swarm/adrs/ADR-013-nota-voz-como-message-respuesta-texto-tts-aplazado.md",
+      "estado": "Aceptada",
+      "fecha": "2026-09-25",
+      "plan": "PLAN-006"
     }
   ]
 }
