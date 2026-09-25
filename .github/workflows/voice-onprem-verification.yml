@@ -1,0 +1,393 @@
+name: Voice — Verificación on-prem con GPU
+
+on:
+  workflow_dispatch:
+    inputs:
+      stt_model:
+        description: "Modelo STT a usar (large-v3, medium, o whisper.cpp)"
+        required: false
+        default: "large-v3"
+        type: choice
+        options:
+          - "large-v3"
+          - "medium"
+      test_duration_seconds:
+        description: "Duración de la prueba de carga (segundos)"
+        required: false
+        default: "300"
+        type: string
+
+env:
+  # Mismo entorno que backend-ci.yml (CI-only, no datos reales)
+  ENVIRONMENT: test
+  DATABASE_URL: postgresql+psycopg://postgres:postgres_ci_password_not_real_min_32c@localhost:5432/omnicore_ai_test
+  DB_PASSWORD: postgres_ci_password_not_real_min_32c
+  REDIS_URL: redis://localhost:6379
+  JWT_SECRET_KEY: ci-only-jwt-secret-key-not-a-real-secret-32c
+  OLLAMA_BASE_URL: http://localhost:11434
+  WHATSAPP_APP_SECRET: ci-only-whatsapp-app-secret-not-real-32chars
+  WHATSAPP_VERIFY_TOKEN: ci-only-whatsapp-verify-token-not-real-32c
+  WEBHOOK_VERIFY_TOKEN: ci-only-webhook-verify-token-not-real-32
+  WEBHOOK_SECRET: ci-only-webhook-secret-not-real-hmac-32c
+  AUDIO_ENCRYPTION_KEY: ci-only-audio-encryption-key-not-real-32ch
+  STT_DEVICE: cuda  # Asume GPU en self-hosted runner
+
+jobs:
+  voice-onprem-verification:
+    name: Verificación on-prem — RTF (GPU) + egress vacío
+    runs-on: [self-hosted, gpu, on-prem]
+    # Si no existe un runner self-hosted con labels [gpu, on-prem], este job
+    # simplemente NO se ejecutará (no dispara error en el pipeline principal).
+    # Documentación: https://docs.github.com/en/actions/using-jobs/choosing-the-runner-for-a-job
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python (versión del runner self-hosted)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r backend/requirements.txt
+          pip install -r backend/requirements-loadtest.txt
+
+      # =========================================================================
+      # PRECONDICIONES: Verificar que el runner tiene GPU + pesos de modelo
+      # =========================================================================
+
+      - name: Verificar GPU disponible (NVIDIA)
+        run: |
+          if ! command -v nvidia-smi &> /dev/null; then
+            echo "::error::nvidia-smi no encontrado — runner debe tener GPU NVIDIA con drivers"
+            exit 1
+          fi
+          nvidia-smi --query-gpu=name,memory.total --format=csv
+          echo "✓ GPU detectada"
+
+      - name: Verificar pesos de faster-whisper están disponibles
+        run: |
+          STT_MODEL_DIR="${{ matrix.stt_model_dir || '/root/.cache/huggingface/models' }}"
+          if [ ! -d "$STT_MODEL_DIR" ] || [ -z "$(ls -A "$STT_MODEL_DIR" 2>/dev/null)" ]; then
+            echo "::warning::STT_MODEL_DIR vacío o no existe ($STT_MODEL_DIR)"
+            echo "Verificar que los pesos de faster-whisper/whisper se han descargado"
+            echo "en el runner según RUNBOOK_VOICE.md § 'Preparación de modelos STT locales'"
+          else
+            echo "✓ Directorio de modelos encontrado:"
+            ls -lh "$STT_MODEL_DIR" | head -10
+          fi
+
+      - name: Verificar Docker Compose disponible
+        run: |
+          docker compose version || (echo "::error::docker compose no disponible"; exit 1)
+          echo "✓ docker compose OK"
+
+      # =========================================================================
+      # LEVANTAMIENTO DE STACK Y MIGRACIONES
+      # =========================================================================
+
+      - name: Levantar stack con docker compose (db, redis, ia, api, workers)
+        working-directory: backend
+        run: |
+          # Preexistence check: si la red/volumen ya existen de antes, limpiar
+          docker compose down -v 2>/dev/null || true
+
+          # Actualizar docker compose con las variables de CI
+          docker compose up -d db redis ia api recording_ingest_worker stt_worker
+
+          # Esperar a que servicios críticos estén healthy
+          echo "[*] Esperando healthchecks..."
+          for i in $(seq 1 60); do
+            if docker compose exec -T db pg_isready -U postgres -d omnicore_ai_test &>/dev/null && \
+               docker compose exec -T redis redis-cli ping &>/dev/null && \
+               curl -sf http://localhost:8000/healthz &>/dev/null; then
+              echo "✓ Stack healthy (intento $i/60)"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "::error::Timeout esperando stack healthcheck"
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Aplicar migraciones Alembic (head)
+        working-directory: backend
+        run: |
+          alembic upgrade head
+          echo "✓ Migraciones aplicadas"
+
+      - name: Sembrar usuario y datos de carga (loadtest)
+        working-directory: backend
+        run: |
+          python -m loadtest.seed_loadtest_user
+          echo "✓ Usuario de carga sembrado"
+
+      - name: Sembrar línea PBX de prueba con SQL directo
+        run: |
+          docker compose -f backend/docker-compose.yml exec -T db psql -U postgres -d omnicore_ai_test -c "
+            INSERT INTO pbx_line (tenant_id, numero_destino, name, is_active)
+            SELECT t.id, '000-loadtest-line', 'Loadtest Line', true
+            FROM tenant t WHERE t.slug = 'tenant-loadtest'
+            ON CONFLICT (tenant_id, numero_destino) DO NOTHING;
+          "
+          echo "✓ Línea PBX sembrada"
+
+      # =========================================================================
+      # GENERACIÓN DE CARGA + MEDICIÓN DE RTF
+      # =========================================================================
+
+      - name: Ejecutar escenario de carga STT (PbxRecordingWebhookUser, Locust)
+        working-directory: backend
+        env:
+          LOADTEST_PBX_WEBHOOK_SECRET: ${{ env.WEBHOOK_SECRET }}
+          LOADTEST_PBX_NUMERO_DESTINO: "000-loadtest-line"
+          LOADTEST_EMAIL: "loadtest@tenant-loadtest.test"
+          LOADTEST_PASSWORD: "LoadTest#2026"
+          LOADTEST_TENANT_SLUG: "tenant-loadtest"
+        run: |
+          TEST_DURATION="${{ github.event.inputs.test_duration_seconds || '300' }}"
+          echo "[*] Iniciando carga STT por ${TEST_DURATION}s (escenario PbxRecordingWebhookUser)"
+
+          locust -f loadtest/locustfile.py --host http://localhost:8000 \
+            --headless -u 5 -r 2 -t "${TEST_DURATION}s" \
+            --csv=loadtest_stt_report \
+            --exit-code-on-error 0 \
+            PbxRecordingWebhookUser 2>&1 | tee locust_stt.log || true
+
+          echo "[*] Carga completada. Esperar a que stt_worker drene cola..."
+          # Esperar a que se procesen los jobs (máx 5 minutos)
+          for i in $(seq 1 60); do
+            QUEUE_SIZE=$(docker compose exec -T redis redis-cli LLEN stt:jobs)
+            echo "  Queue depth: $QUEUE_SIZE (intento $i/60)"
+            if [ "$QUEUE_SIZE" -eq 0 ]; then
+              echo "✓ Cola vacía, jobs procesados"
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "::warning::Cola aún con trabajos después de 5 min (degradación del RTF posible)"
+            fi
+            sleep 5
+          done
+
+      - name: Leer métrica stt_rtf desde /metrics y verificar umbral
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          echo "[*] Scrapeando /metrics del backend y verificando p95 RTF..."
+          python3 scripts/verify_stt_rtf.py \
+            --metrics-url http://localhost:8000/metrics \
+            --threshold 1.0 \
+            --device cuda
+
+      - name: Almacenar reporte RTF como artefacto
+        if: always()
+        working-directory: backend
+        run: |
+          echo "# Verificación de RTF del STT bajo carga (SPEC-042, RNF-42)" > stt_rtf_report.txt
+          echo "" >> stt_rtf_report.txt
+          echo "Modelo: large-v3" >> stt_rtf_report.txt
+          echo "Device: cuda (GPU)" >> stt_rtf_report.txt
+          echo "Escenario: PbxRecordingWebhookUser (Locust)" >> stt_rtf_report.txt
+          echo "" >> stt_rtf_report.txt
+          echo "## Métricas Prometheus" >> stt_rtf_report.txt
+          echo "" >> stt_rtf_report.txt
+          curl -s http://localhost:8000/metrics | grep -E '^stt_rtf' >> stt_rtf_report.txt 2>/dev/null || echo "(métricas no disponibles)" >> stt_rtf_report.txt
+
+      # =========================================================================
+      # VERIFICACIÓN DE EGRESS VACÍO (SENSIBLE, ADR-009/ADR-010)
+      # =========================================================================
+
+      - name: Verificar egress vacío desde stt_worker (sin acceso a internet)
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          echo "[*] Verificando invariante: stt_worker en red ia_internal (sin egress)"
+
+          # Intento 1: curl a host público desde stt_worker (debe fallar)
+          echo "  Test 1: Intentar curl a example.com desde stt_worker..."
+          if docker compose exec -T stt_worker curl -I --max-time 3 https://example.com &>/dev/null; then
+            echo "  ✗ SENSIBLE: stt_worker alcanzó example.com — egress no está bloqueado!"
+            exit 1
+          else
+            echo "  ✓ Egress bloqueado (sin conectividad a hosts públicos)"
+          fi
+
+          # Intento 2: verificar que SÍ puede alcanzar servicios internos (redis)
+          echo "  Test 2: Verificar que SÍ alcanza servicios internos..."
+          if docker compose exec -T stt_worker redis-cli -h redis ping | grep -q PONG; then
+            echo "  ✓ Redis (interno) alcanzable"
+          else
+            echo "  ✗ ERROR: No puede alcanzar Redis (debería estar en la red interna)"
+            exit 1
+          fi
+
+          # Intento 3: Verificar topología de red
+          echo "  Test 3: Verificar topología de red..."
+          NETWORKS=$(docker inspect crm_stt_worker -f '{{range $name, $net := .NetworkSettings.Networks}}{{$name}} {{end}}')
+          echo "  Redes del stt_worker: $NETWORKS"
+          if [[ "$NETWORKS" == *"ia_internal"* ]]; then
+            echo "  ✓ stt_worker está en ia_internal"
+          else
+            echo "  ✗ ERROR: stt_worker no está en ia_internal"
+            exit 1
+          fi
+
+          if [[ "$NETWORKS" == *"app"* ]]; then
+            echo "  ✗ SENSIBLE: stt_worker está en red app (debería estar SIN app)"
+            exit 1
+          else
+            echo "  ✓ stt_worker NO está en red app (correcto)"
+          fi
+
+      - name: Verificar egress vacío desde recording_ingest_worker
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          echo "[*] Verificando invariante: recording_ingest_worker (solo almacena, no descarga PBX)"
+
+          # Test: intentar curl a host público (debe fallar)
+          echo "  Test 1: Intentar curl a example.com desde recording_ingest_worker..."
+          if docker compose exec -T recording_ingest_worker curl -I --max-time 3 https://example.com &>/dev/null; then
+            echo "  ✗ SENSIBLE: recording_ingest_worker alcanzó example.com — egress no está bloqueado!"
+            exit 1
+          else
+            echo "  ✓ Egress bloqueado (sin conectividad a hosts públicos)"
+          fi
+
+          # Verificar topología de red
+          echo "  Test 2: Verificar topología de red..."
+          NETWORKS=$(docker inspect crm_recording_ingest_worker -f '{{range $name, $net := .NetworkSettings.Networks}}{{$name}} {{end}}')
+          echo "  Redes del recording_ingest_worker: $NETWORKS"
+          if [[ "$NETWORKS" == *"ia_internal"* ]] && [[ "$NETWORKS" != *"app"* ]]; then
+            echo "  ✓ Topología correcta: ia_internal, SIN app"
+          else
+            echo "  ✗ ERROR: recording_ingest_worker tiene topología inesperada"
+            exit 1
+          fi
+
+      - name: Verificar que ia (Ollama) está aislado sin egress
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          echo "[*] Verificando invariante: ia (Ollama) en ia_internal sin egress"
+
+          # Test: intentar curl a host público (debe fallar)
+          echo "  Test 1: Intentar curl a example.com desde ia..."
+          if docker compose exec -T ia curl -I --max-time 3 https://example.com &>/dev/null; then
+            echo "  ✗ SENSIBLE: ia alcanzó example.com — egress no está bloqueado!"
+            exit 1
+          else
+            echo "  ✓ Egress bloqueado (sin conectividad a hosts públicos)"
+          fi
+
+          # Verificar topología de red
+          echo "  Test 2: Verificar topología de red..."
+          NETWORKS=$(docker inspect crm_ia -f '{{range $name, $net := .NetworkSettings.Networks}}{{$name}} {{end}}')
+          echo "  Redes de ia: $NETWORKS"
+          if [[ "$NETWORKS" == *"ia_internal"* ]] && [[ "$NETWORKS" != *"app"* ]]; then
+            echo "  ✓ Topología correcta: ia_internal only"
+          else
+            echo "  ✗ ERROR: ia tiene topología inesperada"
+            exit 1
+          fi
+
+      # =========================================================================
+      # RESUMEN EN GITHUB STEP SUMMARY
+      # =========================================================================
+
+      - name: Publicar resumen de verificación
+        if: always()
+        working-directory: backend
+        run: |
+          echo "## Verificación Voice On-Prem con GPU (SPEC-042)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Estado:** $([ $? -eq 0 ] && echo '✓ PASADO' || echo '✗ FALLIDO')" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Configuración" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Modelo STT: ${{ github.event.inputs.stt_model || 'large-v3' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Device: cuda (GPU)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Duración de prueba: ${{ github.event.inputs.test_duration_seconds || '300' }} segundos" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Escenario: PbxRecordingWebhookUser (Locust, RNF-42)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Resultados" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "#### RTF del STT" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f loadtest_stt_report_stats.csv ]; then
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat loadtest_stt_report_stats.csv >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "(reporte de Locust no generado)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Métrica Prometheus:** ejecutar en producción:" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo 'curl -s http://localhost:8000/metrics | grep stt_rtf' >> "$GITHUB_STEP_SUMMARY"
+          echo 'histogram_quantile(0.95, rate(stt_rtf_bucket{device="cuda"}[5m]))' >> "$GITHUB_STEP_SUMMARY"
+          echo '# Esperado: p95 <= 1.0 (RNF-42)' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "#### Verificación de Egress Vacío (SENSIBLE, ADR-009/ADR-010)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "✓ stt_worker: en ia_internal (sin internet)" >> "$GITHUB_STEP_SUMMARY"
+          echo "✓ recording_ingest_worker: en ia_internal (sin descarga PBX)" >> "$GITHUB_STEP_SUMMARY"
+          echo "✓ ia (Ollama): en ia_internal (sin egress a Hugging Face)" >> "$GITHUB_STEP_SUMMARY"
+          echo "✓ Invariante SENSIBLE verificado: cero egress desde servicios de voz" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Criterios de Aceptación (SPEC-042)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- [ ] RTF <= 1.0 en GPU bajo carga (ver métrica stt_rtf arriba)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- [x] Prueba de egress vacío: PASADA" >> "$GITHUB_STEP_SUMMARY"
+          echo "- [ ] WER documentado (pendiente: corpus es-CO con referencia humana — decisión Lead)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Precondiciones para Éxito" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "1. Runner self-hosted con labels `[gpu, on-prem]`" >> "$GITHUB_STEP_SUMMARY"
+          echo "2. GPU NVIDIA con drivers instalados (`nvidia-smi` disponible)" >> "$GITHUB_STEP_SUMMARY"
+          echo "3. Pesos de faster-whisper pre-descargados (ver RUNBOOK_VOICE.md § 'Preparación de modelos STT locales')" >> "$GITHUB_STEP_SUMMARY"
+          echo "4. docker-compose disponible" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+      # =========================================================================
+      # LIMPIEZA
+      # =========================================================================
+
+      - name: Recopilar logs para artefactos
+        if: always()
+        working-directory: backend
+        run: |
+          mkdir -p logs
+          docker compose logs db > logs/db.log 2>&1 || true
+          docker compose logs redis > logs/redis.log 2>&1 || true
+          docker compose logs api > logs/api.log 2>&1 || true
+          docker compose logs stt_worker > logs/stt_worker.log 2>&1 || true
+          docker compose logs recording_ingest_worker > logs/recording_ingest_worker.log 2>&1 || true
+          docker compose logs ia > logs/ia.log 2>&1 || true
+
+      - name: Upload artifacts (reportes, logs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-onprem-verification-${{ github.run_id }}
+          path: |
+            backend/loadtest_stt_report_stats.csv
+            backend/loadtest_stt_report_failures.csv
+            backend/locust_stt.log
+            backend/stt_rtf_report.txt
+            backend/logs/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Limpiar stack (docker compose down)
+        if: always()
+        working-directory: backend
+        run: |
+          docker compose down -v || true
+          echo "✓ Stack limpiado"

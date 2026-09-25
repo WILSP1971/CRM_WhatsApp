@@ -1,0 +1,63 @@
+# Caddyfile — Reverse proxy TLS (SPEC-035, SPEC-044, ADR-010, ADR-011)
+# Expone SOLO:
+# 1. Path del webhook de grabaciones (/webhooks/pbx/recordings) — SPEC-035
+# 2. Path del voice_gateway (/voice/ws) con soporte WebSocket/WSS — SPEC-044
+# Nunca STT/IA ni BD. En producción: usar certificado válido (Let's Encrypt, etc).
+# En desarrollo: Caddy auto-genera certificado autofirmado para localhost.
+
+# Dominio de listening (desarrollo: localhost, producción: reemplazar por dominio real)
+{$CADDY_DOMAIN:localhost} {
+  # TLS: por defecto, Caddy auto-genera en desarrollo; en producción, usar cert válido
+  # TLS_CERT / TLS_KEY (si aplica, no en Caddyfile para evitar secretos en repo):
+  # tls /path/to/cert /path/to/key
+
+  # Proxy a PATHS PERMITIDOS:
+  # 1. /webhooks/pbx/recordings (webhook de grabaciones, SPEC-035)
+  # 2. /voice/ws (WebSocket/WSS para voice_gateway, SPEC-044)
+  # PROHIBIDO:
+  # - /api/* (IA, BD, usuario)
+  # - /metrics (observabilidad sensible)
+  # - /healthz (acceso administrativo)
+  # - /swagger (documentación)
+
+  # Webhook de grabaciones: proxy sin reescribir el path (SPEC-035)
+  @pbx_webhook {
+    path /webhooks/pbx/recordings*
+  }
+  handle @pbx_webhook {
+    reverse_proxy api:8000 {
+      # Propagar headers originales para validación de firma (HMAC-SHA256)
+      header_up X-Original-Host {http.request.host}
+      header_up X-Original-Proto {http.request.proto}
+    }
+  }
+
+  # Voice Gateway WebSocket/WSS: proxy con soporte WebSocket (SPEC-044, ADR-011)
+  # Path: /voice/ws — conexión en vivo (media de voz, SIP/RTP abstraído)
+  # Caddy soporta proxy de WebSocket de forma nativa; solo necesita detectar
+  # el upgrade HTTP → WS/WSS automáticamente.
+  @voice_ws {
+    path /voice/ws*
+  }
+  handle @voice_ws {
+    reverse_proxy voice_gateway:8888 {
+      # Propagar headers de upgrade y conexión para WebSocket
+      header_up Connection "Upgrade"
+      header_up Upgrade "websocket"
+      header_up X-Original-Host {http.request.host}
+      header_up X-Original-Proto {http.request.proto}
+    }
+  }
+
+  # Rechazar cualquier otro path
+  handle {
+    respond 403 "Forbidden: only /webhooks/pbx/recordings and /voice/ws are exposed"
+  }
+
+  # Logging básico (sensible: no loguear POST body que contiene audio)
+  log {
+    output stdout
+    format json
+    level warn
+  }
+}
