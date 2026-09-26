@@ -98,6 +98,7 @@ import asyncio
 import signal
 import time
 import uuid
+from types import SimpleNamespace
 from typing import Callable
 
 import redis.asyncio as redis_asyncio
@@ -106,6 +107,7 @@ import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.async_utils import run_coroutine_best_effort
 from app.core.gpu_priority import (
     GPU_PRIORITY_BACKOFF_SECONDS,
     should_pause_batch_for_voice,
@@ -290,6 +292,15 @@ def _materialize_transcript_message(
                 remitente=_REMITENTE_CONTACTO,
                 contenido=texto,
             )
+            db.flush()
+            # Capturado DENTRO de la transacción (con el tenant fijado):
+            # `message.id` no puede leerse de forma fiable DESPUÉS de que
+            # este `with` cierre (commit) — el commit expira los atributos
+            # del ORM (`expire_on_commit=True` por defecto) y un acceso
+            # posterior fuera de cualquier `app.tenant_id` fijado dispara un
+            # refresh que, bajo RLS real, ve 0 filas (`ObjectDeletedError`,
+            # confirmado contra Postgres real).
+            message_id = message.id
     except Exception:  # noqa: BLE001 — best-effort, nunca bloquea la transcripción
         logger.error(
             "stt_transcript_message_materialization_failed",
@@ -299,15 +310,25 @@ def _materialize_transcript_message(
         )
         return None
 
-    return message, conversation_id
+    return message_id, conversation_id
 
 
 def _schedule_sentiment_best_effort(redis_client: redis_asyncio.Redis, *, message) -> None:
     """Wrapper sync -> async para disparar sentimiento (SPEC-018) desde este
     worker síncrono — MISMO patrón que
-    `whatsapp_inbound_worker._schedule_sentiment_best_effort`."""
+    `whatsapp_inbound_worker._schedule_sentiment_best_effort`.
+
+    CORRECCIÓN (bug de producción encontrado ejecutando la suite contra
+    Postgres real, ver `app.core.async_utils`): `process_job` se invoca en
+    producción real desde `drain_one`/`run_worker_loop`, que YA corren
+    dentro de un event loop activo — `asyncio.run()` directo aquí SIEMPRE
+    fallaba con `RuntimeError: asyncio.run() cannot be called from a
+    running event loop`, silenciado por el `except Exception` de abajo:
+    SPEC-018 nunca se disparaba en producción."""
     try:
-        asyncio.run(schedule_sentiment_analysis(redis_client, message=message))
+        run_coroutine_best_effort(
+            schedule_sentiment_analysis(redis_client, message=message)
+        )
     except Exception:  # noqa: BLE001 — best-effort, nunca bloquea la transcripción
         logger.warning(
             "stt_sentiment_dispatch_failed",
@@ -608,10 +629,28 @@ def _sink_call(
             texto=texto_transcripcion,
         )
         if materializado is not None:
-            message, conversation_id = materializado
+            message_id, conversation_id = materializado
             effective_ai_client = ai_client or AIClient()
+            # CORRECCIÓN (verificado contra Postgres real, con el rol owner
+            # Y con el rol de aplicación `omnicore_app`): `_materialize_
+            # transcript_message` ya NO devuelve el objeto ORM `Message`
+            # (quedaría con sus atributos expirados tras el commit de su
+            # propio `with db.begin():`, y reutilizarlo aquí fuera de
+            # cualquier `app.tenant_id` fijado dispara un refresh implícito
+            # que, bajo RLS real, ve 0 filas — `ObjectDeletedError` — y bajo
+            # el rol owner deja a `db` en "autobegin", rompiendo el
+            # siguiente `with db.begin():` con `InvalidRequestError`). Los
+            # 3 campos que `schedule_sentiment_analysis`/`is_message_
+            # elegible_para_sentimiento` necesitan (`id`, `tenant_id`,
+            # `remitente`) ya se conocen sin tocar la BD: `remitente` es
+            # SIEMPRE `_REMITENTE_CONTACTO` (constante, ver
+            # `_materialize_transcript_message`) y `tenant_id` es el mismo
+            # `tenant_uuid` de este sink.
+            fake_message = SimpleNamespace(
+                id=message_id, tenant_id=tenant_uuid, remitente=_REMITENTE_CONTACTO
+            )
             _schedule_sentiment_best_effort(
-                redis_client or get_redis_client(), message=message
+                redis_client or get_redis_client(), message=fake_message
             )
             _generate_call_summary_best_effort(
                 db,

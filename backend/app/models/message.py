@@ -47,6 +47,7 @@ ESTADO_ENTREGA_FAILED = "failed"
 # su `Conversation` — NUNCA como una entidad `call`/`call_transcript`
 # (ADR-013, ver `app/models/call.py` para ese dominio distinto).
 TIPOS_MENSAJE_VALIDOS = {"texto", "audio"}
+TIPO_MENSAJE_TEXTO = "texto"
 
 # Estados válidos del ciclo de vida de la transcripción de una nota de voz
 # (SPEC-053 RF-04, columna `transcripcion_estado`). `None` para mensajes de

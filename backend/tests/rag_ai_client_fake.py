@@ -17,16 +17,31 @@ from app.services.ai_service import AIServiceUnavailableError
 
 
 def _vector_for_text(text: str) -> list[float]:
-    """Vector determinístico y estable para un texto dado.
+    """Vector determinístico y estable para un texto dado (bag-of-characters).
 
-    No pretende tener semántica real: solo garantiza que textos idénticos
-    producen vectores idénticos (para reproducibilidad del test) y que
-    textos distintos producen vectores distintos (para poder comprobar el
-    ordenamiento por similitud coseno).
+    No pretende tener semántica real, pero SÍ debe producir un ordenamiento
+    de similitud coseno coherente con el solapamiento de CONTENIDO entre
+    textos — condición que los tests de `retrieval_service`/`draft_service`
+    verifican explícitamente (orden por similitud, citas trazables).
+
+    CORRECCIÓN (bug encontrado contra Postgres real,
+    `test_recuperacion_devuelve_chunks_ordenados_por_similitud`): la versión
+    anterior indexaba por `i % EMBEDDING_DIM` (la POSICIÓN del carácter
+    dentro del string), no por su identidad — dos chunks distintos, cada uno
+    calculado con su propio índice interno reiniciado en 0, podían
+    "alinearse" por pura coincidencia posicional y producir una similitud
+    coseno más alta que la de un chunk que realmente comparte contenido con
+    la consulta (confirmado empíricamente: un chunk dominado por 'B'/'C'
+    resultaba "más similar" a una consulta "AAAA..." que el chunk que de
+    verdad contenía las 'A'). Indexar por `ord(ch) % EMBEDDING_DIM` (la
+    IDENTIDAD del carácter) hace que el mismo carácter siempre incremente la
+    misma dimensión del vector sin importar en qué posición aparezca,
+    dando una similitud tipo "bag of characters" que sí correlaciona con el
+    solapamiento real de contenido.
     """
     vector = [0.0] * EMBEDDING_DIM
-    for i, ch in enumerate(text):
-        vector[i % EMBEDDING_DIM] += (ord(ch) % 13) + 1
+    for ch in text:
+        vector[ord(ch) % EMBEDDING_DIM] += 1.0
     # Normaliza a una escala estable para que la distancia coseno no quede
     # dominada por la longitud del texto.
     norm = sum(v * v for v in vector) ** 0.5 or 1.0

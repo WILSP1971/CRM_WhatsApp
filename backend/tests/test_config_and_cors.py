@@ -49,9 +49,15 @@ def clean_env(monkeypatch):
 
 
 def _reload_config():
+    """Devuelve el módulo `app.core.config` YA importado (sin
+    `importlib.reload`) — ver el comentario extenso equivalente en
+    `tests/test_ai_config_egress.py::_reload_config` sobre por qué
+    `importlib.reload()` aquí corrompía el caché de `get_settings` de OTROS
+    módulos ya importados (p.ej. `app/services/ai_service.py`), causando
+    fallos orden-dependientes en `tests/test_ai_service.py` cuando este
+    archivo corría antes en la misma sesión de pytest."""
     import app.core.config as config_module
 
-    importlib.reload(config_module)
     return config_module
 
 

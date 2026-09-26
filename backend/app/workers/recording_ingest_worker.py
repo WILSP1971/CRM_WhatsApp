@@ -46,6 +46,7 @@ import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.async_utils import run_coroutine_best_effort
 from app.core.recording_queue import (
     RECORDING_INBOUND_QUEUE_KEY,
     RecordingInboundJob,
@@ -214,10 +215,18 @@ def _enqueue_stt_job_best_effort(
 ) -> None:
     """Wrapper sync -> async para encolar el trabajo STT desde este worker
     síncrono (mismo patrón que `whatsapp_inbound_worker.
-    _schedule_sentiment_best_effort`): `asyncio.run` crea/cierra su propio
-    loop porque `process_job` no corre dentro de un loop activo."""
+    _schedule_sentiment_best_effort`).
+
+    CORRECCIÓN (bug de producción encontrado ejecutando la suite contra
+    Postgres real, ver `app.core.async_utils`): `process_job` SÍ corre en
+    producción real dentro del loop activo de `drain_one`/`run_worker_loop`
+    (a diferencia de lo que afirmaba una versión anterior de este
+    docstring) — `asyncio.run()` directo aquí SIEMPRE fallaba con
+    `RuntimeError: asyncio.run() cannot be called from a running event
+    loop`, silenciado por el `except Exception` de abajo: el job de STT
+    nunca se encolaba en producción para llamadas del PBX."""
     try:
-        asyncio.run(
+        run_coroutine_best_effort(
             enqueue_stt_job(
                 redis_client,
                 call_id=call_id,

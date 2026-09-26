@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.db.session import set_tenant_session
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.security.jwt import create_access_token
@@ -77,6 +78,17 @@ def authenticate(
 
     user: User | None = None
     if tenant is not None:
+        # CORRECCIÓN (verificado contra PostgreSQL real, rol `omnicore_app`):
+        # `users` está en TENANT_SCOPED_TABLES con RLS ENABLE+FORCE
+        # (ADR-004/app/db/rls.py). La sesión "de plataforma" (`get_db`, ver
+        # docstring del módulo) NUNCA fija `app.tenant_id` — sin esta línea,
+        # `current_setting('app.tenant_id', true)` es NULL, el predicado
+        # `tenant_id = NULL` es siempre falso y el SELECT de abajo devuelve
+        # SIEMPRE 0 filas: ningún login habría funcionado jamás en
+        # producción real, con cualquier credencial. Ya se conoce el tenant
+        # objetivo (recién resuelto arriba por slug), así que fijarlo aquí
+        # antes de buscar al usuario es seguro y no requiere JWT previo.
+        set_tenant_session(db, str(tenant.id))
         user = db.scalar(
             select(User).where(
                 User.tenant_id == tenant.id,

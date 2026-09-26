@@ -11,8 +11,6 @@ No requiere Postgres/Redis/Docker: corre en cualquier entorno.
 
 from __future__ import annotations
 
-import importlib
-
 import pytest
 
 
@@ -32,9 +30,24 @@ def clean_env(monkeypatch):
 
 
 def _reload_config():
+    """Devuelve el módulo `app.core.config` YA importado (sin
+    `importlib.reload`): `Settings()` lee `os.getenv(...)` en cada
+    instanciación, así que una importación normal ya basta para reflejar
+    las variables de entorno recién fijadas por `clean_env`/`monkeypatch`.
+
+    CORRECCIÓN (bug de aislamiento de tests encontrado ejecutando la suite
+    completa contra Postgres real): `importlib.reload()` reemplaza el
+    OBJETO función `get_settings`/clase `Settings` del módulo por uno
+    NUEVO — pero cualquier otro módulo YA importado que haya hecho `from
+    app.core.config import get_settings` (p.ej. `app/services/ai_service.py`)
+    conserva su referencia VIEJA, con su propio caché de `@lru_cache`
+    congelado para siempre (nunca limpiado por ningún `cache_clear()`
+    posterior, que solo limpia el caché del objeto NUEVO). Esto hacía que
+    `tests/test_ai_service.py::test_ai_client_default_base_url_comes_from_
+    internal_settings` fallara SOLO cuando corría después de este archivo
+    en la misma sesión de pytest (orden-dependiente), nunca en aislamiento."""
     import app.core.config as config_module
 
-    importlib.reload(config_module)
     return config_module
 
 

@@ -62,9 +62,16 @@ def _crear_documento(
 
 
 def _ingest(
-    postgres_engine, tenant_id, document_id, text, ai_client, chunk_size=120, chunk_overlap=15
+    app_engine, tenant_id, document_id, text, ai_client, chunk_size=120, chunk_overlap=15
 ):
-    with Session(postgres_engine) as db:
+    """CORRECCIÓN (ADR-008): `ingest_document`/`retrieve_top_k` NO filtran
+    manualmente por `tenant_id` — dependen enteramente de RLS (ver docstring
+    de `retrieval_service.py`). Ejercerlos con `postgres_engine` (rol owner,
+    SIEMPRE exento de RLS) hace que la consulta vea TODOS los chunks de
+    TODOS los tenants acumulados en la BD compartida de tests (falso
+    positivo/negativo, mismo hallazgo que en el resto de la suite). Debe
+    usarse `app_engine` (rol `omnicore_app`, ADR-008)."""
+    with Session(app_engine) as db:
         with db.begin():
             set_tenant_session(db, str(tenant_id))
             return ingest_document(
@@ -77,7 +84,7 @@ def _ingest(
             )
 
 
-def test_recuperacion_devuelve_chunks_ordenados_por_similitud(postgres_engine):
+def test_recuperacion_devuelve_chunks_ordenados_por_similitud(app_engine, postgres_engine):
     tenant_id = _crear_tenant(postgres_engine, "TenantOrden")
     document_id = _crear_documento(postgres_engine, tenant_id, "faq.txt")
     ai_client = FakeAIClient()
@@ -90,11 +97,11 @@ def test_recuperacion_devuelve_chunks_ordenados_por_similitud(postgres_engine):
         "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC."
     )
     result = _ingest(
-        postgres_engine, tenant_id, document_id, texto, ai_client, chunk_size=80
+        app_engine, tenant_id, document_id, texto, ai_client, chunk_size=80
     )
     assert result.chunks_creados >= 3
 
-    with Session(postgres_engine) as db:
+    with Session(app_engine) as db:
         with db.begin():
             set_tenant_session(db, str(tenant_id))
             # Consulta idéntica al primer fragmento: debe recuperarlo primero.
@@ -115,7 +122,7 @@ def test_recuperacion_devuelve_chunks_ordenados_por_similitud(postgres_engine):
     assert "A" in retrieved[0].excerpt
 
 
-def test_recuperacion_solo_devuelve_chunks_del_tenant_autenticado(postgres_engine):
+def test_recuperacion_solo_devuelve_chunks_del_tenant_autenticado(app_engine, postgres_engine):
     tenant_a = _crear_tenant(postgres_engine, "TenantAisladoA")
     tenant_b = _crear_tenant(postgres_engine, "TenantAisladoB")
     doc_a = _crear_documento(postgres_engine, tenant_a, "politica-a.txt")
@@ -125,10 +132,10 @@ def test_recuperacion_solo_devuelve_chunks_del_tenant_autenticado(postgres_engin
     texto_a = "Política confidencial del tenant A sobre reembolsos y garantías. " * 10
     texto_b = "Política confidencial del tenant B sobre reembolsos y garantías. " * 10
 
-    _ingest(postgres_engine, tenant_a, doc_a, texto_a, ai_client)
-    _ingest(postgres_engine, tenant_b, doc_b, texto_b, ai_client)
+    _ingest(app_engine, tenant_a, doc_a, texto_a, ai_client)
+    _ingest(app_engine, tenant_b, doc_b, texto_b, ai_client)
 
-    with Session(postgres_engine) as db:
+    with Session(app_engine) as db:
         with db.begin():
             set_tenant_session(db, str(tenant_a))
             retrieved_as_a = retrieve_top_k(
@@ -143,13 +150,13 @@ def test_recuperacion_solo_devuelve_chunks_del_tenant_autenticado(postgres_engin
     assert fuentes == {"politica-a.txt"}
 
 
-def test_recuperacion_excluye_documentos_inactivos_borrado_logico(postgres_engine):
+def test_recuperacion_excluye_documentos_inactivos_borrado_logico(app_engine, postgres_engine):
     tenant_id = _crear_tenant(postgres_engine, "TenantBorradoLogico")
     document_id = _crear_documento(postgres_engine, tenant_id, "obsoleto.txt")
     ai_client = FakeAIClient()
 
     _ingest(
-        postgres_engine,
+        app_engine,
         tenant_id,
         document_id,
         "Contenido que será borrado lógicamente después de indexar. " * 10,
@@ -162,7 +169,7 @@ def test_recuperacion_excluye_documentos_inactivos_borrado_logico(postgres_engin
             {"id": document_id},
         )
 
-    with Session(postgres_engine) as db:
+    with Session(app_engine) as db:
         with db.begin():
             set_tenant_session(db, str(tenant_id))
             retrieved = retrieve_top_k(
@@ -174,11 +181,11 @@ def test_recuperacion_excluye_documentos_inactivos_borrado_logico(postgres_engin
     ), "Un documento inactivo (C2) no debe aparecer en la recuperación"
 
 
-def test_top_k_fuera_de_rango_lanza_error(postgres_engine):
+def test_top_k_fuera_de_rango_lanza_error(app_engine, postgres_engine):
     tenant_id = _crear_tenant(postgres_engine, "TenantTopK")
     ai_client = FakeAIClient()
 
-    with Session(postgres_engine) as db:
+    with Session(app_engine) as db:
         with db.begin():
             set_tenant_session(db, str(tenant_id))
             with pytest.raises(TopKConfigError):

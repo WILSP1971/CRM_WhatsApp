@@ -32,8 +32,17 @@ from tests.rag_ai_client_fake import FakeAIClient
 
 
 def _crear_tenant_con_documento_indexado(
-    postgres_engine, texto: str, chunk_size=100, chunk_overlap=20
+    app_engine, postgres_engine, texto: str, chunk_size=100, chunk_overlap=20
 ):
+    """CORRECCIÓN (ADR-008): `ingest_document`/`generate_rag_draft` dependen
+    enteramente de RLS (sin filtro manual de `tenant_id`). Ejercerlos con
+    `postgres_engine` (rol owner, siempre exento de RLS) hace que la
+    recuperación vea TODOS los chunks de TODOS los tenants acumulados en la
+    BD compartida de tests — falso positivo en "citas trazables" y falso
+    negativo en "sin contexto suficiente" (un tenant vacío igual encuentra
+    chunks... de otros tenants). Debe usarse `app_engine` (rol
+    `omnicore_app`); `postgres_engine` se conserva solo para el bootstrap
+    crudo de `tenants`/`documents`."""
     tenant_id = uuid.uuid4()
     document_id = uuid.uuid4()
     with postgres_engine.begin() as conn:
@@ -56,7 +65,7 @@ def _crear_tenant_con_documento_indexado(
         )
 
     ai_client = FakeAIClient()
-    with Session(postgres_engine) as db:
+    with Session(app_engine) as db:
         with db.begin():
             set_tenant_session(db, str(tenant_id))
             ingest_document(
@@ -70,7 +79,7 @@ def _crear_tenant_con_documento_indexado(
     return tenant_id, document_id, ai_client
 
 
-def test_borrador_incluye_al_menos_3_citas_trazables(postgres_engine):
+def test_borrador_incluye_al_menos_3_citas_trazables(app_engine, postgres_engine):
     texto = (
         "Horario de atención: lunes a viernes de 8am a 6pm. "
         "Política de reembolsos: 30 días calendario desde la compra. "
@@ -78,10 +87,10 @@ def test_borrador_incluye_al_menos_3_citas_trazables(postgres_engine):
         "Garantía extendida disponible para productos electrónicos. "
     ) * 5
     tenant_id, document_id, ai_client = _crear_tenant_con_documento_indexado(
-        postgres_engine, texto
+        app_engine, postgres_engine, texto
     )
 
-    with Session(postgres_engine) as db:
+    with Session(app_engine) as db:
         with db.begin():
             set_tenant_session(db, str(tenant_id))
             result = generate_rag_draft(
@@ -99,7 +108,7 @@ def test_borrador_incluye_al_menos_3_citas_trazables(postgres_engine):
         assert uuid.UUID(citation.document_id) == document_id
 
 
-def test_borrador_falla_explicito_si_no_hay_suficiente_contexto(postgres_engine):
+def test_borrador_falla_explicito_si_no_hay_suficiente_contexto(app_engine, postgres_engine):
     """Si el tenant no tiene al menos MIN_CITATIONS chunks recuperables, se
     rechaza explícitamente (nunca se fabrican citas de relleno)."""
     tenant_id = uuid.uuid4()
@@ -116,24 +125,24 @@ def test_borrador_falla_explicito_si_no_hay_suficiente_contexto(postgres_engine)
         )
 
     ai_client = FakeAIClient()
-    with Session(postgres_engine) as db:
+    with Session(app_engine) as db:
         with db.begin():
             set_tenant_session(db, str(tenant_id))
             with pytest.raises(InsufficientContextError):
                 generate_rag_draft(db, ai_client, query="¿algo?", top_k=5)
 
 
-def test_borrador_propaga_modo_degradado_si_ia_no_disponible(postgres_engine):
+def test_borrador_propaga_modo_degradado_si_ia_no_disponible(app_engine, postgres_engine):
     """R-21: si el LLM local no responde tras recuperar contexto suficiente,
     se propaga el error de servicio (el endpoint lo traduce a 503) en vez de
     devolver un borrador fabricado."""
     texto = "Contenido de prueba suficientemente largo para varios chunks. " * 20
     tenant_id, document_id, _ = _crear_tenant_con_documento_indexado(
-        postgres_engine, texto
+        app_engine, postgres_engine, texto
     )
 
     ai_client_no_disponible = FakeAIClient(unavailable=True)
-    with Session(postgres_engine) as db:
+    with Session(app_engine) as db:
         with db.begin():
             set_tenant_session(db, str(tenant_id))
             with pytest.raises(AIServiceUnavailableError):

@@ -51,6 +51,7 @@ import asyncio
 import contextlib
 import json
 import uuid
+from types import SimpleNamespace
 
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -222,10 +223,24 @@ async def _handle_incoming_message(
             created_by=None,
         )
         message_out = MessageOut.model_validate(message)
+        # Capturado DENTRO de la transacción (con el tenant fijado): `message`
+        # queda con sus atributos expirados al salir de este `with` (commit,
+        # `expire_on_commit=True` por defecto) — reutilizarlo después, fuera
+        # de cualquier `app.tenant_id` fijado, dispara un refresh implícito
+        # que bajo RLS real ve 0 filas (`ObjectDeletedError`, confirmado
+        # contra Postgres real; mismo hallazgo que en
+        # `app/workers/stt_worker.py`/`whatsapp_inbound_worker.py`).
+        message_id = message.id
 
     # Sentimiento (SPEC-018): encolado asíncrono, no bloquea la persistencia
     # ni el fan-out del mensaje (RF: "no bloquea la recepción del mensaje").
-    await schedule_sentiment_analysis(redis_client, message=message)
+    # `remitente`/`tenant_id` ya se conocen sin tocar el objeto ORM expirado.
+    fake_message = SimpleNamespace(
+        id=message_id,
+        tenant_id=uuid.UUID(str(tenant_id)),
+        remitente=incoming.remitente,
+    )
+    await schedule_sentiment_analysis(redis_client, message=fake_message)
 
     # Fan-out a todos los suscriptores del canal namespaced por tenant
     # (incluida esta misma conexión, que recibe la confirmación persistida).

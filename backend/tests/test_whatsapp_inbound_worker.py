@@ -676,7 +676,16 @@ async def test_process_job_dispatches_sentiment_job_on_inbound_message(
     wamid = f"wamid.{uuid.uuid4().hex}"
     _crear_whatsapp_account(postgres_engine, tenant_id, phone_number_id)
 
-    redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    # `FakeServer` compartido + un cliente por loop (ver docstring en
+    # `tests/test_rag_api.py::fake_redis`): este test es `@pytest.mark.
+    # asyncio` (loop A) y `process_job` (síncrono) dispara el sentimiento
+    # best-effort desde un hilo con SU PROPIO loop nuevo
+    # (`run_coroutine_best_effort`, ver `app.core.async_utils`) — reutilizar
+    # el MISMO objeto `FakeRedis` en ambos loops revienta con `RuntimeError:
+    # ... is bound to a different event loop` (confirmado contra Postgres
+    # real).
+    fake_server = fakeredis.FakeServer()
+    redis_client = fakeredis.aioredis.FakeRedis(server=fake_server, decode_responses=True)
     job = _inbound_job(phone_number_id=phone_number_id, wamid=wamid, texto="Hola")
 
     process_job(
@@ -686,8 +695,11 @@ async def test_process_job_dispatches_sentiment_job_on_inbound_message(
         ai_client=FakeAIClient(unavailable=True),  # RAG degradado, no interfiere
     )
 
+    dequeue_redis_client = fakeredis.aioredis.FakeRedis(
+        server=fake_server, decode_responses=True
+    )
     sentiment_job = await dequeue_sentiment_job(
-        redis_client, tenant_id=tenant_id, timeout_seconds=0
+        dequeue_redis_client, tenant_id=tenant_id, timeout_seconds=0
     )
     assert sentiment_job is not None, "Debe haberse encolado un job de sentimiento"
     assert sentiment_job.message_id == str(_get_message_id(postgres_engine, wamid))
@@ -735,7 +747,7 @@ def test_process_job_sentiment_enqueue_failure_does_not_block_ingestion(
 # (g) se genera/persiste el borrador RAG en estado propuesto, con ≥3 citas
 
 
-def test_process_job_creates_proposed_rag_draft_with_citations(postgres_engine):
+def test_process_job_creates_proposed_rag_draft_with_citations(postgres_engine, app_engine):
     tenant_id = _crear_tenant(postgres_engine, "TenantWaDraft")
     phone_number_id = f"pni-draft-{uuid.uuid4().hex[:10]}"
     wamid = f"wamid.{uuid.uuid4().hex}"
@@ -760,7 +772,14 @@ def test_process_job_creates_proposed_rag_draft_with_citations(postgres_engine):
 
     process_job(
         job,
-        session_factory=_session_factory(postgres_engine),
+        # CORRECCIÓN (bug encontrado contra Postgres real, mismo hallazgo
+        # que `tests/test_stt_worker.py`): `retrieve_top_k` no filtra
+        # manualmente por tenant_id (depende 100% de RLS). Con
+        # `postgres_engine` (rol owner, SIEMPRE exento de RLS) la
+        # recuperación veía chunks de OTROS tenants acumulados en la BD
+        # compartida de tests y citaba el documento equivocado — debe
+        # usarse `app_engine` (rol `omnicore_app`, ADR-008).
+        session_factory=_session_factory(app_engine),
         redis_client=redis_client,
         ai_client=ai_client,
     )
@@ -824,7 +843,7 @@ def test_process_job_ai_unavailable_degrades_without_breaking_ingestion(
 
 
 def test_process_job_insufficient_context_skips_draft_without_breaking_ingestion(
-    postgres_engine,
+    postgres_engine, app_engine
 ):
     """Sin documentos indexados para el tenant (<3 chunks recuperables), no
     se genera el borrador pero la ingesta del mensaje no se ve afectada."""
@@ -838,7 +857,12 @@ def test_process_job_insufficient_context_skips_draft_without_breaking_ingestion
 
     process_job(
         job,
-        session_factory=_session_factory(postgres_engine),
+        # CORRECCIÓN (bug encontrado contra Postgres real): con
+        # `postgres_engine` (rol owner, evade RLS) esta consulta veía chunks
+        # de OTROS tenants de la BD compartida de tests y SÍ encontraba ≥3
+        # "candidatos" pese a que este tenant no indexó ningún documento —
+        # debe usarse `app_engine` (rol `omnicore_app`, ADR-008).
+        session_factory=_session_factory(app_engine),
         redis_client=redis_client,
         ai_client=FakeAIClient(),
     )
@@ -1203,7 +1227,7 @@ def test_process_job_status_unmapped_phone_number_id_is_noop(postgres_engine):
 # (e) aislamiento por tenant: un wamid de otro tenant no se ve afectado
 
 
-def test_process_job_status_does_not_cross_tenants(postgres_engine):
+def test_process_job_status_does_not_cross_tenants(postgres_engine, app_engine):
     tenant_a = _crear_tenant(postgres_engine, "TenantWaStatusAislA")
     tenant_b = _crear_tenant(postgres_engine, "TenantWaStatusAislB")
     # phone_number_id del callback pertenece al tenant B (simula un status
@@ -1220,7 +1244,13 @@ def test_process_job_status_does_not_cross_tenants(postgres_engine):
     job = _status_job(
         phone_number_id=phone_number_id_b, wamid=wamid, status="delivered"
     )
-    process_job(job, session_factory=_session_factory(postgres_engine))
+    # CORRECCIÓN (bug encontrado contra Postgres real): con `postgres_engine`
+    # (rol owner, SIEMPRE exento de RLS) la búsqueda del mensaje por `wamid`
+    # bajo `app.tenant_id=tenant_b` encontraba igual la fila del tenant A —
+    # el aislamiento cross-tenant que este test dice verificar nunca se
+    # ejercía de verdad. Debe usarse `app_engine` (rol `omnicore_app`,
+    # ADR-008).
+    process_job(job, session_factory=_session_factory(app_engine))
 
     assert _get_estado_entrega(postgres_engine, message_id) == "enviado", (
         "FUGA CROSS-TENANT: un status resuelto al tenant B no debe alterar "
@@ -1512,7 +1542,15 @@ def test_process_job_audio_within_limit_enqueues_stt_job_with_message_destino(
         worker_module, "download_and_store_voice_note", _fake_download
     )
 
-    redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    # `FakeServer` compartido + un cliente por invocación de `asyncio.run()`
+    # (ver docstring en `tests/test_rag_api.py::fake_redis`): cada
+    # `asyncio.run()` (el de `process_job`/`run_coroutine_best_effort` y el
+    # de este test más abajo) crea y destruye su PROPIO loop — reutilizar el
+    # MISMO objeto `FakeRedis` entre invocaciones distintas de `asyncio.run()`
+    # revienta con `RuntimeError: ... is bound to a different event loop`
+    # (confirmado contra Postgres real).
+    fake_server = fakeredis.FakeServer()
+    redis_client = fakeredis.aioredis.FakeRedis(server=fake_server, decode_responses=True)
     # Duración conocida (30s) DENTRO del límite (default 600s).
     job = _audio_inbound_job(
         phone_number_id=phone_number_id, wamid=wamid, duration=30
@@ -1528,7 +1566,10 @@ def test_process_job_audio_within_limit_enqueues_stt_job_with_message_destino(
     assert row is not None
     assert row.transcripcion_estado == "pendiente"
 
-    stt_job = asyncio.run(dequeue_stt_job(redis_client))
+    dequeue_redis_client = fakeredis.aioredis.FakeRedis(
+        server=fake_server, decode_responses=True
+    )
+    stt_job = asyncio.run(dequeue_stt_job(dequeue_redis_client))
 
     assert stt_job is not None, "Debe encolarse un job en stt:jobs"
     assert stt_job.destino == f"message:{row.id}"
@@ -1631,7 +1672,14 @@ def test_process_job_audio_duplicate_wamid_does_not_duplicate_message_or_job(
         worker_module, "download_and_store_voice_note", _fake_download
     )
 
-    redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    # `FakeServer` compartido + un cliente por invocación de `asyncio.run()`
+    # (ver docstring en `tests/test_rag_api.py::fake_redis`): cada
+    # `asyncio.run()` crea y destruye su PROPIO loop — reutilizar el MISMO
+    # objeto `FakeRedis` entre invocaciones distintas revienta con
+    # `RuntimeError: ... is bound to a different event loop` (confirmado
+    # contra Postgres real).
+    fake_server = fakeredis.FakeServer()
+    redis_client = fakeredis.aioredis.FakeRedis(server=fake_server, decode_responses=True)
     job = _audio_inbound_job(
         phone_number_id=phone_number_id, wamid=wamid, duration=20
     )
@@ -1652,7 +1700,10 @@ def test_process_job_audio_duplicate_wamid_does_not_duplicate_message_or_job(
 
     jobs_dequeued = []
     while True:
-        j = asyncio.run(dequeue_stt_job(redis_client))
+        dequeue_redis_client = fakeredis.aioredis.FakeRedis(
+            server=fake_server, decode_responses=True
+        )
+        j = asyncio.run(dequeue_stt_job(dequeue_redis_client))
         if j is None:
             break
         jobs_dequeued.append(j)

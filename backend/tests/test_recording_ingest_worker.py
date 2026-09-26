@@ -96,7 +96,19 @@ def audio_store_tmp(tmp_path):
 
 @pytest.fixture
 def fake_redis():
-    return fakeredis.aioredis.FakeRedis(decode_responses=True)
+    """CORRECCIÓN (bug encontrado ejecutando la suite contra Postgres real):
+    `process_job` dispara el encolado STT best-effort desde un hilo con SU
+    PROPIO loop nuevo (`run_coroutine_best_effort`, ver `app.core.
+    async_utils`) — reutilizar el MISMO objeto `FakeRedis` en el loop propio
+    del test (p.ej. `asyncio.run(fake_redis.lpop(...))`) revienta con
+    `RuntimeError: ... is bound to a different event loop`. Se expone
+    `.fake_server` para que el código que necesite tocar este redis desde
+    OTRO loop cree su propio cliente sobre el mismo `FakeServer` (ver los
+    tests que lo hacen)."""
+    server = fakeredis.FakeServer()
+    redis_instance = fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)
+    redis_instance.fake_server = server
+    return redis_instance
 
 
 def _recording_job(
@@ -160,7 +172,10 @@ def test_process_job_known_numero_destino_persists_call_and_enqueues_stt(
     # RF-04: se encoló el trabajo STT con el formato {call_id, audio_ref, tenant_id}.
     import asyncio
 
-    raw_stt_job = asyncio.run(fake_redis.lpop(STT_JOBS_QUEUE_KEY))
+    dequeue_redis_client = fakeredis.aioredis.FakeRedis(
+        server=fake_redis.fake_server, decode_responses=True
+    )
+    raw_stt_job = asyncio.run(dequeue_redis_client.lpop(STT_JOBS_QUEUE_KEY))
     assert raw_stt_job is not None, "Debe haberse encolado un trabajo STT"
     stt_job = SttTranscriptionJob.from_json(raw_stt_job)
     assert stt_job.audio_ref == row.audio_ref
@@ -235,7 +250,10 @@ def test_process_job_duplicate_call_id_is_idempotent(
 
     import asyncio
 
-    stt_queue_length = asyncio.run(fake_redis.llen(STT_JOBS_QUEUE_KEY))
+    dequeue_redis_client = fakeredis.aioredis.FakeRedis(
+        server=fake_redis.fake_server, decode_responses=True
+    )
+    stt_queue_length = asyncio.run(dequeue_redis_client.llen(STT_JOBS_QUEUE_KEY))
     assert stt_queue_length == 1, (
         "Un reenvío con el mismo call_id NO debe encolar un segundo trabajo STT"
     )
@@ -278,7 +296,10 @@ def test_process_job_unknown_numero_destino_discards_without_persisting(
 
     import asyncio
 
-    stt_queue_length = asyncio.run(fake_redis.llen(STT_JOBS_QUEUE_KEY))
+    dequeue_redis_client = fakeredis.aioredis.FakeRedis(
+        server=fake_redis.fake_server, decode_responses=True
+    )
+    stt_queue_length = asyncio.run(dequeue_redis_client.llen(STT_JOBS_QUEUE_KEY))
     assert stt_queue_length == 0, "Sin mapeo de tenant, CERO trabajo STT encolado"
 
 

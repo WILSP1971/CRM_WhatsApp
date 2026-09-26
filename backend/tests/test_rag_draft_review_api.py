@@ -47,9 +47,27 @@ def client():
 
 @pytest.fixture
 def fake_redis():
-    redis_instance = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    """CORRECCIÓN (bug encontrado ejecutando la suite contra Postgres real):
+    la fixture `tenant_con_conversacion_indexada` toca `fake_redis` dentro de
+    su propio `asyncio.run(_ingest())`, y luego `client.post(...)` (loop
+    interno de `TestClient`/anyio) puede tocarlo de nuevo — la conexión
+    `redis.asyncio` que el cliente `FakeRedis` reutiliza desde su pool queda
+    ligada (bind) al PRIMER loop que la usó, y falla con `RuntimeError:
+    <Queue ...> is bound to a different event loop` si se reutiliza desde
+    otro loop. Se expone el `FakeServer` (el ESTADO real, compartible) para
+    que cada fase cree su PROPIO cliente `FakeRedis` — ver
+    `_redis_client_for_current_loop`."""
+    server = fakeredis.FakeServer()
+    redis_instance = fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)
+    redis_instance.fake_server = server
     app.dependency_overrides[get_redis_client] = lambda: redis_instance
     yield redis_instance
+
+
+def _redis_client_for_current_loop(fake_redis) -> fakeredis.aioredis.FakeRedis:
+    """Cliente `FakeRedis` independiente (propia conexión) sobre el MISMO
+    `FakeServer` que usa la app — ver docstring de la fixture `fake_redis`."""
+    return fakeredis.aioredis.FakeRedis(server=fake_redis.fake_server, decode_responses=True)
 
 
 @pytest.fixture
@@ -144,8 +162,9 @@ def tenant_con_conversacion_indexada(postgres_engine, fake_redis):
     import asyncio
 
     async def _ingest():
+        ingest_redis = _redis_client_for_current_loop(fake_redis)
         await enqueue_ingest_job(
-            fake_redis,
+            ingest_redis,
             tenant_id=tenant_id,
             document_id=document_id,
             text=_TEXTO_BASE * 10,
@@ -156,8 +175,15 @@ def tenant_con_conversacion_indexada(postgres_engine, fake_redis):
         def _session_factory() -> Session:
             return Session(postgres_engine)
 
+        # CORRECCIÓN: sin `ai_client=fake`, `process_job` construye su
+        # propio `AIClient()` real (falla al no poder conectar a Ollama en
+        # este entorno de test) y deja el documento en `estado="error"` con
+        # 0 chunks (ver docstring de `drain_one`).
         while await drain_one(
-            fake_redis, tenant_id=tenant_id, session_factory=_session_factory
+            ingest_redis,
+            tenant_id=tenant_id,
+            session_factory=_session_factory,
+            ai_client=fake,
         ):
             pass
 

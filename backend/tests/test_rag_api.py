@@ -54,10 +54,34 @@ def client():
 def fake_redis():
     """Doble de Redis en memoria (protocolo `redis.asyncio`), mismo patrón
     que `tests/test_ws_chat_integration.py` (SPEC-015): permite probar el
-    encolado/consumo SIN un daemon Redis real."""
-    redis_instance = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    encolado/consumo SIN un daemon Redis real.
+
+    CORRECCIÓN (bug encontrado contra Postgres real / ejecución real de la
+    suite): el cliente `FakeRedis` usado por el endpoint (a través de
+    `client.post(...)`, que corre en el hilo/loop INTERNO de
+    `TestClient`/anyio) y el usado directamente por el test (`await
+    _drain_all(...)`, que corre en el loop propio de la función de test
+    async) son, en tiempo de ejecución, DOS event loops distintos. La
+    conexión `redis.asyncio` que `FakeRedis` reutiliza desde su pool queda
+    ligada (bind) al PRIMER loop que la usó — reutilizarla desde el otro
+    loop revienta con `RuntimeError: <Queue ...> is bound to a different
+    event loop`. Se expone el `FakeServer` (el ESTADO real, compartible)
+    para que el código que corre en el otro loop cree su PROPIO cliente
+    `FakeRedis` (su propia conexión, ligada a SU loop) apuntando al mismo
+    servidor — confirmado empíricamente que dos clientes `FakeRedis(server=
+    mismo_server)` usados desde loops distintos no chocan, mientras que
+    reusar el MISMO cliente sí."""
+    server = fakeredis.FakeServer()
+    redis_instance = fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)
+    redis_instance.fake_server = server
     app.dependency_overrides[get_redis_client] = lambda: redis_instance
     yield redis_instance
+
+
+def _redis_client_for_current_loop(fake_redis) -> fakeredis.aioredis.FakeRedis:
+    """Cliente `FakeRedis` independiente (propia conexión) sobre el MISMO
+    `FakeServer` que usa la app — ver docstring de la fixture `fake_redis`."""
+    return fakeredis.aioredis.FakeRedis(server=fake_redis.fake_server, decode_responses=True)
 
 
 @pytest.fixture
@@ -145,14 +169,31 @@ def _session_factory_for(postgres_engine):
     return _factory
 
 
-async def _drain_all(fake_redis, tenant_id, postgres_engine) -> int:
+async def _drain_all(fake_redis, tenant_id, postgres_engine, ai_client=None) -> int:
     """Simula el proceso worker: drena todos los jobs pendientes de un
     tenant, usando una `Session` sobre el MISMO `postgres_engine` de test
-    (en vez del `SessionLocal` cacheado de producción)."""
+    (en vez del `SessionLocal` cacheado de producción).
+
+    Usa un cliente `FakeRedis` PROPIO (ver `_redis_client_for_current_loop`),
+    no el mismo objeto que usa la app vía `client.post(...)` — evita el
+    `RuntimeError` de event loop cruzado documentado en la fixture
+    `fake_redis`.
+
+    CORRECCIÓN: `ai_client` (el `FakeAIClient` que el test configuró vía
+    `_use_fake_ai_client()`) debe pasarse explícitamente — `drain_one`
+    invocado así (fuera del ciclo de request/`app.dependency_overrides`) NO
+    lo recibe automáticamente. Sin esto, `process_job` construye su propio
+    `AIClient()` real, que falla al no poder conectar a Ollama y deja el
+    documento en `estado="error"` con 0 chunks (ver docstring de
+    `drain_one`)."""
     procesados = 0
+    worker_redis = _redis_client_for_current_loop(fake_redis)
     session_factory = _session_factory_for(postgres_engine)
     while await drain_one(
-        fake_redis, tenant_id=tenant_id, session_factory=session_factory
+        worker_redis,
+        tenant_id=tenant_id,
+        session_factory=session_factory,
+        ai_client=ai_client,
     ):
         procesados += 1
     return procesados
@@ -201,7 +242,7 @@ async def test_worker_drains_queue_and_document_ends_indexed(
     persistidos — verifica el cableado end-to-end de la cola (BLOQUEANTE de
     la revisión: la cola deja de ser código muerto)."""
     data = tenant_con_documento
-    _use_fake_ai_client()
+    ai_client = _use_fake_ai_client()
 
     with api_as_tenant(data["tenant_id"]):
         response = client.post(
@@ -214,7 +255,9 @@ async def test_worker_drains_queue_and_document_ends_indexed(
         )
     assert response.status_code == 202
 
-    procesados = await _drain_all(fake_redis, data["tenant_id"], postgres_engine)
+    procesados = await _drain_all(
+        fake_redis, data["tenant_id"], postgres_engine, ai_client=ai_client
+    )
     assert procesados == 1
 
     with postgres_engine.connect() as conn:
@@ -255,7 +298,7 @@ async def test_draft_endpoint_returns_at_least_3_traceable_citations(
     client, api_as_tenant, tenant_con_documento, fake_redis, postgres_engine
 ):
     data = tenant_con_documento
-    _use_fake_ai_client()
+    ai_client = _use_fake_ai_client()
 
     with api_as_tenant(data["tenant_id"]):
         ingest_response = client.post(
@@ -274,7 +317,7 @@ async def test_draft_endpoint_returns_at_least_3_traceable_citations(
         )
         assert ingest_response.status_code == 202
 
-    await _drain_all(fake_redis, data["tenant_id"], postgres_engine)
+    await _drain_all(fake_redis, data["tenant_id"], postgres_engine, ai_client=ai_client)
 
     with api_as_tenant(data["tenant_id"]):
         draft_response = client.post(
@@ -302,14 +345,14 @@ async def test_draft_endpoint_returns_503_when_ai_unavailable(
     data = tenant_con_documento
 
     with api_as_tenant(data["tenant_id"]):
-        _use_fake_ai_client()
+        ai_client = _use_fake_ai_client()
         ingest_response = client.post(
             f"/api/v1/rag/documents/{data['document_id']}/ingest",
             json={"text": "Contenido de prueba para indexar correctamente. " * 20},
         )
         assert ingest_response.status_code == 202
 
-    await _drain_all(fake_redis, data["tenant_id"], postgres_engine)
+    await _drain_all(fake_redis, data["tenant_id"], postgres_engine, ai_client=ai_client)
 
     with api_as_tenant(data["tenant_id"]):
         _use_fake_ai_client(unavailable=True)
@@ -346,14 +389,14 @@ async def test_draft_endpoint_isolated_by_tenant_never_cites_other_tenant_docume
         )
 
     with api_as_tenant(tenant_a):
-        _use_fake_ai_client()
+        ai_client = _use_fake_ai_client()
         ingest_response = client.post(
             f"/api/v1/rag/documents/{doc_a}/ingest",
             json={"text": "Información confidencial exclusiva del tenant A. " * 20},
         )
         assert ingest_response.status_code == 202
 
-    await _drain_all(fake_redis, tenant_a, postgres_engine)
+    await _drain_all(fake_redis, tenant_a, postgres_engine, ai_client=ai_client)
 
     with api_as_tenant(tenant_b):
         _use_fake_ai_client()

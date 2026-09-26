@@ -139,19 +139,29 @@ async def drain_one(
     tenant_id: uuid.UUID | str,
     timeout_seconds: int = 0,
     session_factory: Callable[[], Session] | None = None,
+    ai_client: AIClient | None = None,
 ) -> bool:
     """Extrae y procesa UN único job pendiente de un tenant.
 
     Devuelve `True` si procesó un job, `False` si la cola estaba vacía.
-    Usado tanto por tests como por `run_worker_loop`. `session_factory` se
-    propaga a `process_job` (solo para pruebas, ver su docstring).
+    Usado tanto por tests como por `run_worker_loop`. `session_factory`/
+    `ai_client` se propagan a `process_job` (solo para pruebas — en
+    producción `run_worker_loop` nunca los pasa, así que `process_job` sigue
+    construyendo su propio `AIClient()` real, ver su docstring).
+
+    CORRECCIÓN (bug encontrado ejecutando la suite contra Postgres real): sin
+    este parámetro, cualquier test que invoque `drain_one` DIRECTAMENTE (sin
+    pasar por el endpoint HTTP y su `app.dependency_overrides`) terminaba
+    llamando a un `AIClient()` REAL dentro de `process_job` — que intenta
+    conectar a Ollama y falla, dejando el documento en `estado="error"` con 0
+    chunks, en vez de usar el `FakeAIClient` que el propio test configuró.
     """
     job = await dequeue_ingest_job(
         redis_client, tenant_id=tenant_id, timeout_seconds=timeout_seconds
     )
     if job is None:
         return False
-    process_job(job, session_factory=session_factory)
+    process_job(job, session_factory=session_factory, ai_client=ai_client)
     return True
 
 

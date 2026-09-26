@@ -221,7 +221,11 @@ def test_process_job_within_window_sends_text_and_persists_wamid(postgres_engine
     message_id = _crear_mensaje_aprobado(
         postgres_engine, tenant_id, conversation_id, contenido="Su pedido está listo."
     )
-    fake_client = _FakeGraphClient(wamid="wamid.WITHIN-WINDOW")
+    # Literal ÚNICO por corrida: la BD de test es compartida y persiste
+    # entre corridas de la suite dentro de la misma sesión — un wamid fijo
+    # colisiona con `uq_messages_wamid` si el test ya corrió antes contra el
+    # mismo Postgres (confirmado contra Postgres real).
+    fake_client = _FakeGraphClient(wamid=f"wamid.WITHIN-WINDOW-{uuid.uuid4().hex[:10]}")
 
     wa_send_worker.process_job(
         _job(
@@ -234,7 +238,7 @@ def test_process_job_within_window_sends_text_and_persists_wamid(postgres_engine
     assert len(fake_client.text_calls) == 1
     assert fake_client.template_calls == []
     row = _leer_mensaje(postgres_engine, message_id)
-    assert row.wamid == "wamid.WITHIN-WINDOW"
+    assert row.wamid == fake_client.wamid
     assert row.estado_entrega == "enviado"
 
 
@@ -266,7 +270,9 @@ def test_process_job_outside_window_with_template_uses_template(
     message_id = _crear_mensaje_aprobado(
         postgres_engine, tenant_id, conversation_id, contenido="Recordatorio de cita."
     )
-    fake_client = _FakeGraphClient(wamid="wamid.TEMPLATE-OK")
+    # Literal ÚNICO por corrida (ver comentario equivalente en
+    # `test_process_job_within_window_sends_text_and_persists_wamid`).
+    fake_client = _FakeGraphClient(wamid=f"wamid.TEMPLATE-OK-{uuid.uuid4().hex[:10]}")
 
     try:
         wa_send_worker.process_job(
@@ -285,7 +291,7 @@ def test_process_job_outside_window_with_template_uses_template(
     assert len(fake_client.template_calls) == 1
     assert fake_client.template_calls[0]["template_name"] == "ventana_utilitaria"
     row = _leer_mensaje(postgres_engine, message_id)
-    assert row.wamid == "wamid.TEMPLATE-OK"
+    assert row.wamid == fake_client.wamid
 
 
 # ---------------------------------------------------------------------------
@@ -349,10 +355,16 @@ def test_process_job_already_sent_message_is_noop(postgres_engine):
     message_id = _crear_mensaje_aprobado(
         postgres_engine, tenant_id, conversation_id, contenido="Ya enviado."
     )
+    # Literal ÚNICO por corrida (no hardcoded): la BD de test es compartida y
+    # persiste entre corridas de la suite dentro de la misma sesión — un
+    # wamid fijo colisiona con la restricción UNIQUE (`uq_messages_wamid`)
+    # si el test ya corrió antes contra el mismo Postgres (confirmado contra
+    # Postgres real).
+    wamid_ya_enviado = f"wamid.YA-ENVIADO-{uuid.uuid4().hex[:10]}"
     with postgres_engine.begin() as conn:
         conn.execute(
             sa.text("UPDATE messages SET wamid = :wamid WHERE id = :id"),
-            {"wamid": "wamid.YA-ENVIADO", "id": message_id},
+            {"wamid": wamid_ya_enviado, "id": message_id},
         )
     fake_client = _FakeGraphClient()
 
@@ -367,7 +379,7 @@ def test_process_job_already_sent_message_is_noop(postgres_engine):
     assert fake_client.text_calls == []
     assert fake_client.template_calls == []
     row = _leer_mensaje(postgres_engine, message_id)
-    assert row.wamid == "wamid.YA-ENVIADO"
+    assert row.wamid == wamid_ya_enviado
 
 
 # ---------------------------------------------------------------------------

@@ -55,6 +55,7 @@ import sys
 import redis.asyncio as redis_asyncio
 import structlog
 
+from app.core.async_utils import run_coroutine_best_effort
 from app.core.recording_queue import build_recording_inbound_job, enqueue_recording_inbound_event
 from app.core.recording_fetch_queue import (
     RECORDING_FETCH_QUEUE_KEY,
@@ -107,11 +108,17 @@ def process_job(
         duracion=job.duracion,
     )
 
-    async def _reenqueue() -> None:
-        await enqueue_recording_inbound_event(redis_client, job=inbound_job)
-
+    # CORRECCIÓN (bug de producción encontrado ejecutando la suite contra
+    # Postgres real, ver `app.core.async_utils`): `process_job` corre en
+    # producción real dentro del loop activo de `drain_one`/
+    # `run_worker_loop` — `asyncio.run()` directo aquí SIEMPRE fallaba con
+    # `RuntimeError: asyncio.run() cannot be called from a running event
+    # loop`, silenciado por el `except Exception` de abajo: el evento
+    # reencolado nunca llegaba a `recording:inbound` en producción.
     try:
-        asyncio.run(_reenqueue())
+        run_coroutine_best_effort(
+            enqueue_recording_inbound_event(redis_client, job=inbound_job)
+        )
     except Exception:  # noqa: BLE001 — best-effort, se loguea sin tumbar el worker
         logger.error(
             "recording_fetch_reenqueue_failed",

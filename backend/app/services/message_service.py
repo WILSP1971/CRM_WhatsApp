@@ -26,7 +26,12 @@ from sqlalchemy.orm import Session
 
 from app.core.sentiment_queue import enqueue_sentiment_job
 from app.models.conversation import Conversation
-from app.models.message import ESTADO_ENTREGA_FAILED, ESTADOS_ENTREGA_VALIDOS, Message
+from app.models.message import (
+    ESTADO_ENTREGA_FAILED,
+    ESTADOS_ENTREGA_VALIDOS,
+    TIPO_MENSAJE_TEXTO,
+    Message,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -58,15 +63,28 @@ def create_message(
 ) -> Message:
     """Persiste un mensaje nuevo con estado de entrega inicial "enviado".
 
-    Reutilizada por `app/api/messages.py::create_message` (REST, SPEC-014) y
-    por `app/api/ws_chat.py` (WebSocket, SPEC-015) para que la persistencia
-    sea idéntica en ambos canales.
+    Reutilizada por `app/api/messages.py::create_message` (REST, SPEC-014),
+    `app/api/ws_chat.py` (WebSocket, SPEC-015), `whatsapp_inbound_worker`
+    (SPEC-028) y `stt_worker` (materialización de transcripción, SPEC-039)
+    para que la persistencia sea idéntica en todos los canales — todos ellos
+    crean mensajes de tipo `"texto"` (SPEC-053/ADR-013): las notas de voz de
+    WhatsApp NO pasan por aquí, se crean directamente como
+    `Message(tipo="audio")` en `whatsapp_inbound_worker._process_audio_
+    message_event` (SPEC-055).
+
+    CORRECCIÓN (bug encontrado ejecutando la suite contra Postgres real):
+    esta función nunca fijaba `tipo`, así que TODO mensaje de texto nuevo
+    (de cualquier canal) quedaba con `tipo=NULL` en vez de `"texto"` desde
+    que se introdujo la columna (SPEC-053) — solo las filas preexistentes,
+    corregidas por el backfill de la propia migración (807a0756643c),
+    tenían el valor correcto.
     """
     message = Message(
         tenant_id=tenant_id,
         conversation_id=conversation_id,
         remitente=remitente,
         contenido=contenido,
+        tipo=TIPO_MENSAJE_TEXTO,
         estado_entrega="enviado",
         created_by=created_by,
     )

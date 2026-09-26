@@ -334,25 +334,41 @@ def run_call_retention_job(
             transcript_candidates = find_transcript_retention_candidates(
                 db, retention_days=transcript_days
             )
-        audio_candidates_found += len(audio_candidates)
-        transcript_candidates_found += len(transcript_candidates)
+            # Los ids se extraen AQUÍ DENTRO, mientras la transacción sigue
+            # abierta (mismo hallazgo que `app.services.retention_service`):
+            # al salir de este `with`, el COMMIT expira (`expire_on_commit=
+            # True` por defecto) las instancias de `Call`/`CallTranscript`
+            # cargadas arriba. Iterar sobre esos objetos DESPUÉS y acceder a
+            # sus atributos (incluido `.id`) dispara un refresh implícito ya
+            # sin `app.tenant_id` fijado (se descartó al cerrar la
+            # transacción), y RLS lo interpreta como "la fila ya no existe"
+            # (`sqlalchemy.orm.exc.ObjectDeletedError`/`DetachedInstanceError`,
+            # confirmado contra Postgres real). Se trabaja solo con ids
+            # (valores planos) fuera de esta transacción, y cada fila se
+            # vuelve a leer con `db.get(...)` DENTRO de su propia transacción
+            # (con el tenant ya fijado), en vez de reutilizar/mergear el
+            # objeto expirado.
+            audio_candidate_ids = [c.id for c in audio_candidates]
+            transcript_candidate_ids = [t.id for t in transcript_candidates]
+        audio_candidates_found += len(audio_candidate_ids)
+        transcript_candidates_found += len(transcript_candidate_ids)
 
         if not is_enabled:
             # Dry-run: ni siquiera se abre una transacción de escritura para
             # este tenant, solo se cuentan los candidatos encontrados.
             continue
 
-        for call in audio_candidates:
-            call_id = str(call.id)
+        for call_id in audio_candidate_ids:
+            call_id_str = str(call_id)
             with db.begin():
                 set_tenant_session(db, tenant_id)
-                call = db.merge(call)
+                call = db.get(Call, call_id)
                 _purge_call_audio(db, call)
-            purged_audio_ids.append(call_id)
+            purged_audio_ids.append(call_id_str)
             log_personal_data_access(
                 action="purge",
                 resource="calls_audio",
-                resource_id=call_id,
+                resource_id=call_id_str,
                 tenant_id=tenant_id,
                 user_id=None,
                 user_email=None,
@@ -360,17 +376,17 @@ def run_call_retention_job(
                 extra={"trigger": "call_retention_job"},
             )
 
-        for transcript in transcript_candidates:
-            transcript_id = str(transcript.id)
+        for transcript_id in transcript_candidate_ids:
+            transcript_id_str = str(transcript_id)
             with db.begin():
                 set_tenant_session(db, tenant_id)
-                transcript = db.merge(transcript)
+                transcript = db.get(CallTranscript, transcript_id)
                 _anonymize_call_transcript(db, transcript)
-            anonymized_transcript_ids.append(transcript_id)
+            anonymized_transcript_ids.append(transcript_id_str)
             log_personal_data_access(
                 action="anonymize",
                 resource="call_transcripts",
-                resource_id=transcript_id,
+                resource_id=transcript_id_str,
                 tenant_id=tenant_id,
                 user_id=None,
                 user_email=None,

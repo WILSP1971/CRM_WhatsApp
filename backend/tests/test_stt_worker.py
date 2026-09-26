@@ -788,6 +788,7 @@ def test_drain_one_returns_false_on_empty_queue():
 #   (l) nada se envía/aprueba automáticamente (estado `propuesto`).
 # ---------------------------------------------------------------------------
 
+import fakeredis as _fakeredis  # noqa: E402
 import fakeredis.aioredis as _fakeredis_aioredis  # noqa: E402
 from sqlalchemy.orm import Session as _Session  # noqa: E402
 
@@ -849,7 +850,15 @@ def test_process_job_dispatches_sentiment_job_on_transcript(
     job = SttTranscriptionJob(
         call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id)
     )
-    redis_client = _fakeredis_aioredis.FakeRedis(decode_responses=True)
+    # `FakeServer` compartido + un cliente por loop (ver docstring en
+    # `tests/test_rag_api.py::fake_redis`): `process_job` toca este redis
+    # DENTRO de su propio `asyncio.run()` interno
+    # (`_schedule_sentiment_best_effort`); si el test reutiliza el MISMO
+    # objeto `FakeRedis` en su propio `asyncio.run(dequeue_sentiment_job(...))`
+    # de más abajo, revienta con `RuntimeError: ... is bound to a different
+    # event loop` (confirmado contra Postgres real).
+    fake_server = _fakeredis.FakeServer()
+    redis_client = _fakeredis_aioredis.FakeRedis(server=fake_server, decode_responses=True)
 
     with patch(
         "app.services.telefonia.stt_engine._construir_whisper_model",
@@ -874,8 +883,13 @@ def test_process_job_dispatches_sentiment_job_on_transcript(
 
     import asyncio
 
+    dequeue_redis_client = _fakeredis_aioredis.FakeRedis(
+        server=fake_server, decode_responses=True
+    )
     sentiment_job = asyncio.run(
-        dequeue_sentiment_job(redis_client, tenant_id=tenant_id, timeout_seconds=0)
+        dequeue_sentiment_job(
+            dequeue_redis_client, tenant_id=tenant_id, timeout_seconds=0
+        )
     )
     assert sentiment_job is not None, "Debe haberse encolado un job de sentimiento"
     assert sentiment_job.message_id == str(message_row.id)
@@ -924,7 +938,7 @@ def test_process_job_generates_call_summary(
 
 
 def test_process_job_creates_proposed_rag_draft_with_citations_for_call(
-    postgres_engine, audio_store_tmp, stt_settings_defaults
+    postgres_engine, app_engine, audio_store_tmp, stt_settings_defaults
 ):
     """Se genera Y PERSISTE un borrador RAG `propuesto` con ≥3 citas
     trazables para la conversación de voz de la llamada — nunca aprobado ni
@@ -962,7 +976,14 @@ def test_process_job_creates_proposed_rag_draft_with_citations_for_call(
     ):
         process_job(
             job,
-            session_factory=_session_factory(postgres_engine),
+            # CORRECCIÓN (bug encontrado contra Postgres real): `retrieve_top_k`
+            # no filtra manualmente por tenant_id (depende 100% de RLS, ver
+            # `retrieval_service.py`). Con `postgres_engine` (rol owner,
+            # SIEMPRE exento de RLS) la recuperación veía chunks de OTROS
+            # tenants acumulados en la BD compartida de tests y citaba el
+            # documento equivocado — debe usarse `app_engine` (rol
+            # `omnicore_app`, ADR-008).
+            session_factory=_session_factory(app_engine),
             redis_client=redis_client,
             ai_client=ai_client,
         )
@@ -1042,7 +1063,7 @@ def test_process_job_ai_unavailable_degrades_without_breaking_transcript(
 
 
 def test_process_job_insufficient_context_skips_draft_without_breaking_transcript(
-    postgres_engine, audio_store_tmp, stt_settings_defaults
+    postgres_engine, app_engine, audio_store_tmp, stt_settings_defaults
 ):
     """Sin documentos indexados para el tenant (<3 chunks recuperables), no
     se genera el borrador pero la transcripción no se ve afectada."""
@@ -1069,7 +1090,14 @@ def test_process_job_insufficient_context_skips_draft_without_breaking_transcrip
     ):
         process_job(
             job,
-            session_factory=_session_factory(postgres_engine),
+            # CORRECCIÓN (bug encontrado contra Postgres real): con
+            # `postgres_engine` (rol owner, evade RLS) esta consulta veía
+            # chunks de OTROS tenants de la BD compartida de tests y SÍ
+            # encontraba ≥3 "candidatos" pese a que este tenant no indexó
+            # ningún documento — debe usarse `app_engine` (rol
+            # `omnicore_app`, ADR-008) para que el tenant recién creado
+            # (sin documentos propios) vea genuinamente 0 chunks.
+            session_factory=_session_factory(app_engine),
             redis_client=redis_client,
             ai_client=FakeAIClient(),
         )

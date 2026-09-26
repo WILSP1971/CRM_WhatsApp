@@ -174,19 +174,28 @@ def run_retention_job(
         with db.begin():
             set_tenant_session(db, tenant_id)
             candidates = find_retention_candidates(db, retention_days=days)
-        candidates_found += len(candidates)
+            # Los ids se extraen AQUÍ DENTRO, mientras la transacción sigue
+            # abierta: al salir de este `with`, el COMMIT expira (por
+            # defecto, `expire_on_commit=True`) todas las instancias de
+            # `candidates` — acceder a `contact.id` DESPUÉS de ese punto
+            # dispara un refresh implícito, pero ya sin `app.tenant_id`
+            # fijado (se descartó al cerrar la transacción), lo que RLS
+            # interpreta como "la fila ya no existe"
+            # (`sqlalchemy.orm.exc.ObjectDeletedError`), confirmado contra
+            # Postgres real.
+            candidate_ids = [c.id for c in candidates]
+        candidates_found += len(candidate_ids)
 
         if not is_enabled:
             # Dry-run: ni siquiera se abre una transacción de escritura para
             # este tenant, solo se cuentan los candidatos encontrados.
             continue
 
-        for contact in candidates:
-            contact_id = str(contact.id)
+        for contact_id in candidate_ids:
             with db.begin():
                 set_tenant_session(db, tenant_id)
-                erase_contact_personal_data(db, contact.id)
-            anonymized_ids.append(contact_id)
+                erase_contact_personal_data(db, contact_id)
+            anonymized_ids.append(str(contact_id))
             log_personal_data_access(
                 action="anonymize",
                 resource="contacts",

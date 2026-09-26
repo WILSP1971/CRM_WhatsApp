@@ -28,6 +28,8 @@ import uuid
 
 import sqlalchemy as sa
 
+from sqlalchemy.orm import Session
+
 from app.db.session import set_tenant_session
 from app.security.jwt import decode_access_token
 from app.security.passwords import hash_password
@@ -80,9 +82,15 @@ def test_password_stored_hashed_never_plain(postgres_engine, two_tenants_with_da
 
 
 def test_login_valid_credentials_issue_jwt_with_correct_tenant(
-    postgres_engine, two_tenants_with_data
+    app_engine, postgres_engine, two_tenants_with_data
 ):
-    """Criterio #2/RF: login válido emite JWT con el tenant_id del usuario."""
+    """Criterio #2/RF: login válido emite JWT con el tenant_id del usuario.
+
+    CORRECCIÓN: `authenticate()` corre en producción con la sesión "de
+    plataforma" (`get_db`), que usa `app_engine` (rol `omnicore_app`,
+    ADR-008) — NO con `postgres_engine` (rol owner, siempre evade RLS). Se
+    usa `postgres_engine` solo para el bootstrap del usuario (fuera del
+    camino que se prueba)."""
     data = two_tenants_with_data
     plain_password = "ClaveValidaTenantA#1"
 
@@ -94,7 +102,7 @@ def test_login_valid_credentials_issue_jwt_with_correct_tenant(
             password_plain=plain_password,
         )
 
-    with postgres_engine.connect() as db:
+    with Session(app_engine) as db:
         # tenant_slug real: se generó como f"tenant-a-{hex[:8]}" en el fixture.
         tenant_a_row = db.execute(
             sa.text("SELECT slug FROM tenants WHERE id = :id"),
@@ -112,7 +120,7 @@ def test_login_valid_credentials_issue_jwt_with_correct_tenant(
 
 
 def test_login_fails_when_user_belongs_to_a_different_tenant(
-    postgres_engine, two_tenants_with_data
+    app_engine, postgres_engine, two_tenants_with_data
 ):
     """
     Criterio de aislamiento (RF-01/SPEC-013): un usuario del tenant A no
@@ -130,7 +138,7 @@ def test_login_fails_when_user_belongs_to_a_different_tenant(
             password_plain=plain_password,
         )
 
-    with postgres_engine.connect() as db:
+    with Session(app_engine) as db:
         tenant_b_row = db.execute(
             sa.text("SELECT slug FROM tenants WHERE id = :id"),
             {"id": data["tenant_b_id"]},
@@ -151,16 +159,21 @@ def test_login_fails_when_user_belongs_to_a_different_tenant(
 
 
 def test_authenticated_session_cannot_read_other_tenant_rows(
-    postgres_engine, two_tenants_with_data
+    app_engine, two_tenants_with_data
 ):
     """
     Criterio #3 (end-to-end): tras fijar `app.tenant_id` = tenant A (lo que
     hace `get_tenant_db` en cada request autenticado, a partir del JWT), un
     SELECT sobre `contacts` NO devuelve el contacto del tenant B.
-    """
+
+    CORRECCIÓN: debe ejercer RLS con `app_engine` (rol `omnicore_app`,
+    NOSUPERUSER NOBYPASSRLS, ADR-008) — con `postgres_engine` (rol
+    owner/superusuario) la política de RLS NUNCA se evalúa (Postgres exime
+    siempre al owner, incluso con FORCE ROW LEVEL SECURITY), así que el test
+    "pasaba" sin detectar una fuga real."""
     data = two_tenants_with_data
 
-    with postgres_engine.connect() as conn:
+    with app_engine.connect() as conn:
         with conn.begin():
             set_tenant_session(conn, str(data["tenant_a_id"]))
             rows = conn.execute(sa.text("SELECT id FROM contacts")).fetchall()

@@ -52,9 +52,28 @@ def client():
 
 @pytest.fixture
 def fake_redis():
-    redis_instance = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    """CORRECCIÓN (bug encontrado ejecutando la suite contra Postgres real):
+    este módulo toca `fake_redis` desde AL MENOS tres event loops distintos
+    en un mismo test (`asyncio.run(_ingest())` en el bootstrap, el loop
+    interno de `TestClient`/anyio al hacer `client.post(...)`, y
+    `asyncio.run(_drain_outbound_queue(...))`). La conexión `redis.asyncio`
+    que el cliente `FakeRedis` reutiliza desde su pool queda ligada (bind) al
+    PRIMER loop que la usó — reutilizarla desde otro loop revienta con
+    `RuntimeError: <Queue ...> is bound to a different event loop`. Se
+    expone el `FakeServer` (el ESTADO real, compartible) para que cada fase
+    cree su PROPIO cliente `FakeRedis` (su propia conexión, ligada a SU
+    loop) apuntando al mismo servidor — ver `_redis_client_for_current_loop`."""
+    server = fakeredis.FakeServer()
+    redis_instance = fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)
+    redis_instance.fake_server = server
     app.dependency_overrides[get_redis_client] = lambda: redis_instance
     yield redis_instance
+
+
+def _redis_client_for_current_loop(fake_redis) -> fakeredis.aioredis.FakeRedis:
+    """Cliente `FakeRedis` independiente (propia conexión) sobre el MISMO
+    `FakeServer` que usa la app — ver docstring de la fixture `fake_redis`."""
+    return fakeredis.aioredis.FakeRedis(server=fake_redis.fake_server, decode_responses=True)
 
 
 @pytest.fixture
@@ -153,8 +172,12 @@ def _crear_tenant_con_conversacion_indexada(postgres_engine, fake_redis, *, cana
     from app.core.rag_queue import enqueue_ingest_job
 
     async def _ingest():
+        # Cliente propio (misma `FakeServer`, ver docstring de la fixture
+        # `fake_redis`): este `asyncio.run()` es un loop distinto al del
+        # `client.post()` de la app y al de `_drain_outbound_queue`.
+        ingest_redis = _redis_client_for_current_loop(fake_redis)
         await enqueue_ingest_job(
-            fake_redis,
+            ingest_redis,
             tenant_id=tenant_id,
             document_id=document_id,
             text=_TEXTO_BASE * 10,
@@ -165,8 +188,17 @@ def _crear_tenant_con_conversacion_indexada(postgres_engine, fake_redis, *, cana
         def _session_factory() -> Session:
             return Session(postgres_engine)
 
+        # CORRECCIÓN: sin `ai_client=fake`, `process_job` construye su
+        # propio `AIClient()` real (falla al no poder conectar a Ollama en
+        # este entorno de test) y deja el documento en `estado="error"` con
+        # 0 chunks — el `FakeAIClient` de este módulo debe pasarse
+        # explícitamente porque `drain_one` invocado así no pasa por
+        # `app.dependency_overrides` (ver docstring de `drain_one`).
         while await drain_one(
-            fake_redis, tenant_id=tenant_id, session_factory=_session_factory
+            ingest_redis,
+            tenant_id=tenant_id,
+            session_factory=_session_factory,
+            ai_client=fake,
         ):
             pass
 
@@ -197,7 +229,12 @@ def _crear_borrador(client, api_as_tenant, data, query="¿Cuánto tardan los env
     return response
 
 
-async def _drain_outbound_queue(redis_client) -> list:
+async def _drain_outbound_queue(fake_redis) -> list:
+    """`fake_redis` es la fixture (expone `.fake_server`); se crea un
+    cliente PROPIO para este loop (`asyncio.run`) — ver docstring de la
+    fixture `fake_redis` sobre por qué no puede reutilizarse el mismo
+    objeto entre loops distintos."""
+    redis_client = _redis_client_for_current_loop(fake_redis)
     jobs = []
     while True:
         job = await dequeue_outbound_send(redis_client, timeout_seconds=0)

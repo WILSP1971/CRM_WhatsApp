@@ -180,8 +180,9 @@ def test_old_call_with_audio_not_yet_purged_is_a_candidate(
 
     with _session_with_tenant(app_engine, tenant_id) as session:
         candidates = find_audio_retention_candidates(session, retention_days=30)
+        candidate_ids = {c.id for c in candidates}
         session.rollback()
-    assert call_id in {c.id for c in candidates}
+    assert call_id in candidate_ids
 
 
 def test_already_purged_call_is_not_a_candidate_again(

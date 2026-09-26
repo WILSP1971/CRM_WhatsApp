@@ -125,6 +125,7 @@ from __future__ import annotations
 import asyncio
 import signal
 import uuid
+from types import SimpleNamespace
 from typing import Callable
 
 import redis.asyncio as redis_asyncio
@@ -133,6 +134,7 @@ import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.async_utils import run_coroutine_best_effort
 from app.core.config import get_settings
 from app.core.redis_client import get_redis_client
 from app.core.stt_queue import enqueue_stt_job
@@ -295,9 +297,20 @@ def _schedule_sentiment_best_effort(
     propias excepciones de encolado (Redis caído, etc.) y jamás las propaga;
     aquí solo se añade una defensa adicional para que un fallo inesperado en
     el propio wrapper (p.ej. el loop de asyncio) tampoco tumbe la ingesta.
+
+    CORRECCIÓN (bug de producción encontrado ejecutando la suite contra
+    Postgres real, ver `app.core.async_utils`): `process_job` se invoca en
+    producción real desde `drain_one`/`run_worker_loop`, que YA corren
+    dentro de un event loop activo — `asyncio.run()` directo aquí SIEMPRE
+    fallaba con `RuntimeError: asyncio.run() cannot be called from a
+    running event loop`, silenciado por el `except Exception` de abajo:
+    SPEC-018 nunca se disparaba en producción. `run_coroutine_best_effort`
+    funciona con o sin loop activo en el hilo actual.
     """
     try:
-        asyncio.run(schedule_sentiment_analysis(redis_client, message=message))
+        run_coroutine_best_effort(
+            schedule_sentiment_analysis(redis_client, message=message)
+        )
     except Exception:  # noqa: BLE001 — best-effort, nunca bloquea la ingesta
         logger.warning(
             "whatsapp_inbound_sentiment_dispatch_failed",
@@ -426,6 +439,8 @@ def _process_message_event(
         )
         return
 
+    contenido = event.texto if event.texto is not None else f"[{event.tipo}]"
+
     try:
         with db.begin():
             set_tenant_session(db, str(tenant_id))
@@ -454,12 +469,24 @@ def _process_message_event(
                 tenant_id=tenant_id,
                 conversation_id=conversation.id,
                 remitente=_REMITENTE_CONTACTO,
-                contenido=(
-                    event.texto if event.texto is not None else f"[{event.tipo}]"
-                ),
+                contenido=contenido,
             )
             message.wamid = event.wamid
             db.flush()
+            # Capturados DENTRO de la transacción (con el tenant fijado):
+            # los objetos ORM `message`/`conversation` quedan con sus
+            # atributos expirados al salir de este `with` (commit,
+            # `expire_on_commit=True` por defecto). Reutilizarlos después,
+            # fuera de cualquier `app.tenant_id` fijado, dispara un refresh
+            # implícito que bajo RLS real (`omnicore_app`, ADR-008) ve 0
+            # filas (`ObjectDeletedError`, fail-closed) y bajo el rol owner
+            # deja a `db` en "autobegin", rompiendo el siguiente `with
+            # db.begin():` con `InvalidRequestError` — confirmado contra
+            # Postgres real con ambos roles. `contenido` ya es una variable
+            # plana capturada arriba, así que no hace falta releerla de
+            # `message`.
+            message_id = message.id
+            conversation_id = conversation.id
     except IntegrityError:
         # Condición de carrera entre workers/reintentos concurrentes sobre el
         # MISMO wamid: la restricción UNIQUE de BD (SPEC-025) es la garantía
@@ -479,21 +506,27 @@ def _process_message_event(
         "whatsapp_inbound_message_persisted",
         tenant_id=str(tenant_id),
         wamid=event.wamid,
-        conversation_id=str(conversation.id),
+        conversation_id=str(conversation_id),
         event_id=event_id,
     )
 
     # SPEC-028: dispara el pipeline IA local (sentimiento SPEC-018 + borrador
     # RAG SPEC-019) sobre el mensaje YA persistido; ambos son best-effort/
     # modo degradado (ver docstrings) y NUNCA revierten ni bloquean la
-    # ingesta ya confirmada arriba.
-    _schedule_sentiment_best_effort(redis_client or get_redis_client(), message=message)
+    # ingesta ya confirmada arriba. Usa los valores PLANOS capturados dentro
+    # de la transacción de arriba (`message_id`/`conversation_id`/
+    # `contenido`), no los objetos ORM `message`/`conversation` (ver
+    # comentario junto a su captura).
+    fake_message = SimpleNamespace(
+        id=message_id, tenant_id=tenant_id, remitente=_REMITENTE_CONTACTO
+    )
+    _schedule_sentiment_best_effort(redis_client or get_redis_client(), message=fake_message)
     _generate_rag_draft_best_effort(
         db,
         ai_client or AIClient(),
         tenant_id=tenant_id,
-        conversation_id=conversation.id,
-        query=message.contenido,
+        conversation_id=conversation_id,
+        query=contenido,
     )
 
 
@@ -623,6 +656,15 @@ def _process_audio_message_event(
             db.refresh(message)
             message.wamid = event.wamid
             db.flush()
+            # Capturados DENTRO de la transacción (con el tenant fijado):
+            # ver comentario extenso en `_process_message_event` sobre por
+            # qué `message.id`/`conversation.id` no pueden leerse de forma
+            # fiable DESPUÉS de que este `with` cierre (commit expira los
+            # atributos del ORM; un acceso posterior sin tenant fijado
+            # dispara un refresh que, bajo RLS real, ve 0 filas —
+            # `ObjectDeletedError` — confirmado contra Postgres real).
+            message_id = message.id
+            conversation_id = conversation.id
     except IntegrityError:
         # Condición de carrera entre workers/reintentos concurrentes sobre el
         # MISMO wamid — mismo criterio EXACTO que el camino de texto.
@@ -639,8 +681,8 @@ def _process_audio_message_event(
         "whatsapp_inbound_audio_message_persisted",
         tenant_id=str(tenant_id),
         wamid=event.wamid,
-        message_id=str(message.id),
-        conversation_id=str(conversation.id),
+        message_id=str(message_id),
+        conversation_id=str(conversation_id),
         event_id=event_id,
     )
 
@@ -656,14 +698,14 @@ def _process_audio_message_event(
         logger.error(
             "whatsapp_inbound_audio_missing_media_id",
             tenant_id=str(tenant_id),
-            message_id=str(message.id),
+            message_id=str(message_id),
             event_id=event_id,
         )
         return
 
     with db.begin():
         set_tenant_session(db, str(tenant_id))
-        message = db.get(Message, message.id)
+        message = db.get(Message, message_id)
         if message is None:
             return  # defensivo: no debería ocurrir (ya persistido arriba)
 
@@ -731,7 +773,15 @@ def _process_audio_message_event(
         # (fail-open respecto al límite de duración; SPEC-056 resuelve el
         # límite real sobre la duración medida por el motor STT).
         try:
-            asyncio.run(
+            # CORRECCIÓN (mismo bug de producción que
+            # `_schedule_sentiment_best_effort`, ver `app.core.async_utils`):
+            # `process_job` corre en producción real dentro del loop activo
+            # de `drain_one`/`run_worker_loop` — `asyncio.run()` directo aquí
+            # SIEMPRE fallaba con `RuntimeError: asyncio.run() cannot be
+            # called from a running event loop`, silenciado por el `except
+            # Exception` de abajo: el job de STT nunca se encolaba para
+            # notas de voz de WhatsApp en producción.
+            run_coroutine_best_effort(
                 enqueue_stt_job(
                     redis_client or get_redis_client(),
                     call_id=str(message.id),
