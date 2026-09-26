@@ -2,12 +2,22 @@
 extendido por SPEC-015 con estado de entrega del WebChat, por SPEC-018 con
 el sentimiento clasificado por el LLM local, por SPEC-025 con el `wamid`
 de WhatsApp para idempotencia, por SPEC-053 con el tipo `audio` para la
-nota de voz de WhatsApp (ADR-013) y por SPEC-054 con el `mime_type` del
-media descargado de WhatsApp."""
+nota de voz de WhatsApp (ADR-013), por SPEC-054 con el `mime_type` del
+media descargado de WhatsApp y por SPEC-058 con `audio_purged_at` (marca de
+purga física del audio por el mismo job de retención de SPEC-041)."""
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -117,6 +127,15 @@ class Message(Base, TimestampMixin, TenantMixin, SoftDeleteMixin):
     # metadata (`GraphMediaClient.resolve_media_metadata`); None para
     # mensajes de texto y para notas de voz cuya descarga falló antes de
     # resolver metadata (`transcripcion_estado="error"`)
+    audio_purged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )  # marca de purga FÍSICA del blob de audio por el job de retención de
+    # SPEC-041/SPEC-058 (`call_retention_service`, selector ampliado a
+    # `messages.audio_ref`); None mientras el audio no ha sido purgado
+    # (idempotencia: el job usa esta columna, no `audio_ref IS NULL`, como
+    # criterio). NO confundir con `transcripcion_estado`: esa columna
+    # rastrea el ciclo de vida de la TRANSCRIPCIÓN de texto, esta rastrea el
+    # de la purga del AUDIO — son dos relojes independientes a propósito
     sentimiento: Mapped[str | None] = mapped_column(
         String(20), nullable=True
     )  # "positivo" | "neutral" | "negativo" (SPEC-018), None = sin clasificar

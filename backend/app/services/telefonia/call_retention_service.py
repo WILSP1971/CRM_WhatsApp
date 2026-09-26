@@ -80,6 +80,31 @@ lo tanto tampoco purgaban nada en producción real. Se corrigieron con el
 mismo patrón descrito arriba (recorrido de tenants activos, `set_tenant_
 session()` por tenant, commit por fila) inmediatamente después de detectarse
 este hallazgo en la revisión de SPEC-041.
+
+AMPLIACIÓN SPEC-058 (RNF-64, "un solo régimen de retención"): este MISMO job
+(`run_call_retention_job`, sin renombrar ni duplicar) ahora cubre TAMBIÉN el
+audio de las notas de voz de WhatsApp (`Message.audio_ref`, columna añadida
+por SPEC-053), además del audio de llamadas (`Call.audio_ref`, SPEC-041) que
+ya cubría. Es el mismo dato personal (posible PHI), el mismo almacén cifrado
+(`audio_store.py`, SPEC-035) y el mismo ciclo de vida — por eso NO se creó un
+job/servicio paralelo, solo se amplió el selector: `find_message_audio_
+retention_candidates` reutiliza el MISMO plazo que `find_audio_retention_
+candidates` (`settings.audio_retention_days`, sin variable de entorno nueva)
+y se procesa dentro del MISMO recorrido por tenant/misma transacción por
+fila que ya existía.
+
+Decisión de diseño (Message vs Call, NO reabrir): a diferencia de `Call`
+(donde purgar el audio implica dar de baja lógica TODA la fila, porque el
+audio es su artefacto principal, C2), para `Message` la purga del audio NO
+toca `Message.activo`. El payload principal de un `Message` de nota de voz
+es su TRANSCRIPCIÓN de texto (`Message.contenido`), que ya vive bajo la
+política de retención de `Message`/contactos (SPEC-021) — un ciclo de vida
+INDEPENDIENTE del audio original. Desactivar todo el `Message` solo porque
+venció la retención del AUDIO ocultaría del historial de la conversación un
+mensaje cuyo texto transcrito sigue siendo válido y debe seguir visible. Así
+que para mensajería: purga física del blob + `audio_ref = None` +
+`audio_purged_at = <ahora>`, SIN tocar `Message.activo` (ver
+`_purge_message_audio`).
 """
 
 from __future__ import annotations
@@ -95,6 +120,7 @@ from app.core.config import get_settings
 from app.db.session import set_tenant_session
 from app.models.call import Call
 from app.models.call_transcript import CallTranscript
+from app.models.message import Message
 from app.models.tenant import Tenant
 from app.services.telefonia.audio_store import AudioStoreError, purge_audio
 
@@ -113,15 +139,20 @@ _ANONYMIZED_SEGMENTOS = [
 
 @dataclass(frozen=True)
 class CallRetentionRunResult:
-    """Resultado de una corrida del job de retención de audio/transcripción."""
+    """Resultado de una corrida del job de retención de audio/transcripción.
+
+    Campos `message_audio_*`/`purged_message_audio_ids` (SPEC-058): mismo
+    selector ampliado, sobre el origen mensajería (`Message.audio_ref`)."""
 
     dry_run: bool
     audio_retention_days: int
     transcript_retention_days: int
     audio_candidates_found: int
     transcript_candidates_found: int
+    message_audio_candidates_found: int
     purged_audio_call_ids: list[str] = field(default_factory=list)
     anonymized_transcript_ids: list[str] = field(default_factory=list)
+    purged_message_audio_ids: list[str] = field(default_factory=list)
 
 
 def _cutoff(retention_days: int) -> datetime:
@@ -168,6 +199,31 @@ def find_transcript_retention_candidates(
             select(CallTranscript).where(
                 CallTranscript.anonymized_at.is_(None),
                 CallTranscript.created_at < cutoff,
+            )
+        ).all()
+    )
+
+
+def find_message_audio_retention_candidates(
+    db: Session, *, retention_days: int | None = None
+) -> list[Message]:
+    """Mensajes (nota de voz de WhatsApp, SPEC-053) con audio vigente
+    (`audio_ref` no nulo, aún no purgado) cuyo `created_at` supera la
+    ventana de retención de AUDIO (SPEC-058, RNF-64: mismo selector, mismo
+    plazo que `find_audio_retention_candidates` — reutiliza `retention_days`/
+    `settings.audio_retention_days`, sin una variable de entorno paralela)."""
+    settings = get_settings()
+    days = (
+        retention_days if retention_days is not None else settings.audio_retention_days
+    )
+    cutoff = _cutoff(days)
+
+    return list(
+        db.scalars(
+            select(Message).where(
+                Message.audio_ref.is_not(None),
+                Message.audio_purged_at.is_(None),
+                Message.created_at < cutoff,
             )
         ).all()
     )
@@ -229,6 +285,44 @@ def _purge_call_audio(db: Session, call: Call) -> bool:
     return True
 
 
+def _purge_message_audio(db: Session, message: Message) -> bool:
+    """Purga físicamente el blob de audio de una nota de voz de WhatsApp
+    candidata (SPEC-058) y actualiza la fila. Idempotente: si `audio_ref` ya
+    es `None` o `audio_purged_at` ya está seteado, no hace nada (mismo
+    criterio defensivo que `_purge_call_audio`).
+
+    Decisión de diseño (NO reabrir, ver docstring del módulo): a diferencia
+    de `_purge_call_audio`, esta función NO da de baja lógica (`activo`) el
+    `Message` — el payload principal de un `Message` de nota de voz es su
+    transcripción de texto (`Message.contenido`), que ya vive bajo la
+    política de retención de `Message`/contactos (SPEC-021), un ciclo de
+    vida INDEPENDIENTE del audio original. Desactivar el `Message` completo
+    solo porque venció la retención del AUDIO ocultaría del historial de la
+    conversación un mensaje cuyo texto transcrito sigue siendo válido y debe
+    seguir visible. Por eso aquí solo se purga el blob + se limpia
+    `audio_ref` + se marca `audio_purged_at`, sin tocar `activo`."""
+    if message.audio_ref is None or message.audio_purged_at is not None:
+        return False
+
+    audio_ref = message.audio_ref
+    try:
+        purge_audio(audio_ref=audio_ref)
+    except AudioStoreError:
+        # Mismo criterio que `_purge_call_audio`: este `except` cubre un
+        # fallo de E/S genuino (no "ya fue purgado", ese caso es un retorno
+        # `False` de `purge_audio`, no una excepción). Se marca la fila como
+        # purgada de todas formas (nunca dejar `audio_ref` apuntando a un
+        # blob en estado indeterminado) y se RELANZA la excepción sin
+        # silenciarla, para que la corrida falle visiblemente.
+        message.audio_ref = None
+        message.audio_purged_at = datetime.now(timezone.utc)
+        raise
+
+    message.audio_ref = None
+    message.audio_purged_at = datetime.now(timezone.utc)
+    return True
+
+
 def _anonymize_call_transcript(db: Session, transcript: CallTranscript) -> bool:
     """Anonimiza el contenido de una transcripción candidata. Idempotente:
     si `anonymized_at` ya está seteado, no hace nada."""
@@ -266,12 +360,17 @@ def run_call_retention_job(
     transcript_retention_days: int | None = None,
     enabled: bool | None = None,
 ) -> CallRetentionRunResult:
-    """Ejecuta la política de retención de audio/transcripción de llamadas.
+    """Ejecuta la política de retención de audio/transcripción de llamadas
+    Y de audio de mensajería (SPEC-058: mismo job, selector ampliado —
+    ver docstring del módulo, sección "AMPLIACIÓN SPEC-058").
 
     - `audio_retention_days`/`transcript_retention_days`/`enabled` sobrescriben
       `Settings` si se pasan explícitamente (tests, o invocación manual con
       un umbral distinto al de entorno — p.ej. para aplicar un umbral
       distinto a un tenant específico, ver docstring del módulo).
+      `audio_retention_days` gobierna TANTO `Call.audio_ref` COMO
+      `Message.audio_ref` (RNF-64 SPEC-058: un solo plazo, sin variable de
+      entorno paralela para mensajería).
     - En modo dry-run (`enabled=False`, default de
       `ENABLE_CALL_RETENTION_PURGE`) NO escribe nada: solo reporta cuántos
       candidatos encontró, para auditar el impacto antes de habilitar la
@@ -315,8 +414,10 @@ def run_call_retention_job(
 
     purged_audio_ids: list[str] = []
     anonymized_transcript_ids: list[str] = []
+    purged_message_audio_ids: list[str] = []
     audio_candidates_found = 0
     transcript_candidates_found = 0
+    message_audio_candidates_found = 0
 
     # Ver `app.services.retention_service.run_retention_job` (mismo defecto,
     # mismo fix): `_active_tenant_ids(db)` deja una transacción implícita
@@ -334,6 +435,9 @@ def run_call_retention_job(
             transcript_candidates = find_transcript_retention_candidates(
                 db, retention_days=transcript_days
             )
+            message_audio_candidates = find_message_audio_retention_candidates(
+                db, retention_days=audio_days
+            )
             # Los ids se extraen AQUÍ DENTRO, mientras la transacción sigue
             # abierta (mismo hallazgo que `app.services.retention_service`):
             # al salir de este `with`, el COMMIT expira (`expire_on_commit=
@@ -350,8 +454,10 @@ def run_call_retention_job(
             # objeto expirado.
             audio_candidate_ids = [c.id for c in audio_candidates]
             transcript_candidate_ids = [t.id for t in transcript_candidates]
+            message_audio_candidate_ids = [m.id for m in message_audio_candidates]
         audio_candidates_found += len(audio_candidate_ids)
         transcript_candidates_found += len(transcript_candidate_ids)
+        message_audio_candidates_found += len(message_audio_candidate_ids)
 
         if not is_enabled:
             # Dry-run: ni siquiera se abre una transacción de escritura para
@@ -394,12 +500,36 @@ def run_call_retention_job(
                 extra={"trigger": "call_retention_job"},
             )
 
+        # SPEC-058: mismo patrón que el bucle de `Call` de arriba —
+        # transacción individual por fila, `db.get(...)` para releer la fila
+        # ya con el tenant fijado (el objeto original quedó expirado al
+        # cerrar la transacción de lectura de candidatos).
+        for message_id in message_audio_candidate_ids:
+            message_id_str = str(message_id)
+            with db.begin():
+                set_tenant_session(db, tenant_id)
+                message = db.get(Message, message_id)
+                _purge_message_audio(db, message)
+            purged_message_audio_ids.append(message_id_str)
+            log_personal_data_access(
+                action="purge",
+                resource="messages_audio",
+                resource_id=message_id_str,
+                tenant_id=tenant_id,
+                user_id=None,
+                user_email=None,
+                request_id=None,
+                extra={"trigger": "call_retention_job"},
+            )
+
     return CallRetentionRunResult(
         dry_run=not is_enabled,
         audio_retention_days=audio_days,
         transcript_retention_days=transcript_days,
         audio_candidates_found=audio_candidates_found,
         transcript_candidates_found=transcript_candidates_found,
+        message_audio_candidates_found=message_audio_candidates_found,
         purged_audio_call_ids=purged_audio_ids,
         anonymized_transcript_ids=anonymized_transcript_ids,
+        purged_message_audio_ids=purged_message_audio_ids,
     )
