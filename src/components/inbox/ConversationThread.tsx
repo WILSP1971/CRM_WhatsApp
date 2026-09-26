@@ -117,6 +117,16 @@ export function ConversationThread({
               key={message.id}
               className={cn("flex flex-col", isOutgoing ? "items-end" : "items-start")}
             >
+              {message.isTranscribedAudio && (
+                // Sin `aria-label`: el texto visible ya es el nombre
+                // accesible (WCAG 2.5.3 Label in Name) — un `aria-label`
+                // distinto del texto visible genera discrepancia entre lo
+                // que ve un usuario vidente y lo que oye un lector de
+                // pantalla (hallazgo DAREDEVIL, SPEC-059).
+                <Badge variant="neutral" className="mb-1">
+                  Transcrito de audio
+                </Badge>
+              )}
               <div
                 className={cn(
                   "max-w-[75%] rounded-xl px-3.5 py-2.5 text-sm shadow-sm",

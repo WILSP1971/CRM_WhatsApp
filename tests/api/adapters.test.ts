@@ -44,6 +44,19 @@ describe("adaptMessage", () => {
   it("mapea estado_entrega='failed' (SPEC-029/SPEC-031) 1:1", () => {
     expect(adaptMessage({ ...base, estado_entrega: "failed" }).status).toBe("failed");
   });
+
+  it("marca isTranscribedAudio=true cuando tipo='audio' (SPEC-053/SPEC-059)", () => {
+    expect(adaptMessage({ ...base, tipo: "audio" }).isTranscribedAudio).toBe(true);
+  });
+
+  it("marca isTranscribedAudio=false cuando tipo='texto' o ausente", () => {
+    expect(adaptMessage({ ...base, tipo: "texto" }).isTranscribedAudio).toBe(false);
+    expect(adaptMessage(base).isTranscribedAudio).toBe(false);
+  });
+
+  it("hace fallback de contenido=null a text='' (audio aún sin transcribir)", () => {
+    expect(adaptMessage({ ...base, contenido: null, tipo: "audio" }).text).toBe("");
+  });
 });
 
 describe("adaptConversation", () => {

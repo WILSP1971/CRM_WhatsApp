@@ -79,6 +79,15 @@
  *    `RagSuggestion` (venta cruzada) NO tiene contraparte en el backend
  *    (SPEC-017/019 no la definieron): permanece en modo mock aunque el flag
  *    esté ON (reemplazo módulo a módulo, RF de SPEC-020).
+ *
+ * 9. `ConversationMessage.isTranscribedAudio` (SPEC-059) <-
+ *    `BackendMessage.tipo === "audio"` (SPEC-053): booleano ya resuelto para
+ *    que el componente de mensaje no tenga que conocer el vocabulario crudo
+ *    del backend ("texto"/"audio"). Puramente aditivo (RF-03 SPEC-059): con
+ *    el flag OFF la maqueta no pasa por este adaptador y el campo queda
+ *    `undefined`, sin regresión. Además, `contenido` puede llegar `null`
+ *    (nota del schema `MessageOut`, un audio aún sin transcribir) — `text`
+ *    hace fallback a cadena vacía (`?? ""`) para no romper el render.
  */
 
 import type {
@@ -152,9 +161,12 @@ export function adaptMessage(message: BackendMessage): ConversationMessage {
   return {
     id: message.id,
     direction: adaptDirection(message.remitente),
-    text: message.contenido,
+    // Fallback a "" (nota 9 del docblock del módulo): `contenido` puede ser
+    // `null` para una nota de voz aún sin transcribir.
+    text: message.contenido ?? "",
     sentAt: message.created_at,
     status: adaptMessageStatus(message.estado_entrega),
+    isTranscribedAudio: message.tipo === "audio",
   };
 }
 

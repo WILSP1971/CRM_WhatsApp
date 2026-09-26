@@ -9,10 +9,10 @@
     "total_specs": 61,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 3,
+      "APROBADA": 2,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 37,
-      "CERRADA": 13,
+      "CERRADA": 14,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-09-26"
@@ -1371,7 +1371,7 @@
       "id": "SPEC-059",
       "titulo": "SPA: badge discreto transcrito de audio en la ficha de conversacion (reproductor pospuesto, P3)",
       "archivo": ".swarm/specs/SPEC-059.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F6",
       "plan": "PLAN-006",
       "sensible": true,

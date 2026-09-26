@@ -44,6 +44,13 @@ class MessageOut(BaseModel):
     # cualquier endpoint que sirva ese mensaje falla con 500
     # (ResponseValidationError de Pydantic).
     contenido: str | None
+    # Discriminador de tipo (SPEC-053 RF-01, ADR-013), expuesto de forma
+    # ADITIVA por SPEC-059 para que la SPA muestre el badge "transcrito de
+    # audio" en mensajes tipo="audio"; ya existe en el modelo ORM desde
+    # SPEC-053, este schema solo lo populaba implícitamente (no estaba
+    # declarado aquí). None para mensajes insertados fuera del flujo normal
+    # del servicio (ver comentario de `tipo` en `app/models/message.py`).
+    tipo: str | None
     sentimiento: str | None
     sentimiento_score: float | None
     estado_entrega: str

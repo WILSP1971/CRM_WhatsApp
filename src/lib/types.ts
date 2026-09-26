@@ -40,6 +40,15 @@ export interface ConversationMessage {
   text: string;
   sentAt: string;
   status: MessageStatus;
+  /**
+   * `true` si el mensaje es una nota de voz de WhatsApp ya transcrita
+   * (`Message.tipo === "audio"`, SPEC-053) — la SPA muestra un badge
+   * discreto "transcrito de audio" (SPEC-059). Reproductor de audio
+   * pospuesto (P3, fuera de alcance de SPEC-059). `undefined`/`false` en
+   * modo mock (`VITE_USE_REAL_API=OFF`): la maqueta de #1–#4 no lo usa, sin
+   * regresión (RNF-07).
+   */
+  isTranscribedAudio?: boolean;
 }
 
 /**

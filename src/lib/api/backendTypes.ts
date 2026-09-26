@@ -45,13 +45,22 @@ export interface BackendMessage {
   tenant_id: string;
   conversation_id: string;
   remitente: BackendRemitente;
-  contenido: string;
+  // Nullable (SPEC-053/059): un `Message(tipo="audio")` puede llegar sin
+  // `contenido` hasta que el worker STT lo transcribe (`transcripcion_estado
+  // != "ok"`); el tipo TS refleja la misma nulabilidad que `MessageOut`
+  // (backend/app/schemas/message.py), antes optimista (`string`).
+  contenido: string | null;
   sentimiento: string | null;
   sentimiento_score: number | null;
   estado_entrega: string;
   activo: boolean;
   created_at: string;
   updated_at: string;
+  // Discriminador de tipo (SPEC-053 RF-01), expuesto de forma ADITIVA por
+  // SPEC-059 para que el adaptador derive `ConversationMessage.isTranscribedAudio`
+  // ("texto" | "audio"; opcional/null-safe por si un backend más antiguo aún
+  // no lo envía).
+  tipo?: string | null;
 }
 
 export interface BackendCitation {
