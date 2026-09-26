@@ -1596,17 +1596,20 @@ def test_process_job_message_sink_missing_message_row_handled_cleanly(
     mock_counter.assert_called_once_with(resultado="error")
 
 
-def test_process_job_message_sink_does_not_dispatch_ai_pipeline(
+def test_process_job_message_sink_dispatches_sentiment_job_on_transcript(
     postgres_engine, audio_store_tmp, stt_settings_defaults
 ):
-    """El sink `message` NUNCA dispara sentimiento/resumen/RAG (SPEC-057,
-    fuera de alcance de SPEC-056): sin job de sentimiento encolado y sin
-    `rag_drafts` creados, aunque se inyecten `redis_client`/`ai_client`
-    reales — el sink `message` no los usa."""
-    tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageSinkSinIA")
+    """SPEC-057: el sink `message` dispara sentimiento (SPEC-018) en la MISMA
+    cola Redis que WhatsApp/WebChat/el sink `call` — mismo patrón que
+    `test_process_job_dispatches_sentiment_job_on_transcript`, sobre el sink
+    `message`. `ai_client=FakeAIClient(unavailable=True)` para no interferir
+    con el disparo (best-effort) del borrador RAG en este test."""
+    from app.core.sentiment_queue import dequeue_sentiment_job
+
+    tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageSentiment")
     conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
     audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
-    store_audio(audio_ref=audio_ref, audio_bytes=b"audio-sin-pipeline-ia")
+    store_audio(audio_ref=audio_ref, audio_bytes=b"audio-message-sentimiento")
     message_id = _crear_message_audio_pendiente(
         postgres_engine,
         tenant_id=tenant_id,
@@ -1614,7 +1617,82 @@ def test_process_job_message_sink_does_not_dispatch_ai_pipeline(
         audio_ref=audio_ref,
     )
 
-    segments = [_fake_segment(0.0, 1.0, "Nota de voz sin pipeline IA todavía.")]
+    segments = [_fake_segment(0.0, 2.0, "Estoy muy molesto con el servicio.")]
+    info = _fake_transcription_info()
+    fake_model = _mock_whisper_model(segments, info)
+
+    job = SttTranscriptionJob(
+        call_id=str(message_id),
+        audio_ref=audio_ref,
+        tenant_id=str(tenant_id),
+        destino=f"message:{message_id}",
+    )
+    # `FakeServer` compartido + un cliente por loop (ver docstring en
+    # `test_process_job_dispatches_sentiment_job_on_transcript`): `process_job`
+    # toca este redis DENTRO de su propio `asyncio.run()` interno.
+    fake_server = _fakeredis.FakeServer()
+    redis_client = _fakeredis_aioredis.FakeRedis(server=fake_server, decode_responses=True)
+
+    with patch(
+        "app.services.telefonia.stt_engine._construir_whisper_model",
+        return_value=fake_model,
+    ):
+        process_job(
+            job,
+            session_factory=_session_factory(postgres_engine),
+            redis_client=redis_client,
+            ai_client=FakeAIClient(unavailable=True),  # RAG degradado, no interfiere
+        )
+
+    import asyncio
+
+    dequeue_redis_client = _fakeredis_aioredis.FakeRedis(
+        server=fake_server, decode_responses=True
+    )
+    sentiment_job = asyncio.run(
+        dequeue_sentiment_job(
+            dequeue_redis_client, tenant_id=tenant_id, timeout_seconds=0
+        )
+    )
+    assert sentiment_job is not None, "Debe haberse encolado un job de sentimiento"
+    assert sentiment_job.message_id == str(message_id)
+    assert sentiment_job.tenant_id == str(tenant_id)
+
+
+def test_process_job_message_sink_creates_proposed_rag_draft_with_citations(
+    postgres_engine, app_engine, audio_store_tmp, stt_settings_defaults
+):
+    """SPEC-057: se genera Y PERSISTE un borrador RAG `propuesto` con ≥3
+    citas trazables para la conversación de WhatsApp de la nota de voz —
+    mismo patrón que
+    `test_process_job_creates_proposed_rag_draft_with_citations_for_call`,
+    sobre el sink `message`. Usa `app_engine` (rol `omnicore_app`) para el
+    `session_factory`, NO `postgres_engine` (rol owner) — el owner evade RLS
+    y contamina la recuperación RAG con chunks de otros tenants de la BD
+    compartida de tests (bug ya encontrado y corregido en los tests
+    equivalentes del sink `call`)."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageDraft")
+    conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
+    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    store_audio(audio_ref=audio_ref, audio_bytes=b"audio-message-draft")
+    message_id = _crear_message_audio_pendiente(
+        postgres_engine,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        audio_ref=audio_ref,
+    )
+
+    texto = (
+        "Horario de atención: lunes a viernes de 8am a 6pm. "
+        "Política de reembolsos: 30 días calendario desde la compra. "
+        "Canal de soporte prioritario: WhatsApp Business verificado. "
+        "Garantía extendida disponible para productos electrónicos. "
+    ) * 5
+    document_id, ai_client = _indexar_documento_tenant_stt(
+        postgres_engine, tenant_id, texto=texto
+    )
+
+    segments = [_fake_segment(0.0, 2.0, "¿Cuál es el horario de atención?")]
     info = _fake_transcription_info()
     fake_model = _mock_whisper_model(segments, info)
 
@@ -1632,23 +1710,188 @@ def test_process_job_message_sink_does_not_dispatch_ai_pipeline(
     ):
         process_job(
             job,
-            session_factory=_session_factory(postgres_engine),
+            # Rol `omnicore_app` (ADR-008): con `postgres_engine` (rol owner,
+            # SIEMPRE exento de RLS) la recuperación vería chunks de OTROS
+            # tenants acumulados en la BD compartida de tests.
+            session_factory=_session_factory(app_engine),
             redis_client=redis_client,
-            ai_client=FakeAIClient(chat_response="no debería usarse"),
+            ai_client=ai_client,
         )
 
+    with postgres_engine.connect() as conn:
+        row = conn.execute(
+            sa.text(
+                "SELECT tenant_id, estado, citations, conversation_id, "
+                "sent_message_id FROM rag_drafts WHERE tenant_id = :tenant_id"
+            ),
+            {"tenant_id": tenant_id},
+        ).one_or_none()
+
+    assert row is not None, "Debe haberse persistido un rag_draft propuesto"
+    assert row.tenant_id == tenant_id
+    assert row.conversation_id == conversation_id
+    assert row.estado == "propuesto", "El borrador NUNCA se aprueba automáticamente"
+    assert row.sent_message_id is None, "Nada se envía sin aprobación humana (SPEC-019)"
+    assert len(row.citations) >= 3
+    for citation in row.citations:
+        assert citation["source"] == "manual-voz.txt"
+        assert citation["excerpt"].strip() != ""
+        assert 0.0 <= citation["similarityScore"] <= 1.0
+        assert uuid.UUID(citation["document_id"]) == document_id
+
+
+def test_process_job_message_sink_rag_draft_never_auto_sent(
+    postgres_engine, app_engine, audio_store_tmp, stt_settings_defaults
+):
+    """SPEC-057/RF-02: el borrador RAG generado a partir de una nota de voz
+    de WhatsApp NUNCA se envía automáticamente — queda en `propuesto` con
+    `sent_message_id is None`, exactamente como cualquier borrador de
+    WhatsApp de texto (SPEC-019)."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageDraftNoAutoSend")
+    conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
+    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    store_audio(audio_ref=audio_ref, audio_bytes=b"audio-message-no-autosend")
+    message_id = _crear_message_audio_pendiente(
+        postgres_engine,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        audio_ref=audio_ref,
+    )
+
+    texto = (
+        "Horario de atención: lunes a viernes de 8am a 6pm. "
+        "Política de reembolsos: 30 días calendario desde la compra. "
+        "Canal de soporte prioritario: WhatsApp Business verificado. "
+        "Garantía extendida disponible para productos electrónicos. "
+    ) * 5
+    _document_id, ai_client = _indexar_documento_tenant_stt(
+        postgres_engine, tenant_id, texto=texto
+    )
+
+    segments = [_fake_segment(0.0, 2.0, "¿Cuál es la política de reembolsos?")]
+    info = _fake_transcription_info()
+    fake_model = _mock_whisper_model(segments, info)
+
+    job = SttTranscriptionJob(
+        call_id=str(message_id),
+        audio_ref=audio_ref,
+        tenant_id=str(tenant_id),
+        destino=f"message:{message_id}",
+    )
+    redis_client = _fakeredis_aioredis.FakeRedis(decode_responses=True)
+
+    with patch(
+        "app.services.telefonia.stt_engine._construir_whisper_model",
+        return_value=fake_model,
+    ):
+        process_job(
+            job,
+            session_factory=_session_factory(app_engine),
+            redis_client=redis_client,
+            ai_client=ai_client,
+        )
+
+    with postgres_engine.connect() as conn:
+        row = conn.execute(
+            sa.text(
+                "SELECT estado, sent_message_id FROM rag_drafts WHERE tenant_id = :t"
+            ),
+            {"t": tenant_id},
+        ).one_or_none()
+
+    assert row is not None
+    assert row.estado == "propuesto"
+    assert row.sent_message_id is None
+
+
+def test_process_job_message_sink_reprocessing_ok_does_not_redispatch_ai_pipeline(
+    postgres_engine, audio_store_tmp, stt_settings_defaults
+):
+    """SPEC-057: un reproceso idempotente (`transcripcion_estado` ya "ok",
+    RF-05 SPEC-056) NO vuelve a disparar sentimiento/RAG una segunda vez —
+    el camino de idempotencia retorna antes de llegar al disparo del
+    pipeline IA."""
     import asyncio
 
     from app.core.sentiment_queue import dequeue_sentiment_job
 
-    sentiment_job = asyncio.run(
-        dequeue_sentiment_job(redis_client, tenant_id=tenant_id, timeout_seconds=0)
+    tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageNoRedispatch")
+    conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
+    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    store_audio(audio_ref=audio_ref, audio_bytes=b"audio-message-no-redispatch")
+    message_id = _crear_message_audio_pendiente(
+        postgres_engine,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        audio_ref=audio_ref,
     )
-    assert sentiment_job is None, "El sink message NO debe encolar sentimiento (SPEC-057)"
+
+    segments = [_fake_segment(0.0, 1.0, "Primera transcripción con IA.")]
+    info = _fake_transcription_info()
+    fake_model = _mock_whisper_model(segments, info)
+
+    job = SttTranscriptionJob(
+        call_id=str(message_id),
+        audio_ref=audio_ref,
+        tenant_id=str(tenant_id),
+        destino=f"message:{message_id}",
+    )
+    fake_server = _fakeredis.FakeServer()
+    redis_client = _fakeredis_aioredis.FakeRedis(server=fake_server, decode_responses=True)
+
+    with patch(
+        "app.services.telefonia.stt_engine._construir_whisper_model",
+        return_value=fake_model,
+    ):
+        # Primera pasada: transcribe y SÍ dispara el pipeline IA.
+        process_job(
+            job,
+            session_factory=_session_factory(postgres_engine),
+            redis_client=redis_client,
+            ai_client=FakeAIClient(unavailable=True),
+        )
+
+        # Drena el job de sentimiento encolado por la primera pasada para
+        # que la cola quede vacía antes de comprobar el reproceso.
+        dequeue_redis_client = _fakeredis_aioredis.FakeRedis(
+            server=fake_server, decode_responses=True
+        )
+        primer_sentiment_job = asyncio.run(
+            dequeue_sentiment_job(
+                dequeue_redis_client, tenant_id=tenant_id, timeout_seconds=0
+            )
+        )
+        assert primer_sentiment_job is not None, (
+            "La primera pasada SÍ debe encolar sentimiento (camino ok)"
+        )
+
+        # Reproceso del MISMO job (mensaje ya `transcripcion_estado="ok"`,
+        # RF-05 SPEC-056): no debe re-disparar el pipeline IA.
+        process_job(
+            job,
+            session_factory=_session_factory(postgres_engine),
+            redis_client=redis_client,
+            ai_client=FakeAIClient(unavailable=True),
+        )
+
+    dequeue_redis_client_2 = _fakeredis_aioredis.FakeRedis(
+        server=fake_server, decode_responses=True
+    )
+    segundo_sentiment_job = asyncio.run(
+        dequeue_sentiment_job(
+            dequeue_redis_client_2, tenant_id=tenant_id, timeout_seconds=0
+        )
+    )
+    assert segundo_sentiment_job is None, (
+        "El reproceso idempotente NO debe volver a encolar sentimiento"
+    )
 
     with postgres_engine.connect() as conn:
         draft_count = conn.execute(
             sa.text("SELECT count(*) FROM rag_drafts WHERE tenant_id = :tenant_id"),
             {"tenant_id": tenant_id},
         ).scalar_one()
-    assert draft_count == 0, "El sink message NO debe generar rag_drafts (SPEC-057)"
+    assert draft_count == 0, (
+        "En este test el RAG está degradado (ai_client unavailable); solo "
+        "confirma que el reproceso no generó actividad IA adicional"
+    )

@@ -84,8 +84,10 @@ que NO cambia ni se toca), según el prefijo de `job.destino`
     `_transcript_exists` del sink `call`, para no gastar cómputo
     transcribiendo un audio ya procesado) y se repite tras transcribir por
     si perdió una carrera con otro worker (mismo patrón de doble chequeo).
-    El disparo del pipeline IA (sentimiento/RAG) sobre este `Message` queda
-    para SPEC-057 — este sink solo deja el texto listo.
+    El disparo del pipeline IA (sentimiento/RAG) sobre este `Message` está
+    implementado por SPEC-057, reutilizando `_schedule_sentiment_best_effort`/
+    `_generate_rag_draft_best_effort` (mismas funciones que usa el sink
+    `call`) — sin lógica de IA nueva.
   - Un solo motor (`stt_engine.py`, sin tocar), un solo modelo Whisper en
     memoria, una sola ruta de inferencia — el sink solo cambia el DESTINO de
     escritura del resultado ya calculado; RTF/latencia de cola/tasa de error
@@ -673,7 +675,10 @@ def _sink_message(
     job: SttTranscriptionJob,
     *,
     message_id: uuid.UUID,
+    tenant_uuid: uuid.UUID,
     audio_bytes: bytes,
+    redis_client: redis_asyncio.Redis | None = None,
+    ai_client: AIClient | None = None,
 ) -> None:
     """Sink `message:{id}` (NUEVO, SPEC-056) — actualiza el `Message(tipo=
     "audio")` YA existente (creado por SPEC-055) con la transcripción: NUNCA
@@ -683,9 +688,13 @@ def _sink_message(
     el sink `call` (RNF-42). `audio_bytes` ya viene descifrado/cargado por
     `process_job`.
 
-    El disparo del pipeline IA (sentimiento/RAG, SPEC-057) sobre el
-    `Message` actualizado queda explícitamente FUERA de alcance aquí — este
-    sink solo deja `contenido`/`transcripcion_estado="ok"` listos.
+    SPEC-057 (implementada): tras dejar `contenido`/`transcripcion_estado=
+    "ok"` listos, dispara el MISMO pipeline IA best-effort (sentimiento
+    SPEC-018 + borrador RAG SPEC-017/019) que ya usa el sink `call`
+    (`_sink_call`) y `whatsapp_inbound_worker` (SPEC-028) — cero lógica de IA
+    nueva, solo el disparo. Solo ocurre en el camino "ok" (transcripción
+    recién escrita); nunca en los caminos de idempotencia/duplicado ni de
+    error.
     """
     # Guarda de idempotencia PREVIA a la inferencia (RF-05 SPEC-056), MISMO
     # criterio que el sink `call`: no gastar cómputo transcribiendo un audio
@@ -754,6 +763,14 @@ def _sink_message(
         message.contenido = texto_transcripcion
         message.transcripcion_estado = _TRANSCRIPCION_ESTADO_OK
         db.flush()
+        # Capturado DENTRO de la transacción (con el tenant fijado), ANTES
+        # de que este `with` cierre (commit) y expire los atributos del ORM
+        # — mismo criterio que `_materialize_transcript_message`/`_sink_call`
+        # (ver docstrings de ambos): un acceso posterior a `message.
+        # conversation_id` fuera de cualquier `app.tenant_id` fijado
+        # dispara un refresh que, bajo RLS real, ve 0 filas
+        # (`ObjectDeletedError`).
+        conversation_id = message.conversation_id
 
     observe_stt_rtf(
         model=resultado.modelo_stt, device=resultado.device_usado, rtf=resultado.rtf
@@ -770,6 +787,26 @@ def _sink_message(
         segmentos=len(resultado.segmentos),
         rtf=round(resultado.rtf, 3),
         fallback_aplicado=resultado.fallback_aplicado,
+    )
+
+    # SPEC-057: dispara el pipeline IA local (sentimiento SPEC-018 +
+    # borrador RAG SPEC-017/019) sobre la transcripción YA persistida
+    # arriba; best-effort/modo degradado (ver docstrings de cada helper) —
+    # NUNCA revierte ni bloquea la transcripción ya confirmada. Solo en el
+    # camino "ok" (nunca en idempotencia/duplicado ni en error, RNF-63).
+    effective_ai_client = ai_client or AIClient()
+    fake_message = SimpleNamespace(
+        id=message_id, tenant_id=tenant_uuid, remitente=_REMITENTE_CONTACTO
+    )
+    _schedule_sentiment_best_effort(
+        redis_client or get_redis_client(), message=fake_message
+    )
+    _generate_rag_draft_best_effort(
+        db,
+        effective_ai_client,
+        tenant_id=tenant_uuid,
+        conversation_id=conversation_id,
+        query=texto_transcripcion,
     )
 
 
@@ -864,7 +901,15 @@ def process_job(
             observe_stt_queue_latency(time.time() - enqueued_at_epoch_seconds)
 
         if es_sink_message:
-            _sink_message(db, job, message_id=message_id, audio_bytes=audio_bytes)
+            _sink_message(
+                db,
+                job,
+                message_id=message_id,
+                tenant_uuid=tenant_uuid,
+                audio_bytes=audio_bytes,
+                redis_client=redis_client,
+                ai_client=ai_client,
+            )
             return
 
         _sink_call(

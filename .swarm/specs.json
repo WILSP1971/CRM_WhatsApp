@@ -9,10 +9,10 @@
     "total_specs": 61,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 5,
+      "APROBADA": 4,
       "EN_PROGRESO": 0,
-      "EN_VERIFICACION": 38,
-      "CERRADA": 10,
+      "EN_VERIFICACION": 37,
+      "CERRADA": 12,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-09-26"
@@ -1302,7 +1302,7 @@
       "id": "SPEC-056",
       "titulo": "Enganche STT: sink parametrizado por destino en el stt_worker existente (sink message escribe en Message.contenido)",
       "archivo": ".swarm/specs/SPEC-056.md",
-      "estado": "EN_VERIFICACION",
+      "estado": "CERRADA",
       "fase": "F3",
       "plan": "PLAN-006",
       "sensible": true,
@@ -1324,7 +1324,7 @@
       "id": "SPEC-057",
       "titulo": "Enriquecimiento IA local sobre la transcripcion de la nota de voz (reutiliza SPEC-028/039 sin cambios)",
       "archivo": ".swarm/specs/SPEC-057.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F4",
       "plan": "PLAN-006",
       "sensible": true,
