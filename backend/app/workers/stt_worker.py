@@ -64,6 +64,32 @@ SPEC-017/018/019 sin crear componentes de IA nuevos (mismo patrón exacto que
       citas (`InsufficientContextError`), NO se genera resumen/borrador — se
       loguea la condición y la transcripción YA PERSISTIDA en el paso 4 no se
       ve afectada; ningún error de IA revierte ni bloquea la transcripción.
+
+Sink parametrizado por `destino` (SPEC-056, ADITIVO sobre SPEC-038/039) —
+`process_job` despacha, DESPUÉS de transcribir con `stt_engine.py` (paso 3,
+que NO cambia ni se toca), según el prefijo de `job.destino`
+(`app.core.stt_queue.SttTranscriptionJob.destino`, añadido por SPEC-055):
+  - sink `call:{id}` (DEFAULT, formato anterior o `destino` ausente): es
+    EXACTAMENTE la lógica de los pasos 1-10 de arriba, extraída a
+    `_sink_call` sin ningún cambio de comportamiento observable — cero
+    regresión sobre los jobs de llamadas del Entregable #4.
+  - sink `message:{id}` (NUEVO): la nota de voz de WhatsApp YA tiene su
+    `Message(tipo="audio", contenido=None)` persistido por SPEC-055 —
+    `_sink_message` solo ACTUALIZA ese `Message.contenido`/
+    `transcripcion_estado="ok"` bajo RLS del tenant del job; NUNCA crea
+    `CallTranscript`, NUNCA crea un `Message` nuevo, NUNCA toca `calls`
+    (ADR-013). Idempotencia (RF-05 SPEC-056): si `transcripcion_estado`
+    del `Message` ya es `"ok"`, no-op — la guarda corre ANTES de invocar
+    `stt_engine.transcribe_audio_bytes` (mismo criterio que
+    `_transcript_exists` del sink `call`, para no gastar cómputo
+    transcribiendo un audio ya procesado) y se repite tras transcribir por
+    si perdió una carrera con otro worker (mismo patrón de doble chequeo).
+    El disparo del pipeline IA (sentimiento/RAG) sobre este `Message` queda
+    para SPEC-057 — este sink solo deja el texto listo.
+  - Un solo motor (`stt_engine.py`, sin tocar), un solo modelo Whisper en
+    memoria, una sola ruta de inferencia — el sink solo cambia el DESTINO de
+    escritura del resultado ya calculado; RTF/latencia de cola/tasa de error
+    se siguen instrumentando igual para ambos sinks (RNF-42).
 """
 
 from __future__ import annotations
@@ -97,6 +123,7 @@ from app.models.call import Call
 from app.models.call_transcript import CallTranscript
 from app.models.contact import Contact
 from app.models.conversation import Conversation
+from app.models.message import Message
 from app.services.ai_service import AIClient, AIServiceError
 from app.services.call_summary_service import generate_call_summary
 from app.services.message_service import (
@@ -113,6 +140,18 @@ logger = structlog.get_logger(__name__)
 _ESTADO_CALL_TRANSCRITA = "transcrita"
 _CANAL_VOZ = "voz"
 _REMITENTE_CONTACTO = "contacto"
+
+# Prefijos del campo `destino` (SPEC-055/SPEC-056, ADR-013): gobiernan el
+# sink de escritura que consume este worker. `_DESTINO_MESSAGE_PREFIX` es el
+# ÚNICO prefijo reconocido para el sink nuevo; cualquier otro valor (incluido
+# el prefijo `"call:"` y la ausencia total de `destino` en jobs legacy,
+# tolerada por `SttTranscriptionJob.from_json`/`__post_init__`) se trata como
+# el sink `call` — comportamiento IDÉNTICO a SPEC-038 (RF-01 SPEC-056).
+_DESTINO_MESSAGE_PREFIX = "message:"
+
+# `transcripcion_estado` terminal del sink `message` (SPEC-053/SPEC-056):
+# una vez en "ok", reprocesar el mismo job es no-op (RF-05 SPEC-056).
+_TRANSCRIPCION_ESTADO_OK = "ok"
 
 
 def _transcript_exists(db: Session, *, call_id: uuid.UUID) -> bool:
@@ -396,6 +435,305 @@ def _generate_rag_draft_best_effort(
     )
 
 
+def _message_transcripcion_ok(db: Session, *, message_id: uuid.UUID) -> bool:
+    """Guarda de idempotencia del sink `message` (RF-05 SPEC-056), MISMO
+    criterio que `_transcript_exists` del sink `call`: consulta de solo
+    lectura bajo RLS (ya con `app.tenant_id` fijado) para no repetir trabajo
+    (transcribir de nuevo un audio ya procesado) en el camino feliz. Se
+    invoca ANTES de la inferencia (no gastar cómputo) y se repite DENTRO de
+    la transacción de escritura por si perdió una carrera con otro worker."""
+    return (
+        db.execute(
+            sa.text(
+                "SELECT 1 FROM messages "
+                "WHERE id = :message_id AND transcripcion_estado = :estado_ok "
+                "LIMIT 1"
+            ),
+            {"message_id": str(message_id), "estado_ok": _TRANSCRIPCION_ESTADO_OK},
+        ).scalar_one_or_none()
+        is not None
+    )
+
+
+def _sink_call(
+    db: Session,
+    job: SttTranscriptionJob,
+    *,
+    call_id: uuid.UUID,
+    tenant_uuid: uuid.UUID,
+    audio_bytes: bytes,
+    redis_client: redis_asyncio.Redis | None,
+    ai_client: AIClient | None,
+) -> None:
+    """Sink `call:{id}` (DEFAULT, SPEC-038/039) — EXACTAMENTE la lógica
+    ANTERIOR a SPEC-056, extraída tal cual (sin ningún cambio de
+    comportamiento observable, RNF-62): idempotencia por `call_id`,
+    transcripción, persistencia de `CallTranscript` + `calls.estado`, y
+    disparo best-effort del pipeline IA (SPEC-039) sobre el `Message` de voz
+    materializado. `audio_bytes` ya viene descifrado/cargado por
+    `process_job` (MISMO punto del flujo que antes de SPEC-056: la carga del
+    audio ocurre ANTES de la guarda de idempotencia, sin cambio de orden
+    observable)."""
+    # Guarda de idempotencia PREVIA a la inferencia (RF-03): consulta de
+    # solo lectura fuera de la transacción de escritura, bajo RLS, para
+    # no gastar CPU/GPU transcribiendo un audio ya procesado. Se repite
+    # la comprobación DENTRO de la transacción de escritura más abajo por
+    # si perdió una carrera con otro worker mientras se transcribía (la
+    # UNIQUE de BD es la garantía dura final).
+    with db.begin():
+        set_tenant_session(db, job.tenant_id)
+        ya_existe = _transcript_exists(db, call_id=call_id)
+
+    if ya_existe:
+        logger.info(
+            "stt_job_duplicate_call_id_skipped",
+            call_id=job.call_id,
+            tenant_id=job.tenant_id,
+            job_id=job.job_id,
+        )
+        increment_stt_jobs(resultado="duplicado")
+        return
+
+    # Transcripción (potencialmente varios segundos/minutos, RNF-42)
+    # FUERA de cualquier transacción de BD abierta — nunca se mantiene
+    # una transacción larga bloqueando conexiones del pool mientras el
+    # modelo STT infiere.
+    try:
+        resultado = transcribe_audio_bytes(audio_bytes)
+    except SttEngineError:
+        logger.error(
+            "stt_job_transcription_failed",
+            call_id=job.call_id,
+            tenant_id=job.tenant_id,
+            job_id=job.job_id,
+            exc_info=True,
+        )
+        increment_stt_jobs(resultado="error")
+        return
+
+    call_numero: str | None = None
+    call_contact_id: uuid.UUID | None = None
+    call_conversation_id: uuid.UUID | None = None
+    call_activa = False
+
+    try:
+        with db.begin():
+            set_tenant_session(db, job.tenant_id)
+
+            if _transcript_exists(db, call_id=call_id):
+                # RF-03: otro worker ganó la carrera mientras este
+                # transcribía -> descarta el resultado ya calculado sin
+                # persistir una segunda fila.
+                logger.info(
+                    "stt_job_duplicate_call_id_skipped_post_transcription",
+                    call_id=job.call_id,
+                    tenant_id=job.tenant_id,
+                    job_id=job.job_id,
+                )
+                increment_stt_jobs(resultado="duplicado")
+                return
+
+            transcript = CallTranscript(
+                tenant_id=tenant_uuid,
+                call_id=call_id,
+                segmentos=resultado.segmentos_como_dicts(),
+                idioma=resultado.idioma,
+                modelo_stt=resultado.modelo_stt,
+            )
+            db.add(transcript)
+
+            call = db.execute(
+                sa.select(Call).where(Call.id == call_id)
+            ).scalar_one_or_none()
+            if call is not None:
+                call.estado = _ESTADO_CALL_TRANSCRITA
+                # Capturados ANTES de salir del `with` (la sesión puede
+                # expirar los atributos del ORM al hacer commit) para el
+                # enganche del pipeline IA (SPEC-039) que sigue abajo, en
+                # su PROPIA transacción — mismo criterio que
+                # `whatsapp_inbound_worker`, que reabre `set_tenant_session`
+                # después de que la transacción de persistencia ya cerró.
+                call_numero = call.numero
+                call_contact_id = call.contact_id
+                call_conversation_id = call.conversation_id
+                call_activa = True
+    except IntegrityError:
+        # Condición de carrera entre workers/reintentos concurrentes
+        # sobre el MISMO call_id: la restricción UNIQUE de BD
+        # (uq_call_transcripts_call_id, SPEC-036) es la garantía dura de
+        # idempotencia (ADR-007) cuando `_transcript_exists` pierde la
+        # carrera.
+        db.rollback()
+        logger.info(
+            "stt_job_duplicate_call_id_race_detected",
+            call_id=job.call_id,
+            tenant_id=job.tenant_id,
+            job_id=job.job_id,
+        )
+        increment_stt_jobs(resultado="duplicado")
+        return
+
+    observe_stt_rtf(
+        model=resultado.modelo_stt, device=resultado.device_usado, rtf=resultado.rtf
+    )
+    increment_stt_jobs(resultado="ok")
+
+    logger.info(
+        "stt_job_transcript_persisted",
+        call_id=job.call_id,
+        tenant_id=job.tenant_id,
+        job_id=job.job_id,
+        modelo_stt=resultado.modelo_stt,
+        idioma=resultado.idioma,
+        segmentos=len(resultado.segmentos),
+        rtf=round(resultado.rtf, 3),
+        fallback_aplicado=resultado.fallback_aplicado,
+    )
+
+    # SPEC-039: dispara el pipeline IA local (sentimiento SPEC-018 +
+    # resumen + borrador RAG SPEC-017/019) sobre la transcripción YA
+    # persistida arriba; best-effort/modo degradado (ver docstrings de
+    # cada helper) — NUNCA revierte ni bloquea la transcripción ya
+    # confirmada. Sin `call` resuelta (fila no encontrada) o transcripción
+    # sin texto reconocible, no hay nada que enganchar.
+    if call_activa:
+        texto_transcripcion = _texto_completo_transcripcion(resultado)
+        materializado = _materialize_transcript_message(
+            db,
+            tenant_id=tenant_uuid,
+            call_id=call_id,
+            call_numero=call_numero or "",
+            call_contact_id=call_contact_id,
+            call_conversation_id=call_conversation_id,
+            texto=texto_transcripcion,
+        )
+        if materializado is not None:
+            message, conversation_id = materializado
+            effective_ai_client = ai_client or AIClient()
+            _schedule_sentiment_best_effort(
+                redis_client or get_redis_client(), message=message
+            )
+            _generate_call_summary_best_effort(
+                db,
+                effective_ai_client,
+                tenant_id=tenant_uuid,
+                call_id=call_id,
+                texto=texto_transcripcion,
+            )
+            _generate_rag_draft_best_effort(
+                db,
+                effective_ai_client,
+                tenant_id=tenant_uuid,
+                conversation_id=conversation_id,
+                query=texto_transcripcion,
+            )
+
+
+def _sink_message(
+    db: Session,
+    job: SttTranscriptionJob,
+    *,
+    message_id: uuid.UUID,
+    audio_bytes: bytes,
+) -> None:
+    """Sink `message:{id}` (NUEVO, SPEC-056) — actualiza el `Message(tipo=
+    "audio")` YA existente (creado por SPEC-055) con la transcripción: NUNCA
+    crea `CallTranscript`, NUNCA crea un `Message` nuevo, NUNCA toca `calls`
+    (ADR-013). Reutiliza el ÚNICO motor STT (`stt_engine.py`, sin tocar) —
+    misma ruta de inferencia y misma instrumentación RTF/latencia/error que
+    el sink `call` (RNF-42). `audio_bytes` ya viene descifrado/cargado por
+    `process_job`.
+
+    El disparo del pipeline IA (sentimiento/RAG, SPEC-057) sobre el
+    `Message` actualizado queda explícitamente FUERA de alcance aquí — este
+    sink solo deja `contenido`/`transcripcion_estado="ok"` listos.
+    """
+    # Guarda de idempotencia PREVIA a la inferencia (RF-05 SPEC-056), MISMO
+    # criterio que el sink `call`: no gastar cómputo transcribiendo un audio
+    # ya procesado.
+    with db.begin():
+        set_tenant_session(db, job.tenant_id)
+        ya_transcrito = _message_transcripcion_ok(db, message_id=message_id)
+
+    if ya_transcrito:
+        logger.info(
+            "stt_job_message_already_transcribed_skipped",
+            message_id=str(message_id),
+            tenant_id=job.tenant_id,
+            job_id=job.job_id,
+        )
+        increment_stt_jobs(resultado="duplicado")
+        return
+
+    # Transcripción FUERA de cualquier transacción de BD abierta — mismo
+    # criterio que el sink `call` (RNF-42, nunca mantener una transacción
+    # larga bloqueando el pool mientras el modelo STT infiere).
+    try:
+        resultado = transcribe_audio_bytes(audio_bytes)
+    except SttEngineError:
+        logger.error(
+            "stt_job_transcription_failed",
+            call_id=job.call_id,
+            tenant_id=job.tenant_id,
+            job_id=job.job_id,
+            exc_info=True,
+        )
+        increment_stt_jobs(resultado="error")
+        return
+
+    texto_transcripcion = _texto_completo_transcripcion(resultado)
+
+    with db.begin():
+        set_tenant_session(db, job.tenant_id)
+
+        if _message_transcripcion_ok(db, message_id=message_id):
+            # RF-05: otro worker ganó la carrera mientras este transcribía
+            # -> descarta el resultado ya calculado sin re-escribir.
+            logger.info(
+                "stt_job_message_already_transcribed_skipped_post_transcription",
+                message_id=str(message_id),
+                tenant_id=job.tenant_id,
+                job_id=job.job_id,
+            )
+            increment_stt_jobs(resultado="duplicado")
+            return
+
+        message = db.get(Message, message_id)
+        if message is None:
+            # Defensa: el `Message` referenciado por `destino` no existe (no
+            # debería ocurrir en producción real, ver SPEC-055) — se audita
+            # sin propagar.
+            logger.error(
+                "stt_job_message_not_found",
+                message_id=str(message_id),
+                tenant_id=job.tenant_id,
+                job_id=job.job_id,
+            )
+            increment_stt_jobs(resultado="error")
+            return
+
+        message.contenido = texto_transcripcion
+        message.transcripcion_estado = _TRANSCRIPCION_ESTADO_OK
+        db.flush()
+
+    observe_stt_rtf(
+        model=resultado.modelo_stt, device=resultado.device_usado, rtf=resultado.rtf
+    )
+    increment_stt_jobs(resultado="ok")
+
+    logger.info(
+        "stt_job_message_transcript_persisted",
+        message_id=str(message_id),
+        tenant_id=job.tenant_id,
+        job_id=job.job_id,
+        modelo_stt=resultado.modelo_stt,
+        idioma=resultado.idioma,
+        segmentos=len(resultado.segmentos),
+        rtf=round(resultado.rtf, 3),
+        fallback_aplicado=resultado.fallback_aplicado,
+    )
+
+
 def process_job(
     job: SttTranscriptionJob,
     *,
@@ -405,8 +743,12 @@ def process_job(
     ai_client: AIClient | None = None,
 ) -> None:
     """Procesa un job ya extraído de `stt:jobs`: lee el audio cifrado,
-    transcribe local, deduplica por `call_id` y persiste `CallTranscript` +
-    actualiza `calls.estado`.
+    transcribe local (una sola ruta de inferencia, `stt_engine.py` sin
+    tocar) y despacha al sink que corresponda según `job.destino`
+    (SPEC-056): `_sink_call` (DEFAULT, formato anterior o `destino` ausente
+    — comportamiento IDÉNTICO a SPEC-038/039, RNF-62) o `_sink_message`
+    (`destino="message:{id}"`, SPEC-055/056 — actualiza un `Message` de
+    WhatsApp existente, ADR-013).
 
     `session_factory` es SOLO para pruebas (inyecta una `Session` sobre el
     `postgres_engine` de test en vez de la instancia real).
@@ -422,12 +764,37 @@ def process_job(
         enqueued_at_epoch_seconds = job.enqueued_at_epoch_seconds
     db = (session_factory or SessionLocal)()
     try:
-        try:
-            call_id = uuid.UUID(job.call_id)
-        except ValueError:
-            logger.warning("stt_job_invalid_call_id", call_id=job.call_id)
-            increment_stt_jobs(resultado="error")
-            return
+        # Enrutado por sink (RF-01/RF-02 SPEC-056): `destino` SIEMPRE trae un
+        # valor (default de fábrica `"call:{call_id}"`,
+        # `SttTranscriptionJob.__post_init__`/`from_json`) — un job legacy
+        # sin el campo en el JSON se comporta como `call` sin diferencia
+        # observable. Solo el prefijo `"message:"` activa el sink nuevo;
+        # cualquier otro valor (incluido `"call:"`) es el sink `call`. Se
+        # resuelve el sink ANTES de tocar `call_id`/`tenant_id` porque el
+        # sink `message` no requiere un `call_id` semánticamente válido.
+        destino = job.destino or f"call:{job.call_id}"
+        es_sink_message = destino.startswith(_DESTINO_MESSAGE_PREFIX)
+
+        if es_sink_message:
+            target_id_raw = destino[len(_DESTINO_MESSAGE_PREFIX):]
+            try:
+                message_id = uuid.UUID(target_id_raw)
+            except ValueError:
+                logger.warning(
+                    "stt_job_invalid_message_id",
+                    destino=destino,
+                    tenant_id=job.tenant_id,
+                    job_id=job.job_id,
+                )
+                increment_stt_jobs(resultado="error")
+                return
+        else:
+            try:
+                call_id = uuid.UUID(job.call_id)
+            except ValueError:
+                logger.warning("stt_job_invalid_call_id", call_id=job.call_id)
+                increment_stt_jobs(resultado="error")
+                return
 
         try:
             tenant_uuid = uuid.UUID(job.tenant_id)
@@ -457,159 +824,19 @@ def process_job(
         if enqueued_at_epoch_seconds is not None:
             observe_stt_queue_latency(time.time() - enqueued_at_epoch_seconds)
 
-        # Guarda de idempotencia PREVIA a la inferencia (RF-03): consulta de
-        # solo lectura fuera de la transacción de escritura, bajo RLS, para
-        # no gastar CPU/GPU transcribiendo un audio ya procesado. Se repite
-        # la comprobación DENTRO de la transacción de escritura más abajo por
-        # si perdió una carrera con otro worker mientras se transcribía (la
-        # UNIQUE de BD es la garantía dura final).
-        with db.begin():
-            set_tenant_session(db, job.tenant_id)
-            ya_existe = _transcript_exists(db, call_id=call_id)
-
-        if ya_existe:
-            logger.info(
-                "stt_job_duplicate_call_id_skipped",
-                call_id=job.call_id,
-                tenant_id=job.tenant_id,
-                job_id=job.job_id,
-            )
-            increment_stt_jobs(resultado="duplicado")
+        if es_sink_message:
+            _sink_message(db, job, message_id=message_id, audio_bytes=audio_bytes)
             return
 
-        # Transcripción (potencialmente varios segundos/minutos, RNF-42)
-        # FUERA de cualquier transacción de BD abierta — nunca se mantiene
-        # una transacción larga bloqueando conexiones del pool mientras el
-        # modelo STT infiere.
-        try:
-            resultado = transcribe_audio_bytes(audio_bytes)
-        except SttEngineError:
-            logger.error(
-                "stt_job_transcription_failed",
-                call_id=job.call_id,
-                tenant_id=job.tenant_id,
-                job_id=job.job_id,
-                exc_info=True,
-            )
-            increment_stt_jobs(resultado="error")
-            return
-
-        call_numero: str | None = None
-        call_contact_id: uuid.UUID | None = None
-        call_conversation_id: uuid.UUID | None = None
-        call_activa = False
-
-        try:
-            with db.begin():
-                set_tenant_session(db, job.tenant_id)
-
-                if _transcript_exists(db, call_id=call_id):
-                    # RF-03: otro worker ganó la carrera mientras este
-                    # transcribía -> descarta el resultado ya calculado sin
-                    # persistir una segunda fila.
-                    logger.info(
-                        "stt_job_duplicate_call_id_skipped_post_transcription",
-                        call_id=job.call_id,
-                        tenant_id=job.tenant_id,
-                        job_id=job.job_id,
-                    )
-                    increment_stt_jobs(resultado="duplicado")
-                    return
-
-                transcript = CallTranscript(
-                    tenant_id=tenant_uuid,
-                    call_id=call_id,
-                    segmentos=resultado.segmentos_como_dicts(),
-                    idioma=resultado.idioma,
-                    modelo_stt=resultado.modelo_stt,
-                )
-                db.add(transcript)
-
-                call = db.execute(
-                    sa.select(Call).where(Call.id == call_id)
-                ).scalar_one_or_none()
-                if call is not None:
-                    call.estado = _ESTADO_CALL_TRANSCRITA
-                    # Capturados ANTES de salir del `with` (la sesión puede
-                    # expirar los atributos del ORM al hacer commit) para el
-                    # enganche del pipeline IA (SPEC-039) que sigue abajo, en
-                    # su PROPIA transacción — mismo criterio que
-                    # `whatsapp_inbound_worker`, que reabre `set_tenant_session`
-                    # después de que la transacción de persistencia ya cerró.
-                    call_numero = call.numero
-                    call_contact_id = call.contact_id
-                    call_conversation_id = call.conversation_id
-                    call_activa = True
-        except IntegrityError:
-            # Condición de carrera entre workers/reintentos concurrentes
-            # sobre el MISMO call_id: la restricción UNIQUE de BD
-            # (uq_call_transcripts_call_id, SPEC-036) es la garantía dura de
-            # idempotencia (ADR-007) cuando `_transcript_exists` pierde la
-            # carrera.
-            db.rollback()
-            logger.info(
-                "stt_job_duplicate_call_id_race_detected",
-                call_id=job.call_id,
-                tenant_id=job.tenant_id,
-                job_id=job.job_id,
-            )
-            increment_stt_jobs(resultado="duplicado")
-            return
-
-        observe_stt_rtf(
-            model=resultado.modelo_stt, device=resultado.device_usado, rtf=resultado.rtf
+        _sink_call(
+            db,
+            job,
+            call_id=call_id,
+            tenant_uuid=tenant_uuid,
+            audio_bytes=audio_bytes,
+            redis_client=redis_client,
+            ai_client=ai_client,
         )
-        increment_stt_jobs(resultado="ok")
-
-        logger.info(
-            "stt_job_transcript_persisted",
-            call_id=job.call_id,
-            tenant_id=job.tenant_id,
-            job_id=job.job_id,
-            modelo_stt=resultado.modelo_stt,
-            idioma=resultado.idioma,
-            segmentos=len(resultado.segmentos),
-            rtf=round(resultado.rtf, 3),
-            fallback_aplicado=resultado.fallback_aplicado,
-        )
-
-        # SPEC-039: dispara el pipeline IA local (sentimiento SPEC-018 +
-        # resumen + borrador RAG SPEC-017/019) sobre la transcripción YA
-        # persistida arriba; best-effort/modo degradado (ver docstrings de
-        # cada helper) — NUNCA revierte ni bloquea la transcripción ya
-        # confirmada. Sin `call` resuelta (fila no encontrada) o transcripción
-        # sin texto reconocible, no hay nada que enganchar.
-        if call_activa:
-            texto_transcripcion = _texto_completo_transcripcion(resultado)
-            materializado = _materialize_transcript_message(
-                db,
-                tenant_id=tenant_uuid,
-                call_id=call_id,
-                call_numero=call_numero or "",
-                call_contact_id=call_contact_id,
-                call_conversation_id=call_conversation_id,
-                texto=texto_transcripcion,
-            )
-            if materializado is not None:
-                message, conversation_id = materializado
-                effective_ai_client = ai_client or AIClient()
-                _schedule_sentiment_best_effort(
-                    redis_client or get_redis_client(), message=message
-                )
-                _generate_call_summary_best_effort(
-                    db,
-                    effective_ai_client,
-                    tenant_id=tenant_uuid,
-                    call_id=call_id,
-                    texto=texto_transcripcion,
-                )
-                _generate_rag_draft_best_effort(
-                    db,
-                    effective_ai_client,
-                    tenant_id=tenant_uuid,
-                    conversation_id=conversation_id,
-                    query=texto_transcripcion,
-                )
     finally:
         db.close()
 

@@ -9,13 +9,13 @@
     "total_specs": 61,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 7,
+      "APROBADA": 5,
       "EN_PROGRESO": 0,
-      "EN_VERIFICACION": 36,
+      "EN_VERIFICACION": 38,
       "CERRADA": 10,
       "ARCHIVADA": 8
     },
-    "actualizado": "2026-09-25"
+    "actualizado": "2026-09-26"
   },
   "planes": [
     {
@@ -1302,7 +1302,7 @@
       "id": "SPEC-056",
       "titulo": "Enganche STT: sink parametrizado por destino en el stt_worker existente (sink message escribe en Message.contenido)",
       "archivo": ".swarm/specs/SPEC-056.md",
-      "estado": "APROBADA",
+      "estado": "EN_VERIFICACION",
       "fase": "F3",
       "plan": "PLAN-006",
       "sensible": true,
