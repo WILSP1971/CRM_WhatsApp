@@ -318,7 +318,14 @@ def run_call_retention_job(
     audio_candidates_found = 0
     transcript_candidates_found = 0
 
-    for tenant_id in _active_tenant_ids(db):
+    # Ver `app.services.retention_service.run_retention_job` (mismo defecto,
+    # mismo fix): `_active_tenant_ids(db)` deja una transacción implícita
+    # (autobegin) abierta; sin cerrarla, el primer `with db.begin():` del
+    # bucle falla con `InvalidRequestError` contra Postgres real.
+    tenant_ids = _active_tenant_ids(db)
+    db.rollback()
+
+    for tenant_id in tenant_ids:
         with db.begin():
             set_tenant_session(db, tenant_id)
             audio_candidates = find_audio_retention_candidates(

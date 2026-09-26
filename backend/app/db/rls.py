@@ -12,13 +12,27 @@ Patrón de política (pool-model, ADR-004):
   ALTER TABLE <tabla> ENABLE ROW LEVEL SECURITY;
   ALTER TABLE <tabla> FORCE ROW LEVEL SECURITY;
   CREATE POLICY tenant_isolation_<tabla> ON <tabla>
-      USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-      WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+      USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+      WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 
 `current_setting(..., true)` con el segundo argumento `true` evita que la
-consulta lance error si `app.tenant_id` no fue fijado (sesión "sin tenant");
-en ese caso `current_setting` devuelve NULL y la comparación `tenant_id = NULL`
-es siempre falsa → 0 filas visibles (fail-closed, tal como exige ADR-004).
+consulta lance error si `app.tenant_id` NUNCA fue fijado en la sesión (en ese
+caso devuelve NULL). PERO (CORRECCIÓN, verificado contra Postgres real): para
+un GUC personalizado (`app.tenant_id` no está declarado en `postgresql.conf`),
+una vez que la sesión/conexión lo fijó una vez con `SET LOCAL`/`set_config`
+y la transacción termina (commit/rollback), `current_setting(..., true)` en
+la SIGUIENTE transacción de esa misma conexión (reutilizada por el pool) NO
+vuelve a devolver NULL — devuelve `''` (cadena vacía), un comportamiento
+documentado de los "placeholder" GUC de PostgreSQL para parámetros
+personalizados. `''::uuid` lanza `invalid input syntax for type uuid` en vez
+de evaluarse a NULL, rompiendo el fail-closed con un error de BD real en vez
+de "0 filas silenciosamente" — confirmado en vivo (no solo en el sandbox sin
+Docker de costumbre, sino contra un Postgres real). El envoltorio
+`NULLIF(..., '')` convierte esa cadena vacía en NULL ANTES del cast, así que
+`tenant_id = NULL` sigue siendo siempre falsa → 0 filas visibles, preservando
+el fail-closed exigido por ADR-004 tanto en la primera transacción de una
+conexión nueva como en cualquier transacción posterior sobre una conexión
+reciclada por el pool.
 
 `tenants` (la tabla raíz) NO lleva `tenant_id` y por lo tanto NO lleva esta
 política: el aislamiento de qué tenants existen no aplica al mismo mecanismo
@@ -47,7 +61,9 @@ TENANT_SESSION_VAR = "app.tenant_id"
 def enable_rls_sql(table: str) -> list[str]:
     """Sentencias SQL para habilitar y forzar RLS + política de aislamiento en `table`."""
     policy_name = f"tenant_isolation_{table}"
-    predicate = f"tenant_id = current_setting('{TENANT_SESSION_VAR}', true)::uuid"
+    predicate = (
+        f"tenant_id = NULLIF(current_setting('{TENANT_SESSION_VAR}', true), '')::uuid"
+    )
     return [
         f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;",
         f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY;",

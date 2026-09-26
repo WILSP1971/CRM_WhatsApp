@@ -111,3 +111,16 @@ class Call(Base, TimestampMixin, TenantMixin, SoftDeleteMixin):
         DateTime(timezone=True), nullable=True
     )  # SPEC-041: cuándo se purgó físicamente el audio por retención; None
     # mientras no se ha purgado (nunca hubo audio, o sigue vigente)
+
+    @property
+    def audio_disponible(self) -> bool:
+        """`True` si hay un `audio_ref` asociado (sujeto a retención,
+        SPEC-041); `False` si nunca hubo audio o ya fue purgado. Propiedad
+        Python (no columna): permite que `CallOut.model_validate(call,
+        from_attributes=True)` (usado por `paginate()` en `GET /calls`, sin
+        transformación manual) derive el campo por atributo, igual que ya
+        hace explícitamente `get_call_detail` (`GET /calls/{id}`) — antes de
+        esta propiedad, `paginate()` fallaba con `ValidationError: audio_disponible
+        Field required` (confirmado contra Postgres real, `Call` no tenía
+        forma de exponer este campo derivado vía atributo simple)."""
+        return self.audio_ref is not None

@@ -31,7 +31,9 @@ from app.services.rag.ingest_service import ingest_document
 from tests.rag_ai_client_fake import FakeAIClient
 
 
-def _crear_tenant_con_documento_indexado(postgres_engine, texto: str, chunk_size=100):
+def _crear_tenant_con_documento_indexado(
+    postgres_engine, texto: str, chunk_size=100, chunk_overlap=20
+):
     tenant_id = uuid.uuid4()
     document_id = uuid.uuid4()
     with postgres_engine.begin() as conn:
@@ -63,6 +65,7 @@ def _crear_tenant_con_documento_indexado(postgres_engine, texto: str, chunk_size
                 document_id=document_id,
                 text=texto,
                 chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
             )
     return tenant_id, document_id, ai_client
 

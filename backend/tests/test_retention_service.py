@@ -104,8 +104,8 @@ def test_active_contact_is_never_a_retention_candidate_even_if_old(
 
     with _session_with_tenant(app_engine, tenant_id) as session:
         candidates = find_retention_candidates(session, retention_days=90)
+        candidate_ids = {c.id for c in candidates}
         session.rollback()
-    candidate_ids = {c.id for c in candidates}
     assert old_active_contact_id not in candidate_ids
 
 
@@ -120,8 +120,8 @@ def test_recently_inactive_contact_is_not_yet_a_candidate(
 
     with _session_with_tenant(app_engine, tenant_id) as session:
         candidates = find_retention_candidates(session, retention_days=90)
+        candidate_ids = {c.id for c in candidates}
         session.rollback()
-    candidate_ids = {c.id for c in candidates}
     assert recent_inactive_id not in candidate_ids
 
 
@@ -136,8 +136,8 @@ def test_old_inactive_non_anonymized_contact_is_a_candidate(
 
     with _session_with_tenant(app_engine, tenant_id) as session:
         candidates = find_retention_candidates(session, retention_days=90)
+        candidate_ids = {c.id for c in candidates}
         session.rollback()
-    candidate_ids = {c.id for c in candidates}
     assert old_inactive_id in candidate_ids
 
 
@@ -156,8 +156,8 @@ def test_already_anonymized_contact_is_not_a_candidate_again(
 
     with _session_with_tenant(app_engine, tenant_id) as session:
         candidates = find_retention_candidates(session, retention_days=90)
+        candidate_ids = {c.id for c in candidates}
         session.rollback()
-    candidate_ids = {c.id for c in candidates}
     assert already_anonymized_id not in candidate_ids
 
 

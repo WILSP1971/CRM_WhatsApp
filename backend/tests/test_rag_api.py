@@ -61,8 +61,11 @@ def fake_redis():
 
 
 @pytest.fixture
-def api_as_tenant(postgres_engine):
-    """Mismo patrón que `tests/test_api_v1_integration.py::api_as_tenant`."""
+def api_as_tenant(app_engine):
+    """Mismo patrón que `tests/conftest.py::api_as_tenant` (corregido:
+    `app_engine`/rol `omnicore_app` + `Session` ORM, no `postgres_engine`/
+    `Connection` de Core — ver docstring de la fixture central para el
+    detalle del bug que esto corrige, confirmado contra Postgres real)."""
 
     class _Activator:
         def __init__(self, tenant_id, user_email):
@@ -81,10 +84,13 @@ def api_as_tenant(postgres_engine):
                 )
 
             def fake_get_tenant_db():
-                with postgres_engine.connect() as conn:
-                    with conn.begin():
-                        set_tenant_session(conn, str(self.tenant_id))
-                        yield conn
+                db = Session(app_engine)
+                try:
+                    with db.begin():
+                        set_tenant_session(db, str(self.tenant_id))
+                        yield db
+                finally:
+                    db.close()
 
             app.dependency_overrides[deps.get_current_user] = fake_get_current_user
             app.dependency_overrides[deps.get_tenant_db] = fake_get_tenant_db

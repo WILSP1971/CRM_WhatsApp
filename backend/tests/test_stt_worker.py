@@ -816,7 +816,12 @@ def _indexar_documento_tenant_stt(postgres_engine, tenant_id: uuid.UUID, *, text
         with db.begin():
             _set_tenant_session(db, str(tenant_id))
             _ingest_document(
-                db, ai_client, document_id=document_id, text=texto, chunk_size=100
+                db,
+                ai_client,
+                document_id=document_id,
+                text=texto,
+                chunk_size=100,
+                chunk_overlap=20,
             )
     return document_id, ai_client
 
@@ -1180,3 +1185,442 @@ def test_process_job_uses_injected_ai_client_never_opens_real_network(
 
     assert ai_client.chat_calls, "El resumen/borrador debieron usar el ai_client inyectado"
     assert ai_client.embed_calls, "La recuperación RAG debió usar el ai_client inyectado"
+
+
+# ---------------------------------------------------------------------------
+# SPEC-056: sink parametrizado por `destino` — `_sink_call` (default/legacy,
+# cero regresión) vs `_sink_message` (nuevo, ADR-013).
+#
+# Cubre los criterios de aceptación de SPEC-056:
+#   (m) cero regresión: un job `call` (formato NUEVO, con `destino` explícito
+#       "call:{id}") persiste CallTranscript + Message de voz + pipeline IA
+#       exactamente igual que antes de SPEC-056 (mismos asserts que (a)/(g)).
+#   (n) un job SIN `destino` en absoluto (formato legacy, `from_json` sin la
+#       clave) se procesa como sink `call` sin error.
+#   (o) un job `destino="message:{id}"` escribe en `messages.contenido`/
+#       `transcripcion_estado="ok"`, y NO crea CallTranscript, NO crea un
+#       Message nuevo, NO toca `calls` (conteos de filas antes/después).
+#   (p) reprocesar el mismo job `message:{id}` ya en "ok" es no-op (no
+#       re-transcribe, no re-escribe).
+#   (q) `destino="message:{id}"` con `Message` inexistente se maneja
+#       limpiamente (error auditado, sin excepción propagada).
+# ---------------------------------------------------------------------------
+
+
+def _crear_conversation_whatsapp(engine, *, tenant_id: uuid.UUID) -> uuid.UUID:
+    """Contacto + conversación de canal `whatsapp`, mismo patrón mínimo que
+    `tests/test_whatsapp_inbound_worker.py::_crear_conversation_con_contacto`."""
+    contact_id = uuid.uuid4()
+    conversation_id = uuid.uuid4()
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO contacts (id, tenant_id, nombre, telefono) "
+                "VALUES (:id, :tenant_id, 'Cliente WhatsApp STT', :telefono)"
+            ),
+            {
+                "id": contact_id,
+                "tenant_id": tenant_id,
+                "telefono": f"57300{uuid.uuid4().hex[:7]}",
+            },
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO conversations (id, tenant_id, contact_id, canal, estado) "
+                "VALUES (:id, :tenant_id, :contact_id, 'whatsapp', 'abierta')"
+            ),
+            {"id": conversation_id, "tenant_id": tenant_id, "contact_id": contact_id},
+        )
+    return conversation_id
+
+
+def _crear_message_audio_pendiente(
+    engine,
+    *,
+    tenant_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    audio_ref: str,
+) -> uuid.UUID:
+    """Crea el `Message(tipo="audio", contenido=NULL, transcripcion_estado=
+    "pendiente")` que SPEC-055 deja persistido ANTES de encolar en
+    `stt:jobs` — MISMO estado inicial que
+    `whatsapp_inbound_worker._process_audio_message_event` produce en
+    producción real."""
+    message_id = uuid.uuid4()
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO messages "
+                "(id, tenant_id, conversation_id, remitente, contenido, tipo, "
+                " audio_ref, transcripcion_estado, estado_entrega) "
+                "VALUES (:id, :tenant_id, :conversation_id, 'contacto', NULL, "
+                " 'audio', :audio_ref, 'pendiente', 'enviado')"
+            ),
+            {
+                "id": message_id,
+                "tenant_id": tenant_id,
+                "conversation_id": conversation_id,
+                "audio_ref": audio_ref,
+            },
+        )
+    return message_id
+
+
+def test_process_job_call_sink_with_explicit_destino_no_regression(
+    postgres_engine, audio_store_tmp, stt_settings_defaults
+):
+    """(m) Cero regresión (RNF-62, criterio duro): un job con `destino`
+    EXPLÍCITO `"call:{id}"` (formato NUEVO de SPEC-055/056, en vez de
+    ausente) debe comportarse EXACTAMENTE igual que el camino legacy —
+    persiste CallTranscript + marca `calls.estado="transcrita"` + materializa
+    el Message de voz — mismos asserts que
+    `test_process_job_persists_segments_and_updates_call_estado`."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantSttCallDestinoExplicito")
+    call_id = f"call-destino-{uuid.uuid4().hex[:10]}"
+    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=call_id)
+    store_audio(audio_ref=audio_ref, audio_bytes=b"audio-call-destino-explicito")
+    call_row_id = _crear_call(
+        postgres_engine, tenant_id=tenant_id, call_id=call_id, audio_ref=audio_ref
+    )
+
+    segments = [_fake_segment(0.0, 2.0, "Hola, buenas tardes, destino explícito.")]
+    info = _fake_transcription_info()
+    fake_model = _mock_whisper_model(segments, info)
+
+    job = SttTranscriptionJob(
+        call_id=str(call_row_id),
+        audio_ref=audio_ref,
+        tenant_id=str(tenant_id),
+        destino=f"call:{call_row_id}",
+    )
+    assert job.destino == f"call:{call_row_id}"
+
+    with patch(
+        "app.services.telefonia.stt_engine._construir_whisper_model",
+        return_value=fake_model,
+    ):
+        process_job(job, session_factory=_session_factory(postgres_engine))
+
+    with postgres_engine.connect() as conn:
+        transcript_row = conn.execute(
+            sa.text(
+                "SELECT segmentos, idioma FROM call_transcripts WHERE call_id = :call_id"
+            ),
+            {"call_id": call_row_id},
+        ).fetchone()
+        call_row = conn.execute(
+            sa.text("SELECT estado FROM calls WHERE id = :id"), {"id": call_row_id}
+        ).fetchone()
+        message_row = conn.execute(
+            sa.text(
+                "SELECT id FROM messages WHERE tenant_id = :tenant_id "
+                "AND contenido = 'Hola, buenas tardes, destino explícito.'"
+            ),
+            {"tenant_id": tenant_id},
+        ).one_or_none()
+
+    assert transcript_row is not None, "Debe persistirse un call_transcript (cero regresión)"
+    assert transcript_row.idioma == "es"
+    assert call_row.estado == "transcrita"
+    assert message_row is not None, "Debe materializarse el Message de voz (cero regresión)"
+
+
+def test_process_job_legacy_json_without_destino_behaves_as_call_sink(
+    postgres_engine, audio_store_tmp, stt_settings_defaults
+):
+    """(n) Un job deserializado de un JSON SIN la clave `destino` (formato
+    legacy, `SttTranscriptionJob.from_json`) se procesa como sink `call` sin
+    error — compatibilidad hacia atrás estricta (RF-01 SPEC-056)."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantSttLegacyJson")
+    call_id = f"call-legacy-{uuid.uuid4().hex[:10]}"
+    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=call_id)
+    store_audio(audio_ref=audio_ref, audio_bytes=b"audio-legacy-json")
+    call_row_id = _crear_call(
+        postgres_engine, tenant_id=tenant_id, call_id=call_id, audio_ref=audio_ref
+    )
+
+    segments = [_fake_segment(0.0, 1.0, "Mensaje legacy sin destino.")]
+    info = _fake_transcription_info()
+    fake_model = _mock_whisper_model(segments, info)
+
+    import json as _json
+
+    legacy_raw = _json.dumps(
+        {
+            "job_id": str(uuid.uuid4()),
+            "call_id": str(call_row_id),
+            "audio_ref": audio_ref,
+            "tenant_id": str(tenant_id),
+            # SIN "enqueued_at_epoch_seconds" NI "destino": formato ANTERIOR
+            # a SPEC-055, tolerado por `from_json`.
+        }
+    )
+    job = SttTranscriptionJob.from_json(legacy_raw)
+    assert job.destino == f"call:{call_row_id}", (
+        "El default calculado por __post_init__ debe ser call:{call_id}"
+    )
+
+    with patch(
+        "app.services.telefonia.stt_engine._construir_whisper_model",
+        return_value=fake_model,
+    ):
+        process_job(job, session_factory=_session_factory(postgres_engine))
+
+    with postgres_engine.connect() as conn:
+        transcript_row = conn.execute(
+            sa.text("SELECT id FROM call_transcripts WHERE call_id = :call_id"),
+            {"call_id": call_row_id},
+        ).one_or_none()
+        call_row = conn.execute(
+            sa.text("SELECT estado FROM calls WHERE id = :id"), {"id": call_row_id}
+        ).fetchone()
+
+    assert transcript_row is not None, "Job legacy sin destino debe procesarse como sink call"
+    assert call_row.estado == "transcrita"
+
+
+def test_process_job_message_sink_updates_existing_message_without_call_artifacts(
+    postgres_engine, audio_store_tmp, stt_settings_defaults
+):
+    """(o) Un job `destino="message:{id}"` escribe la transcripción en
+    `messages.contenido`/`transcripcion_estado="ok"` del Message existente —
+    y NO crea CallTranscript, NO crea un Message nuevo, NO toca `calls`
+    (ADR-013, conteos de filas antes/después)."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageSink")
+    conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
+    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    store_audio(audio_ref=audio_ref, audio_bytes=b"audio-nota-de-voz-whatsapp")
+    message_id = _crear_message_audio_pendiente(
+        postgres_engine,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        audio_ref=audio_ref,
+    )
+
+    with postgres_engine.connect() as conn:
+        count_calls_antes = conn.execute(
+            sa.text("SELECT COUNT(*) FROM calls WHERE tenant_id = :t"),
+            {"t": tenant_id},
+        ).scalar_one()
+        count_transcripts_antes = conn.execute(
+            sa.text("SELECT COUNT(*) FROM call_transcripts WHERE tenant_id = :t"),
+            {"t": tenant_id},
+        ).scalar_one()
+        count_messages_antes = conn.execute(
+            sa.text("SELECT COUNT(*) FROM messages WHERE tenant_id = :t"),
+            {"t": tenant_id},
+        ).scalar_one()
+
+    assert count_calls_antes == 0
+    assert count_messages_antes == 1  # solo el Message(tipo="audio") pendiente
+
+    segments = [
+        _fake_segment(0.0, 1.5, "Hola, quisiera agendar una cita."),
+    ]
+    info = _fake_transcription_info()
+    fake_model = _mock_whisper_model(segments, info)
+
+    job = SttTranscriptionJob(
+        call_id=str(message_id),  # correlación transversal, SPEC-055
+        audio_ref=audio_ref,
+        tenant_id=str(tenant_id),
+        destino=f"message:{message_id}",
+    )
+
+    with patch(
+        "app.services.telefonia.stt_engine._construir_whisper_model",
+        return_value=fake_model,
+    ):
+        process_job(job, session_factory=_session_factory(postgres_engine))
+
+    with postgres_engine.connect() as conn:
+        message_row = conn.execute(
+            sa.text(
+                "SELECT contenido, transcripcion_estado, tipo FROM messages "
+                "WHERE id = :id"
+            ),
+            {"id": message_id},
+        ).fetchone()
+        count_calls_despues = conn.execute(
+            sa.text("SELECT COUNT(*) FROM calls WHERE tenant_id = :t"),
+            {"t": tenant_id},
+        ).scalar_one()
+        count_transcripts_despues = conn.execute(
+            sa.text("SELECT COUNT(*) FROM call_transcripts WHERE tenant_id = :t"),
+            {"t": tenant_id},
+        ).scalar_one()
+        count_messages_despues = conn.execute(
+            sa.text("SELECT COUNT(*) FROM messages WHERE tenant_id = :t"),
+            {"t": tenant_id},
+        ).scalar_one()
+
+    assert message_row.contenido == "Hola, quisiera agendar una cita."
+    assert message_row.transcripcion_estado == "ok"
+    assert message_row.tipo == "audio"
+
+    assert count_calls_despues == count_calls_antes == 0, (
+        "El sink message NUNCA debe crear una fila calls (ADR-013)"
+    )
+    assert count_transcripts_despues == count_transcripts_antes == 0, (
+        "El sink message NUNCA debe crear un CallTranscript (ADR-013)"
+    )
+    assert count_messages_despues == count_messages_antes == 1, (
+        "El sink message NUNCA debe crear un Message nuevo — solo ACTUALIZA "
+        "el existente (ADR-013)"
+    )
+
+
+def test_process_job_message_sink_reprocessing_already_ok_is_noop(
+    postgres_engine, audio_store_tmp, stt_settings_defaults
+):
+    """(p) Reprocesar el MISMO job `message:{id}` cuando `transcripcion_
+    estado` ya es "ok" es no-op (RF-05 SPEC-056): no re-transcribe (el motor
+    STT no se vuelve a invocar) y no re-escribe `contenido`."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageSinkIdempotente")
+    conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
+    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    store_audio(audio_ref=audio_ref, audio_bytes=b"audio-nota-de-voz-idempotente")
+    message_id = _crear_message_audio_pendiente(
+        postgres_engine,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        audio_ref=audio_ref,
+    )
+
+    segments = [_fake_segment(0.0, 1.0, "Primera transcripción.")]
+    info = _fake_transcription_info()
+    fake_model = _mock_whisper_model(segments, info)
+
+    job = SttTranscriptionJob(
+        call_id=str(message_id),
+        audio_ref=audio_ref,
+        tenant_id=str(tenant_id),
+        destino=f"message:{message_id}",
+    )
+
+    with patch(
+        "app.services.telefonia.stt_engine._construir_whisper_model",
+        return_value=fake_model,
+    ):
+        process_job(job, session_factory=_session_factory(postgres_engine))
+
+    # Reprocesar el MISMO job: el motor STT NO debe invocarse de nuevo (el
+    # mock reventaría si se llamase con side_effect de error; aquí basta con
+    # verificar que el mock de conteo de llamadas no crece Y que el
+    # `contenido` no cambia).
+    with patch(
+        "app.services.telefonia.stt_engine._construir_whisper_model",
+        return_value=fake_model,
+    ), patch("app.workers.stt_worker.increment_stt_jobs") as mock_counter:
+        process_job(job, session_factory=_session_factory(postgres_engine))
+
+    mock_counter.assert_called_once_with(resultado="duplicado")
+    # `.transcribe()` del modelo mockeado se invocó UNA sola vez en total (la
+    # primera pasada) — el reproceso NO debe volver a invocar la inferencia.
+    assert fake_model.transcribe.call_count == 1, (
+        "Reprocesar un job message ya 'ok' NO debe re-invocar la inferencia STT"
+    )
+
+    with postgres_engine.connect() as conn:
+        message_row = conn.execute(
+            sa.text("SELECT contenido, transcripcion_estado FROM messages WHERE id = :id"),
+            {"id": message_id},
+        ).fetchone()
+        count_messages = conn.execute(
+            sa.text("SELECT COUNT(*) FROM messages WHERE tenant_id = :t"),
+            {"t": tenant_id},
+        ).scalar_one()
+
+    assert message_row.contenido == "Primera transcripción."
+    assert message_row.transcripcion_estado == "ok"
+    assert count_messages == 1
+
+
+def test_process_job_message_sink_missing_message_row_handled_cleanly(
+    postgres_engine, audio_store_tmp, stt_settings_defaults
+):
+    """(q) Un job `destino="message:{id}"` cuyo `Message` no existe (defensa,
+    no debería ocurrir en producción real) se maneja limpiamente: se audita
+    como error y NO propaga la excepción."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageSinkFaltante")
+    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    store_audio(audio_ref=audio_ref, audio_bytes=b"audio-message-inexistente")
+    message_id_inexistente = uuid.uuid4()
+
+    segments = [_fake_segment(0.0, 1.0, "Texto que nunca se persiste.")]
+    info = _fake_transcription_info()
+    fake_model = _mock_whisper_model(segments, info)
+
+    job = SttTranscriptionJob(
+        call_id=str(message_id_inexistente),
+        audio_ref=audio_ref,
+        tenant_id=str(tenant_id),
+        destino=f"message:{message_id_inexistente}",
+    )
+
+    with patch(
+        "app.services.telefonia.stt_engine._construir_whisper_model",
+        return_value=fake_model,
+    ), patch("app.workers.stt_worker.increment_stt_jobs") as mock_counter:
+        # No debe propagar excepción.
+        process_job(job, session_factory=_session_factory(postgres_engine))
+
+    mock_counter.assert_called_once_with(resultado="error")
+
+
+def test_process_job_message_sink_does_not_dispatch_ai_pipeline(
+    postgres_engine, audio_store_tmp, stt_settings_defaults
+):
+    """El sink `message` NUNCA dispara sentimiento/resumen/RAG (SPEC-057,
+    fuera de alcance de SPEC-056): sin job de sentimiento encolado y sin
+    `rag_drafts` creados, aunque se inyecten `redis_client`/`ai_client`
+    reales — el sink `message` no los usa."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageSinkSinIA")
+    conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
+    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    store_audio(audio_ref=audio_ref, audio_bytes=b"audio-sin-pipeline-ia")
+    message_id = _crear_message_audio_pendiente(
+        postgres_engine,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        audio_ref=audio_ref,
+    )
+
+    segments = [_fake_segment(0.0, 1.0, "Nota de voz sin pipeline IA todavía.")]
+    info = _fake_transcription_info()
+    fake_model = _mock_whisper_model(segments, info)
+
+    job = SttTranscriptionJob(
+        call_id=str(message_id),
+        audio_ref=audio_ref,
+        tenant_id=str(tenant_id),
+        destino=f"message:{message_id}",
+    )
+    redis_client = _fakeredis_aioredis.FakeRedis(decode_responses=True)
+
+    with patch(
+        "app.services.telefonia.stt_engine._construir_whisper_model",
+        return_value=fake_model,
+    ):
+        process_job(
+            job,
+            session_factory=_session_factory(postgres_engine),
+            redis_client=redis_client,
+            ai_client=FakeAIClient(chat_response="no debería usarse"),
+        )
+
+    import asyncio
+
+    from app.core.sentiment_queue import dequeue_sentiment_job
+
+    sentiment_job = asyncio.run(
+        dequeue_sentiment_job(redis_client, tenant_id=tenant_id, timeout_seconds=0)
+    )
+    assert sentiment_job is None, "El sink message NO debe encolar sentimiento (SPEC-057)"
+
+    with postgres_engine.connect() as conn:
+        draft_count = conn.execute(
+            sa.text("SELECT count(*) FROM rag_drafts WHERE tenant_id = :tenant_id"),
+            {"tenant_id": tenant_id},
+        ).scalar_one()
+    assert draft_count == 0, "El sink message NO debe generar rag_drafts (SPEC-057)"

@@ -256,20 +256,44 @@ def client():
 
 
 @pytest.fixture
-def api_as_tenant(postgres_engine):
+def api_as_tenant(app_engine):
     """Devuelve una función `as_tenant(tenant_id, user_email="...")` que
     activa `dependency_overrides` de `get_current_user`/`get_tenant_db` con
     una sesión de Postgres real acotada a ese tenant, usable como context
     manager: `with api_as_tenant(tenant_id): ...peticiones HTTP...`.
 
-    Fixture compartido por `test_api_v1_integration.py` (SPEC-014) y
-    `test_privacy_api.py` (SPEC-021, derechos del titular) — centralizado
-    aquí para que ambos módulos lo usen sin duplicar código ni recurrir a
-    imports cruzados entre módulos de test (que `flake8` marca como F811 al
-    confundir el nombre del fixture con una redefinición del import)."""
+    Fixture compartido por `test_api_v1_integration.py` (SPEC-014),
+    `test_privacy_api.py` (SPEC-021, derechos del titular), `test_calls_api.py`
+    (SPEC-040) y otros — centralizado aquí para que todos los módulos lo usen
+    sin duplicar código ni recurrir a imports cruzados entre módulos de test
+    (que `flake8` marca como F811 al confundir el nombre del fixture con una
+    redefinición del import).
+
+    CORRECCIÓN (verificado contra Postgres real, no solo mocks/sandbox sin
+    Docker — el mismo defecto de ADR-008 que ya se documentó para
+    `two_tenants_with_data`): esta fixture usaba `postgres_engine` (rol
+    PRIVILEGIADO/owner) en vez de `app_engine` (rol `omnicore_app`,
+    NOSUPERUSER NOBYPASSRLS) para servir `get_tenant_db` — es decir, TODO
+    endpoint probado a través de `api_as_tenant` ejecutaba sus queries
+    bypaseando RLS por completo (el owner nunca está sujeto a RLS/FORCE RLS),
+    dando una falsa sensación de aislamiento cross-tenant verificado cuando en
+    realidad nunca se ejerció. Además usaba `postgres_engine.connect()`
+    (`Connection` de Core) en vez de una `Session` ORM: `Session.scalars(select(Entidad))`
+    hidrata instancias ORM completas, pero una `Connection` de Core con el
+    mismo `select(Entidad)` NO lo hace igual bajo ciertos flujos (p. ej.
+    `paginate()`, SPEC-014) — causaba `ValidationError`/`AttributeError` con
+    valores UUID crudos en vez de instancias de modelo al pasar por schemas
+    Pydantic (`CallOut`/`ContactOut`/etc.), confirmado en vivo contra
+    Postgres real. Ahora usa `app_engine` + una `Session` ORM real (mismo
+    patrón que `app.db.session.SessionLocal` en producción), ejerciendo RLS
+    de verdad y con hidratación de entidades correcta."""
+    from sqlalchemy.orm import sessionmaker
+
     from app.api import deps
     from app.db.session import set_tenant_session
     from app.main import app
+
+    _AppSessionLocal = sessionmaker(bind=app_engine, future=True)
 
     class _Activator:
         def __init__(self, tenant_id, user_email):
@@ -288,10 +312,13 @@ def api_as_tenant(postgres_engine):
                 )
 
             def fake_get_tenant_db():
-                with postgres_engine.connect() as conn:
-                    with conn.begin():
-                        set_tenant_session(conn, str(self.tenant_id))
-                        yield conn
+                db = _AppSessionLocal()
+                try:
+                    with db.begin():
+                        set_tenant_session(db, str(self.tenant_id))
+                        yield db
+                finally:
+                    db.close()
 
             app.dependency_overrides[deps.get_current_user] = fake_get_current_user
             app.dependency_overrides[deps.get_tenant_db] = fake_get_tenant_db

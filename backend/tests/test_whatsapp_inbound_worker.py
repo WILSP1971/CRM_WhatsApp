@@ -642,7 +642,12 @@ def _indexar_documento_tenant(
         with db.begin():
             set_tenant_session(db, str(tenant_id))
             ingest_document(
-                db, ai_client, document_id=document_id, text=texto, chunk_size=100
+                db,
+                ai_client,
+                document_id=document_id,
+                text=texto,
+                chunk_size=100,
+                chunk_overlap=20,
             )
     return document_id, ai_client
 

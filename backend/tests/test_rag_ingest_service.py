@@ -177,7 +177,12 @@ def test_fallo_a_mitad_de_documento_invalida_chunks_parciales(postgres_engine):
         with db.begin():
             set_tenant_session(db, str(tenant_id))
             result = ingest_document(
-                db, ai_client, document_id=document_id, text=texto, chunk_size=40
+                db,
+                ai_client,
+                document_id=document_id,
+                text=texto,
+                chunk_size=40,
+                chunk_overlap=5,
             )
 
     assert result.estado == ESTADO_ERROR
@@ -217,14 +222,24 @@ def test_reintento_es_idempotente_no_duplica_chunks_activos(postgres_engine):
         with db.begin():
             set_tenant_session(db, str(tenant_id))
             primer_resultado = ingest_document(
-                db, ai_client, document_id=document_id, text=texto, chunk_size=150
+                db,
+                ai_client,
+                document_id=document_id,
+                text=texto,
+                chunk_size=150,
+                chunk_overlap=20,
             )
 
     with Session(postgres_engine) as db:
         with db.begin():
             set_tenant_session(db, str(tenant_id))
             segundo_resultado = ingest_document(
-                db, ai_client, document_id=document_id, text=texto, chunk_size=150
+                db,
+                ai_client,
+                document_id=document_id,
+                text=texto,
+                chunk_size=150,
+                chunk_overlap=20,
             )
 
     assert primer_resultado.estado == ESTADO_INDEXADO

@@ -43,10 +43,20 @@ def set_tenant_session(db, tenant_id: str) -> None:
 
     Las políticas RLS (`app/db/rls.py`) usan
     `current_setting('app.tenant_id', true)::uuid` como predicado.
+
+    CORRECCIÓN (verificado contra PostgreSQL real, no solo mocks/sandbox sin
+    Docker): la sentencia `SET LOCAL <param> = :valor` NO admite un parámetro
+    vinculado (bind parameter) a nivel de protocolo — PostgreSQL exige un
+    literal para el valor de `SET`/`SET LOCAL`, y falla con
+    `SyntaxError: syntax error at or near "$1"` si el driver (psycopg3 vía
+    SQLAlchemy) intenta enviarlo como parámetro del protocolo extendido. Se
+    usa en su lugar la FUNCIÓN `set_config(setting, value, is_local)`
+    (equivalente exacto a `SET LOCAL` cuando `is_local=true`), que sí es una
+    llamada a función normal y admite parámetros vinculados de forma segura.
     """
     db.execute(
-        text(f"SET LOCAL {settings.tenant_session_var} = :tenant_id"),
-        {"tenant_id": str(tenant_id)},
+        text("SELECT set_config(:tenant_session_var, :tenant_id, true)"),
+        {"tenant_session_var": settings.tenant_session_var, "tenant_id": str(tenant_id)},
     )
 
 

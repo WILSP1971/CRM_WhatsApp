@@ -61,12 +61,19 @@ def _crear_documento(
     return document_id
 
 
-def _ingest(postgres_engine, tenant_id, document_id, text, ai_client, chunk_size=120):
+def _ingest(
+    postgres_engine, tenant_id, document_id, text, ai_client, chunk_size=120, chunk_overlap=15
+):
     with Session(postgres_engine) as db:
         with db.begin():
             set_tenant_session(db, str(tenant_id))
             return ingest_document(
-                db, ai_client, document_id=document_id, text=text, chunk_size=chunk_size
+                db,
+                ai_client,
+                document_id=document_id,
+                text=text,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
             )
 
 

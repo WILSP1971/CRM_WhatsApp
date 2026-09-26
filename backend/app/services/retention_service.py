@@ -160,7 +160,17 @@ def run_retention_job(
     anonymized_ids: list[str] = []
     candidates_found = 0
 
-    for tenant_id in _active_tenant_ids(db):
+    # `_active_tenant_ids(db)` ejecuta una consulta de solo lectura FUERA de
+    # cualquier `with db.begin():` explícito — el autobegin de SQLAlchemy
+    # abre una transacción implícita en ese punto. Sin cerrarla aquí, el
+    # primer `with db.begin():` del bucle falla con
+    # `InvalidRequestError: A transaction is already begun on this Session`
+    # (confirmado contra Postgres real). `rollback()` es seguro: la consulta
+    # anterior es de solo lectura (no hay nada que perder).
+    tenant_ids = _active_tenant_ids(db)
+    db.rollback()
+
+    for tenant_id in tenant_ids:
         with db.begin():
             set_tenant_session(db, tenant_id)
             candidates = find_retention_candidates(db, retention_days=days)

@@ -136,6 +136,7 @@ def test_process_job_with_matching_tenant_indexes_normally(postgres_engine):
         document_id=str(document_id),
         text="Contenido legítimo del propio tenant para indexar. " * 15,
         chunk_size=120,
+        chunk_overlap=15,
     )
 
     process_job(

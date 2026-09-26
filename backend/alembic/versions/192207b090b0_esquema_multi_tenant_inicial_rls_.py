@@ -15,7 +15,7 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-from app.db.rls import TENANT_SCOPED_TABLES, disable_rls_sql, enable_rls_sql
+from app.db.rls import disable_rls_sql, enable_rls_sql
 from app.models.embedding import EMBEDDING_DIM
 
 # revision identifiers, used by Alembic.
@@ -23,6 +23,30 @@ revision: str = "192207b090b0"
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+
+# Tablas sujetas a RLS que esta migración CREA (bug corregido: antes se
+# importaba `app.db.rls.TENANT_SCOPED_TABLES` en vivo, una lista que crece
+# con cada SPEC posterior — p. ej. `rag_drafts`/`whatsapp_accounts`/`calls`.
+# Como Alembic ejecuta esta migración PRIMERO en la cadena, intentar
+# `ALTER TABLE rag_drafts ENABLE ROW LEVEL SECURITY` antes de que esa tabla
+# exista hace fallar `alembic upgrade head` desde cero con
+# `UndefinedTable: relation "rag_drafts" does not exist` — confirmado en
+# vivo contra Postgres real). Esta lista queda CONGELADA a las tablas que
+# esta migración crea; cada migración posterior que añade una tabla nueva a
+# `TENANT_SCOPED_TABLES` ya aplica su propio `enable_rls_sql`/`disable_rls_sql`
+# sobre esa tabla en su propia `upgrade()`/`downgrade()` (verificado: SPEC-017
+# rag_drafts, SPEC-025 whatsapp_accounts, SPEC-036 calls/call_transcripts,
+# SPEC-037 pbx_lines ya lo hacen), así que no hace falta —ni es correcto—
+# que la migración inicial intente cubrir tablas que aún no existen.
+_INITIAL_TENANT_SCOPED_TABLES = [
+    "users",
+    "contacts",
+    "conversations",
+    "messages",
+    "documents",
+    "chunks",
+    "embeddings",
+]
 
 
 def _audit_columns():
@@ -302,14 +326,14 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # Row Level Security — ADR-004 (ENABLE + FORCE por tenant_id)
     # ------------------------------------------------------------------
-    for table in TENANT_SCOPED_TABLES:
+    for table in _INITIAL_TENANT_SCOPED_TABLES:
         for statement in enable_rls_sql(table):
             op.execute(statement)
 
 
 def downgrade() -> None:
     # Revertir RLS antes de dropear tablas.
-    for table in reversed(TENANT_SCOPED_TABLES):
+    for table in reversed(_INITIAL_TENANT_SCOPED_TABLES):
         for statement in disable_rls_sql(table):
             op.execute(statement)
 
