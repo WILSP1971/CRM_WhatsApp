@@ -492,6 +492,19 @@ class Settings:
             os.getenv("VOICE_NOTE_MAX_DURATION_SECONDS", "600")
         )
 
+        # --- Analytics de negocio — límite de rango (SPEC-063, PLAN-007 F1)
+        # ---
+        # `ANALYTICS_MAX_RANGE_DAYS`: tope superior (días, inclusive) del
+        # rango `[desde, hasta]` aceptado por `GET /analytics/business`
+        # (RF-02 SPEC-063, R-73 performance): acota el coste de la agregación
+        # on-demand (SPEC-062) ante un rango arbitrariamente grande pedido
+        # por un cliente. Default 366 (cubre un año calendario completo,
+        # incl. año bisiesto) — configurable por env sin cambio de código si
+        # THOR/el Lead deciden un tope distinto tras medir latencia real.
+        self.analytics_max_range_days: int = int(
+            os.getenv("ANALYTICS_MAX_RANGE_DAYS", "366")
+        )
+
     # Hosts permitidos para el servicio de IA: nombre de servicio Docker
     # (`ia`, resuelto en la red interna `ia_internal`) o loopback (para
     # ejecutar Ollama directamente en el host durante desarrollo local sin

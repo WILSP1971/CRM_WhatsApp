@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse, Response
 import structlog
 
 from app.api.ai import router as ai_router
+from app.api.analytics import router as analytics_router
 from app.api.auth import router as auth_router
 from app.api.calls import router as calls_router
 from app.api.contact_360 import router as contact_360_router
@@ -187,6 +188,15 @@ app.include_router(rag_router, prefix="/api/v1")
 # (SPEC-036..039).
 # ============================================================================
 app.include_router(calls_router, prefix="/api/v1")
+
+# ============================================================================
+# ANALYTICS DE NEGOCIO — KPIs agregados on-demand (conversaciones, tiempos de
+# respuesta, conversión, asistencia IA) parametrizados por rango de fechas y
+# canal (SPEC-063, deriva de SPEC-062). Solo lectura + solo agregados (sin
+# PII individual); JWT + RLS efectiva (get_tenant_db), igual que el resto de
+# la API. No sustituye ni toca /metrics (Prometheus, SPEC-022).
+# ============================================================================
+app.include_router(analytics_router, prefix="/api/v1")
 
 # ============================================================================
 # CANAL WHATSAPP — webhook de recepción: challenge GET + firma HMAC-SHA256 +
