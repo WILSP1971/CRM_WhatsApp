@@ -13,7 +13,11 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.metrics import REGISTRY
+from app.core.metrics import (
+    REGISTRY,
+    increment_whatsapp_audio_discarded_by_duration,
+    increment_whatsapp_media_downloads,
+)
 from app.main import app
 from app.services.ai_service import AIClient
 
@@ -114,6 +118,77 @@ def test_ai_client_embed_records_duration_histogram():
         {"operation": "embed", "model": "nomic-embed-text"},
     )
 
+    assert after == before + 1.0
+
+
+def test_metrics_endpoint_exposes_whatsapp_voice_note_metrics_without_tenant_label(
+    client,
+):
+    """SPEC-060 (observabilidad del slice de notas de voz): las dos métricas
+    nuevas (`whatsapp_media_downloads_total`/
+    `whatsapp_audio_discarded_by_duration_total`) se exponen en `/metrics` y
+    NUNCA llevan `tenant_id` como label (decisión de diseño documentada en
+    `app/core/metrics.py`, misma que ya aplica a `http_requests_total`) —
+    verificado buscando el literal `tenant_id=` en el bloque de exposición de
+    cada métrica."""
+    increment_whatsapp_media_downloads(resultado="ok")
+    increment_whatsapp_audio_discarded_by_duration()
+
+    response = client.get("/metrics")
+    assert response.status_code == 200
+
+    assert "# HELP whatsapp_media_downloads_total" in response.text
+    assert "# HELP whatsapp_audio_discarded_by_duration_total" in response.text
+    assert 'whatsapp_media_downloads_total{resultado="ok"}' in response.text
+    assert "whatsapp_audio_discarded_by_duration_total" in response.text
+
+    for line in response.text.splitlines():
+        if line.startswith("whatsapp_media_downloads_total") or line.startswith(
+            "whatsapp_audio_discarded_by_duration_total"
+        ):
+            assert "tenant_id=" not in line, (
+                "Fuga de diseño: estas métricas NUNCA deben llevar tenant_id "
+                "como label (cardinalidad no acotada / fuga cross-tenant en "
+                "un backend de métricas compartido)"
+            )
+
+
+def test_increment_whatsapp_media_downloads_counts_by_resultado():
+    before_ok = (
+        REGISTRY.get_sample_value(
+            "whatsapp_media_downloads_total", {"resultado": "ok"}
+        )
+        or 0.0
+    )
+    before_error = (
+        REGISTRY.get_sample_value(
+            "whatsapp_media_downloads_total", {"resultado": "error"}
+        )
+        or 0.0
+    )
+
+    increment_whatsapp_media_downloads(resultado="ok")
+    increment_whatsapp_media_downloads(resultado="error")
+
+    after_ok = REGISTRY.get_sample_value(
+        "whatsapp_media_downloads_total", {"resultado": "ok"}
+    )
+    after_error = REGISTRY.get_sample_value(
+        "whatsapp_media_downloads_total", {"resultado": "error"}
+    )
+
+    assert after_ok == before_ok + 1.0
+    assert after_error == before_error + 1.0
+
+
+def test_increment_whatsapp_audio_discarded_by_duration_counts():
+    before = (
+        REGISTRY.get_sample_value("whatsapp_audio_discarded_by_duration_total") or 0.0
+    )
+
+    increment_whatsapp_audio_discarded_by_duration()
+
+    after = REGISTRY.get_sample_value("whatsapp_audio_discarded_by_duration_total")
     assert after == before + 1.0
 
 

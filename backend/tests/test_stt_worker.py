@@ -1596,6 +1596,161 @@ def test_process_job_message_sink_missing_message_row_handled_cleanly(
     mock_counter.assert_called_once_with(resultado="error")
 
 
+def test_process_job_invalid_message_id_in_destino_handled_cleanly(
+    postgres_engine, audio_store_tmp, stt_settings_defaults
+):
+    """SPEC-060 (cobertura): un job con `destino="message:{...}"` cuyo
+    sufijo NO es un UUID válido (payload/job forjado o corrupto, no debería
+    ocurrir en producción real) se audita como error y NO propaga la
+    excepción — mismo criterio de robustez que `stt_job_invalid_call_id`
+    del sink `call` (RF-02 SPEC-056), aplicado a la rama de enrutado nueva
+    del sink `message`."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageIdInvalido")
+    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id="voz-id-invalido")
+    store_audio(audio_ref=audio_ref, audio_bytes=b"audio-con-destino-corrupto")
+
+    job = SttTranscriptionJob(
+        call_id="no-se-usa-en-este-camino",
+        audio_ref=audio_ref,
+        tenant_id=str(tenant_id),
+        destino="message:no-es-un-uuid-valido",
+    )
+
+    with patch("app.workers.stt_worker.increment_stt_jobs") as mock_counter:
+        # No debe propagar excepción (ValueError de uuid.UUID(...) capturada).
+        process_job(job, session_factory=_session_factory(postgres_engine))
+
+    mock_counter.assert_called_once_with(resultado="error")
+
+
+def test_process_job_message_sink_inference_failure_handled_cleanly(
+    postgres_engine, audio_store_tmp, stt_settings_defaults
+):
+    """SPEC-060 (cobertura): un fallo de `faster-whisper` DURANTE la
+    inferencia real sobre el sink `message` (análogo a
+    `test_process_job_inference_failure_is_translated_and_handled_cleanly`
+    del sink `call`) debe traducirse a `SttEngineError`, manejarse
+    limpiamente (sin propagar, sin dejar `Message.transcripcion_estado`
+    mutado a "ok") e incrementar `stt_jobs_total{resultado="error"}`."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageInferError")
+    conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
+    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    store_audio(audio_ref=audio_ref, audio_bytes=b"audio-inferencia-corrupta-voz")
+    message_id = _crear_message_audio_pendiente(
+        postgres_engine,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        audio_ref=audio_ref,
+    )
+
+    def _transcribe_side_effect(*_args, **_kwargs):
+        raise RuntimeError("fallo simulado de CTranslate2 durante la inferencia")
+
+    fake_model = _mock_whisper_model(
+        segments=None, info=None, transcribe_side_effect=_transcribe_side_effect
+    )
+
+    job = SttTranscriptionJob(
+        call_id=str(message_id),
+        audio_ref=audio_ref,
+        tenant_id=str(tenant_id),
+        destino=f"message:{message_id}",
+    )
+
+    with patch(
+        "app.services.telefonia.stt_engine._construir_whisper_model",
+        return_value=fake_model,
+    ), patch("app.workers.stt_worker.increment_stt_jobs") as mock_counter:
+        process_job(job, session_factory=_session_factory(postgres_engine))
+
+    mock_counter.assert_called_once_with(resultado="error")
+
+    with postgres_engine.connect() as conn:
+        message_row = conn.execute(
+            sa.text(
+                "SELECT contenido, transcripcion_estado FROM messages WHERE id = :id"
+            ),
+            {"id": message_id},
+        ).fetchone()
+
+    assert message_row.contenido is None
+    assert message_row.transcripcion_estado == "pendiente"
+
+
+def test_process_job_message_sink_post_transcription_race_is_handled(
+    postgres_engine, audio_store_tmp, stt_settings_defaults
+):
+    """SPEC-060 (cobertura): otro worker gana la carrera y marca
+    `transcripcion_estado="ok"` MIENTRAS este worker transcribía (ventana
+    entre la guarda previa y la escritura final) — análogo a
+    `test_process_job_race_condition_integrity_error_is_handled` del sink
+    `call`. El resultado ya calculado se descarta sin re-escribir; se
+    incrementa `stt_jobs_total{resultado="duplicado"}`."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageRacePostTx")
+    conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
+    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    store_audio(audio_ref=audio_ref, audio_bytes=b"audio-race-post-transcripcion")
+    message_id = _crear_message_audio_pendiente(
+        postgres_engine,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        audio_ref=audio_ref,
+    )
+
+    segments = [_fake_segment(0.0, 1.0, "Texto que debe descartarse.")]
+    info = _fake_transcription_info()
+    fake_model = _mock_whisper_model(segments, info)
+
+    job = SttTranscriptionJob(
+        call_id=str(message_id),
+        audio_ref=audio_ref,
+        tenant_id=str(tenant_id),
+        destino=f"message:{message_id}",
+    )
+
+    # Simula que OTRO worker gana la carrera EXACTAMENTE en la ventana entre
+    # la guarda previa (línea 704 del módulo, ya evaluada en `False` antes de
+    # llamar a `transcribe_audio_bytes`) y la escritura final (línea 737) —
+    # se marca `transcripcion_estado="ok"` justo cuando la transcripción real
+    # invoca `transcribe_audio_bytes` (parcheado para escribir en BD como
+    # side effect ANTES de devolver el resultado), de modo que la guarda
+    # POST-transcripción (no la previa) es la que detecta la carrera.
+    original_transcribe_audio_bytes = stt_engine.transcribe_audio_bytes
+
+    def _marcar_ganador_de_la_carrera(audio_bytes):
+        with postgres_engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "UPDATE messages SET contenido = 'Ganó otro worker.', "
+                    "transcripcion_estado = 'ok' WHERE id = :id"
+                ),
+                {"id": message_id},
+            )
+        return original_transcribe_audio_bytes(audio_bytes)
+
+    with patch(
+        "app.services.telefonia.stt_engine._construir_whisper_model",
+        return_value=fake_model,
+    ), patch(
+        "app.workers.stt_worker.transcribe_audio_bytes",
+        side_effect=_marcar_ganador_de_la_carrera,
+    ), patch("app.workers.stt_worker.increment_stt_jobs") as mock_counter:
+        process_job(job, session_factory=_session_factory(postgres_engine))
+
+    mock_counter.assert_called_once_with(resultado="duplicado")
+
+    with postgres_engine.connect() as conn:
+        message_row = conn.execute(
+            sa.text("SELECT contenido FROM messages WHERE id = :id"),
+            {"id": message_id},
+        ).fetchone()
+
+    assert message_row.contenido == "Ganó otro worker.", (
+        "El resultado recién calculado NUNCA debe sobrescribir el ya "
+        "persistido por el worker que ganó la carrera"
+    )
+
+
 def test_process_job_message_sink_dispatches_sentiment_job_on_transcript(
     postgres_engine, audio_store_tmp, stt_settings_defaults
 ):

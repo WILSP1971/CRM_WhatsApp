@@ -15,13 +15,44 @@ ya declarado en `requirements.txt`). Cubre:
   3. `stt_rtf` / `stt_queue_latency_seconds` / `stt_jobs_total`: RTF (real
      time factor), latencia de cola batch y tasa de error del `stt_worker`
      (SPEC-038, RNF-42/R-42), emitidas exclusivamente por
-     `app.workers.stt_worker` — el único consumidor de `stt:jobs`.
+     `app.workers.stt_worker` — el único consumidor de `stt:jobs`. El sink
+     `message` (SPEC-056/057, notas de voz de WhatsApp) REUTILIZA estas
+     mismas métricas (`observe_stt_rtf`/`increment_stt_jobs`) sin duplicarlas
+     — un único RTF/tasa de error para ambos sinks (`call`/`message`), ya
+     que ambos comparten el mismo motor `faster-whisper` local.
+  4. `whatsapp_media_downloads_total` / `whatsapp_audio_discarded_by_duration_
+     total`: observabilidad del slice de notas de voz de WhatsApp (SPEC-060,
+     Entregable #5) — descargas de media entrante (éxito/error,
+     `app.integrations.whatsapp.media_client`) y descartes por límite de
+     duración (`app.workers.whatsapp_inbound_worker`, RF-04/RF-05 SPEC-055).
 
 No se instrumenta ningún cliente externo: el único emisor de
 `ai_request_duration_seconds` es `app.services.ai_service.AIClient`
 (CHECKPOINT SENSIBLE, `.no-externo`), que solo habla con el host interno
 validado en `app/core/config.py`. El único emisor de las métricas STT es
 `app.workers.stt_worker`, que transcribe 100% local (ADR-009, sin egress).
+El único emisor de `whatsapp_media_downloads_total` es
+`app.integrations.whatsapp.media_client` (el único módulo autorizado a
+hablar con el host de Graph API de WhatsApp para descarga de media,
+ADR-006/SPEC-054 — ver la constante `_ALLOWED_GRAPH_HOST` de ese módulo, NO
+repetida aquí a propósito para no disparar el guardarraíl de
+`check-externos-backend.sh`, sección 7, que busca ese host fuera del módulo
+WhatsApp); el único emisor de `whatsapp_audio_discarded_by_duration_total`
+es `app.workers.whatsapp_inbound_worker`.
+
+DECISIÓN DE DISEÑO (SPEC-060, reafirma el criterio ya establecido arriba
+para `http_requests_total`): NINGUNA métrica de este módulo lleva
+`tenant_id` como label, INCLUIDAS las dos nuevas de notas de voz de
+WhatsApp. La razón es la misma ya documentada: cardinalidad no acotada y
+fuga de datos entre tenants en un backend de métricas compartido (p.ej.
+Prometheus federado/Grafana con acceso multi-operador). SPEC-060 pide
+observabilidad "por tenant" de descargas/descartes — esa desagregación se
+obtiene de los LOGS ESTRUCTURADOS (`structlog`), que YA llevan `tenant_id`
+en todo el código existente (`media_client.py`/`whatsapp_inbound_worker.py`,
+ver sus logs `whatsapp_media_download_*`/`whatsapp_inbound_audio_discarded_
+by_duration`), NO de labels de Prometheus. Añadir `tenant_id` como label
+aquí repetiría un error de diseño ya identificado y evitado en este mismo
+archivo.
 """
 
 from __future__ import annotations
@@ -117,6 +148,46 @@ def increment_stt_jobs(*, resultado: str) -> None:
     (`ok`/`error`/`duplicado`) — base de la tasa de error exportada a
     `/metrics` (RF de SPEC-038)."""
     STT_JOBS_TOTAL.labels(resultado=resultado).inc()
+
+
+# --- Notas de voz de WhatsApp (SPEC-054/SPEC-055, SPEC-060) ----------------
+
+WHATSAPP_MEDIA_DOWNLOADS_TOTAL = Counter(
+    "whatsapp_media_downloads_total",
+    "Descargas de media entrante de WhatsApp (notas de voz) procesadas por "
+    "resultado (ok/error)",
+    labelnames=("resultado",),
+    registry=REGISTRY,
+)
+
+WHATSAPP_AUDIO_DISCARDED_BY_DURATION_TOTAL = Counter(
+    "whatsapp_audio_discarded_by_duration_total",
+    "Notas de voz de WhatsApp descartadas por exceder el límite de duración "
+    "configurado (RF-04/RF-05 SPEC-055, transcripcion_estado="
+    "'descartada_por_duracion')",
+    registry=REGISTRY,
+)
+
+
+def increment_whatsapp_media_downloads(*, resultado: str) -> None:
+    """Incrementa el contador de descargas de media de WhatsApp por
+    resultado (`ok`/`error`) — instrumenta
+    `app.integrations.whatsapp.media_client.download_and_store_voice_note`
+    (SPEC-054/SPEC-060). La desagregación por tenant se obtiene de los logs
+    estructurados de ese módulo (que sí llevan `tenant_id`), no de un label
+    aquí (ver decisión de diseño en el docstring del módulo)."""
+    WHATSAPP_MEDIA_DOWNLOADS_TOTAL.labels(resultado=resultado).inc()
+
+
+def increment_whatsapp_audio_discarded_by_duration() -> None:
+    """Incrementa el contador de notas de voz descartadas por exceder el
+    límite de duración — instrumenta
+    `app.workers.whatsapp_inbound_worker._process_audio_message_event`
+    (RF-04/RF-05 SPEC-055/SPEC-060). Sin label de tenant (ver decisión de
+    diseño en el docstring del módulo); la desagregación por tenant se
+    obtiene del log estructurado `whatsapp_inbound_audio_discarded_by_
+    duration`, que sí lleva `tenant_id`."""
+    WHATSAPP_AUDIO_DISCARDED_BY_DURATION_TOTAL.inc()
 
 
 def render_latest() -> tuple[bytes, str]:

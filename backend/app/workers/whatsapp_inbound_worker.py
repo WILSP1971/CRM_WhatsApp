@@ -74,7 +74,10 @@ descrito arriba, RNF-64) — `_process_audio_message_event`:
      contacto vía `graph_client.send_text_message` (mismo transporte de
      SPEC-029, sin egress nuevo), `transcripcion_estado=
      "descartada_por_duracion"`, NO se encola en `stt:jobs`, auditado
-     (log). R-68 (duración desconocida, documentado en `inbound_parser.py`):
+     (log + `app.core.metrics.increment_whatsapp_audio_discarded_by_
+     duration`, SPEC-060, sin label de tenant — ver decisión de diseño en
+     `app/core/metrics.py`). R-68 (duración desconocida, documentado en
+     `inbound_parser.py`):
      Meta NUNCA envía duración en el payload real hoy, así que
      `event.audio_duracion_seg` es SIEMPRE `None` en producción — en ese
      caso NO hay dato para comparar contra el límite en este punto de la
@@ -136,6 +139,7 @@ from sqlalchemy.orm import Session
 
 from app.core.async_utils import run_coroutine_best_effort
 from app.core.config import get_settings
+from app.core.metrics import increment_whatsapp_audio_discarded_by_duration
 from app.core.redis_client import get_redis_client
 from app.core.stt_queue import enqueue_stt_job
 from app.core.whatsapp_queue import (
@@ -749,6 +753,7 @@ def _process_audio_message_event(
             # silencioso — NO se encola STT.
             message.transcripcion_estado = "descartada_por_duracion"
             db.flush()
+            increment_whatsapp_audio_discarded_by_duration()
             logger.warning(
                 "whatsapp_inbound_audio_discarded_by_duration",
                 tenant_id=str(tenant_id),

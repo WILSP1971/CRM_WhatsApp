@@ -40,6 +40,7 @@ import json
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 
 import fakeredis.aioredis
 import httpx
@@ -1643,6 +1644,63 @@ def test_process_job_audio_exceeds_limit_discards_with_auto_reply(
 
     assert len(sent_messages) == 1, "Debe enviarse exactamente una auto-respuesta"
     assert "nota de voz" in sent_messages[0]["text"]["body"].lower()
+
+
+def test_process_job_audio_exceeds_limit_increments_discard_metric(
+    postgres_engine, monkeypatch, audio_store_tmp
+):
+    """SPEC-060 (observabilidad): el descarte por límite de duración
+    incrementa `whatsapp_audio_discarded_by_duration_total` exactamente una
+    vez — sin label de tenant (ver decisión de diseño en
+    `app/core/metrics.py`)."""
+    from app.workers import whatsapp_inbound_worker as worker_module
+
+    tenant_id = _crear_tenant(postgres_engine, "TenantWaAudioMetricaDescarte")
+    phone_number_id = f"pni-audiometrica-{uuid.uuid4().hex[:10]}"
+    wamid = f"wamid.audio.{uuid.uuid4().hex}"
+    _crear_whatsapp_account(postgres_engine, tenant_id, phone_number_id)
+
+    media_client = _build_graph_media_client(_media_download_handler())
+
+    def _fake_download(db, message, *, media_id, client=None):
+        from app.integrations.whatsapp.media_client import (
+            download_and_store_voice_note as real_download,
+        )
+
+        return real_download(db, message, media_id=media_id, client=media_client)
+
+    monkeypatch.setattr(worker_module, "download_and_store_voice_note", _fake_download)
+
+    sent_messages: list[dict] = []
+    graph_client = _build_graph_api_client_capturing_sends(sent_messages)
+    original_process_audio = worker_module._process_audio_message_event
+
+    def _process_audio_with_graph_client(db, event, *, event_id, redis_client=None):
+        return original_process_audio(
+            db,
+            event,
+            event_id=event_id,
+            redis_client=redis_client,
+            graph_client=graph_client,
+        )
+
+    monkeypatch.setattr(
+        worker_module, "_process_audio_message_event", _process_audio_with_graph_client
+    )
+
+    redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    job = _audio_inbound_job(phone_number_id=phone_number_id, wamid=wamid, duration=900)
+
+    with patch(
+        "app.workers.whatsapp_inbound_worker.increment_whatsapp_audio_discarded_by_duration"
+    ) as mock_metric:
+        process_job(
+            job,
+            session_factory=_session_factory(postgres_engine),
+            redis_client=redis_client,
+        )
+
+    mock_metric.assert_called_once_with()
 
 
 # (d) reentrega del mismo wamid no crea segundo Message ni segundo job STT

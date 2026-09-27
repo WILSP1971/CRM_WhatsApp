@@ -48,6 +48,16 @@ CHECKPOINT C3 (secretos): el `access_token` (Bearer) viaja SOLO en el header
 `Authorization` de ambos GETs; nunca se incluye en logs (`structlog` aquí
 jamás recibe el token como campo) ni en mensajes de excepción.
 
+Observabilidad (SPEC-060): `download_and_store_voice_note` incrementa
+`whatsapp_media_downloads_total{resultado="ok"|"error"}`
+(`app.core.metrics.increment_whatsapp_media_downloads`) en cada resolución
+final de la descarga (éxito, fallo de `fetch_media` o fallo de
+`audio_store.store_audio`) — sin label de tenant (ver decisión de diseño en
+`app/core/metrics.py`); la desagregación por tenant vive en los logs
+estructurados de este módulo, que sí llevan `tenant_id`. El no-op de
+idempotencia (`message.audio_ref` ya poblado) NO incrementa el contador: no
+hubo una descarga nueva que contar.
+
 Nota P5 (transcodificación OGG/Opus, verificado al implementar esta SPEC):
 las notas de voz de WhatsApp llegan típicamente en OGG/Opus. Se revisó el
 código real de `faster_whisper` (dependencia `app/services/telefonia/
@@ -76,6 +86,7 @@ import structlog
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.metrics import increment_whatsapp_media_downloads
 from app.integrations.whatsapp.graph_client import (
     GraphApiError,
     GraphApiHostError,
@@ -400,6 +411,7 @@ def download_and_store_voice_note(
         )
         message.transcripcion_estado = "error"
         db.flush()
+        increment_whatsapp_media_downloads(resultado="error")
         return message
 
     audio_ref = audio_store.build_audio_ref(
@@ -416,6 +428,7 @@ def download_and_store_voice_note(
         )
         message.transcripcion_estado = "error"
         db.flush()
+        increment_whatsapp_media_downloads(resultado="error")
         return message
 
     message.audio_ref = audio_ref
@@ -428,4 +441,5 @@ def download_and_store_voice_note(
         tenant_id=str(message.tenant_id),
         mime_type=downloaded.mime_type,
     )
+    increment_whatsapp_media_downloads(resultado="ok")
     return message
