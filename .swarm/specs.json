@@ -1,18 +1,18 @@
 {
   "proyecto": "CRM_WhatsApp — OmniCore AI",
   "clasificacion": "SENSIBLE",
-  "actualizado": "2026-09-25T00:00:00-05:00",
+  "actualizado": "2026-09-27T00:00:00-05:00",
   "contadores": {
-    "next_plan": 7,
-    "next_spec": 62,
+    "next_plan": 8,
+    "next_spec": 67,
     "next_adr": 14,
-    "total_specs": 61,
+    "total_specs": 66,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 0,
+      "APROBADA": 4,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 34,
-      "CERRADA": 19,
+      "CERRADA": 20,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-09-27"
@@ -152,6 +152,23 @@
         "ADR-013"
       ],
       "nota": "Reemplaza el alcance de PLAN-005 (archivado por falta de GPU). Reutiliza stt_engine.py, audio_store.py cifrado (SPEC-035), retencion SPEC-041 y el pipeline IA local (SPEC-017/018/019/028/029). La nota de voz se modela como extension aditiva de Message (tipo audio + audio_ref opcional), NO como call/call_transcript. Enganche STT: sink parametrizado por 'destino' en el stt_worker existente (call/message), sin tocar stt_engine.py. Idempotencia por wamid (ADR-007, sin call_id). Descarga de media desde graph.facebook.com dentro del modulo WhatsApp ya autorizado (ADR-006) - SIN egress nuevo. Respuesta SOLO texto (TTS aplazado, P2). Limite 10 min con descarte amable (P1). NO genera specs hasta 'APROBADO PLAN-006'."
+    },
+    {
+      "id": "PLAN-007",
+      "titulo": "CRM Analytics: dashboard de metricas de NEGOCIO (conversaciones, tiempos de respuesta, tasa de conversion) sobre datos REALES por tenant (RLS), on-demand con filtro de fechas - reemplaza el mock de AnalyticsPage",
+      "archivo": ".swarm/PLAN-007.md",
+      "estado": "APROBADO",
+      "origen": "prompt-lab/prompts/PROMPT-007-CRM-ANALYTICS.md",
+      "sensible": true,
+      "specs_propuestas": [
+        "SPEC-062",
+        "SPEC-063",
+        "SPEC-064",
+        "SPEC-065",
+        "SPEC-066"
+      ],
+      "adrs_recomendados": [],
+      "nota": "Dashboard de metricas de NEGOCIO (no tecnico: distinto de Prometheus/metrics SPEC-022). Capa de servicio de agregacion (SPEC-062) + endpoint REST parametrizado por rango+canal (SPEC-063) + AnalyticsPage a datos reales por feature-flag VITE_USE_REAL_API (SPEC-064) + pruebas/seguridad/perf/no-regresion (SPEC-065) + docs/deploy (SPEC-066). Toda agregacion corre bajo RLS efectiva (rol omnicore_app NOSUPERUSER NOBYPASSRLS, tenant_id del JWT fijado por get_tenant_db) - PROHIBIDO bypass con rol owner (bug recurrente documentado en retention_service/call_retention_service). Decisiones VINCULANTES del Lead: Q1=conversion es conversacion cerrada (estado=cerrada), tasa=cerradas/totales, CERO dominio nuevo, sin ADR de dominio; Q2=on-demand con filtro de fecha (no tiempo real/WebSocket); Q3=REEMPLAZAR el mock de AnalyticsPage (kpis/analytics/sales.json, SPEC-008) por datos reales por feature-flag, misma ruta, flag OFF=mock intacto; Q4=presets hoy/7d/30d + rango custom. Tiempos de respuesta derivados de messages (contacto -> siguiente saliente agente/ia) con casos limite. Sin IA nueva (senales de IA leidas de columnas persistidas). NO genera specs (implementacion) hasta 'APROBADO PLAN-007'."
     }
   ],
   "specs": [
@@ -1435,6 +1452,118 @@
       "depende_de": [
         "SPEC-058",
         "SPEC-060"
+      ]
+    },
+    {
+      "id": "SPEC-062",
+      "titulo": "Capa de servicio de agregacion de metricas de negocio (analytics_service): conversaciones, tiempos de respuesta y conversion bajo RLS efectiva",
+      "archivo": ".swarm/specs/SPEC-062.md",
+      "estado": "CERRADA",
+      "fase": "F0",
+      "plan": "PLAN-007",
+      "sensible": true,
+      "responsable": "BLACK PANTHER",
+      "revisan": [
+        "CAPTAIN AMERICA",
+        "THOR",
+        "HAWKEYE",
+        "BLACK WIDOW",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-012",
+        "SPEC-014",
+        "SPEC-025"
+      ]
+    },
+    {
+      "id": "SPEC-063",
+      "titulo": "Endpoint(s) API REST de metricas de negocio: router analytics (JWT + RLS) parametrizado por rango de fechas y canal",
+      "archivo": ".swarm/specs/SPEC-063.md",
+      "estado": "APROBADA",
+      "fase": "F1",
+      "plan": "PLAN-007",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "THOR",
+        "HAWKEYE",
+        "BLACK WIDOW",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-062",
+        "SPEC-013",
+        "SPEC-014"
+      ]
+    },
+    {
+      "id": "SPEC-064",
+      "titulo": "SPA: AnalyticsPage a datos reales por feature-flag (reemplaza el mock, Q3) - KPIs, series, desglose por canal, selector de rango hoy/7d/30d+custom",
+      "archivo": ".swarm/specs/SPEC-064.md",
+      "estado": "APROBADA",
+      "fase": "F2",
+      "plan": "PLAN-007",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "DAREDEVIL",
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-063",
+        "SPEC-020",
+        "SPEC-031"
+      ]
+    },
+    {
+      "id": "SPEC-065",
+      "titulo": "Pruebas + seguridad + performance + no-regresion del dashboard de metricas de negocio (exactitud, RLS cross-tenant, latencia THOR, cero regresion #1-#6 y /metrics)",
+      "archivo": ".swarm/specs/SPEC-065.md",
+      "estado": "APROBADA",
+      "fase": "F3",
+      "plan": "PLAN-007",
+      "sensible": true,
+      "responsable": "HAWKEYE",
+      "revisan": [
+        "THOR",
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "DAREDEVIL",
+        "CAPTAIN AMERICA"
+      ],
+      "depende_de": [
+        "SPEC-062",
+        "SPEC-063",
+        "SPEC-064"
+      ]
+    },
+    {
+      "id": "SPEC-066",
+      "titulo": "Documentacion, runbook, notas OpenAPI, guia de feature-flag y deploy on-prem del dashboard de metricas de negocio",
+      "archivo": ".swarm/specs/SPEC-066.md",
+      "estado": "APROBADA",
+      "fase": "F4",
+      "plan": "PLAN-007",
+      "sensible": true,
+      "responsable": "QUICKSILVER",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "HAWKEYE",
+        "DAREDEVIL"
+      ],
+      "depende_de": [
+        "SPEC-062",
+        "SPEC-063",
+        "SPEC-064",
+        "SPEC-065"
       ]
     }
   ],
