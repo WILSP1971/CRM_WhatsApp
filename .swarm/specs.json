@@ -11,11 +11,11 @@
       "PROPUESTA": 0,
       "APROBADA": 0,
       "EN_PROGRESO": 0,
-      "EN_VERIFICACION": 37,
-      "CERRADA": 16,
+      "EN_VERIFICACION": 34,
+      "CERRADA": 19,
       "ARCHIVADA": 8
     },
-    "actualizado": "2026-09-26"
+    "actualizado": "2026-09-27"
   },
   "planes": [
     {
@@ -1238,7 +1238,7 @@
       "id": "SPEC-053",
       "titulo": "Modelo de datos: extension aditiva de Message para nota de voz de WhatsApp (tipo audio + audio_ref)",
       "archivo": ".swarm/specs/SPEC-053.md",
-      "estado": "EN_VERIFICACION",
+      "estado": "CERRADA",
       "fase": "F0",
       "plan": "PLAN-006",
       "sensible": true,
@@ -1258,7 +1258,7 @@
       "id": "SPEC-054",
       "titulo": "Descarga de media de WhatsApp (transporte, sin egress nuevo) + almacenamiento cifrado",
       "archivo": ".swarm/specs/SPEC-054.md",
-      "estado": "EN_VERIFICACION",
+      "estado": "CERRADA",
       "fase": "F1",
       "plan": "PLAN-006",
       "sensible": true,
@@ -1280,7 +1280,7 @@
       "id": "SPEC-055",
       "titulo": "inbound_parser extendido a type==audio + limite de duracion + encolado en stt:jobs",
       "archivo": ".swarm/specs/SPEC-055.md",
-      "estado": "EN_VERIFICACION",
+      "estado": "CERRADA",
       "fase": "F2",
       "plan": "PLAN-006",
       "sensible": true,
