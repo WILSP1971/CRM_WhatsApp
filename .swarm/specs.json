@@ -9,10 +9,10 @@
     "total_specs": 61,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 2,
+      "APROBADA": 0,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 37,
-      "CERRADA": 14,
+      "CERRADA": 16,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-09-26"
@@ -1394,7 +1394,7 @@
       "id": "SPEC-060",
       "titulo": "Pruebas + seguridad + observabilidad del slice de notas de voz (cero regresion #1-#4)",
       "archivo": ".swarm/specs/SPEC-060.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F7",
       "plan": "PLAN-006",
       "sensible": true,
@@ -1421,7 +1421,7 @@
       "id": "SPEC-061",
       "titulo": "Documentacion, runbook, simulador de nota de voz y deploy on-prem",
       "archivo": ".swarm/specs/SPEC-061.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F8",
       "plan": "PLAN-006",
       "sensible": true,

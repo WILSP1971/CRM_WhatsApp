@@ -825,6 +825,62 @@ curl -s http://localhost:8000/metrics | head -30
 
 ---
 
+## Entregable #5 — Notas de voz de WhatsApp: deploy on-prem
+
+### Superficie de red expuesta (verificación)
+
+El Entregable #5 (SPEC-053..061) implementa ingesta, almacenamiento cifrado y transcripción de notas de voz de WhatsApp. **No introduce ningún servicio nuevo ni puerto expuesto adicional** sobre lo que ya hay en Entregable #3/4:
+
+- **Webhook HTTPS (ya existente):** `/api/v1/whatsapp/webhook` recibe notas de voz con `type=="audio"` en el mismo puerto 8000 (API FastAPI)
+- **Descarga de media (ya existente):** `graph.facebook.com` (ADR-006, WHATSAPP_TOKEN, mismo que envíos de WhatsApp)
+- **Almacén de audio (ya existente):** volumen `/audio_store` en `whatsapp_inbound_worker`/`stt_worker` (mismo almacén cifrado que grabaciones de PBX)
+- **STT transcripción (ya existente):** `stt_worker` en red `ia_internal` (mismo que Entregable #4, sin egress nuevo)
+
+**Verificación post-deploy:**
+
+```bash
+# 1. Confirmar que SOLO el webhook HTTPS está expuesto
+docker compose port api
+# Salida esperada: 0.0.0.0:8000
+
+# 2. Confirmar que NO hay puertos nuevos expuestos
+docker compose ps | grep -E "whatsapp_inbound_worker|stt_worker"
+# Ambos SIN "PORTS" abiertos (red interna)
+
+# 3. Confirmar que ia_internal es red interna
+docker compose inspect ia_internal | grep -i "internal.*true"
+# Debe devolver "true"
+
+# 4. Confirmar que check-externos pasa
+make check-externos
+# Salida: ✓ APROBADO (cero referencias a APIs externas de IA)
+```
+
+**Variables de entorno añadidas (si no existían):**
+
+- `VOICE_NOTE_MAX_DURATION_SECONDS` (default: 600) — límite de duración en ingesta
+- `AUDIO_RETENTION_DAYS` (default: 30) — retención de mensajes de audio, reutiliza el job existente `run_call_retention_job`
+- `AUDIO_ENCRYPTION_KEY` (ya existente desde Entregable #4) — cifrado del almacén
+
+No hay secretos nuevos introducidos. Todos son rotables por los procedimientos estándar (restarts ordenados).
+
+**Deployment (sin cambios):**
+
+```bash
+# Standard docker compose up (con whatsapp_inbound_worker y stt_worker ya en el archivo)
+docker compose up -d
+
+# Verificar salud de todos los servicios
+docker compose ps  # Todos deben estar "Up" o "(healthy)"
+
+# Probar webhook en local (ver RUNBOOK_WHATSAPP.md sección 7/8)
+export WHATSAPP_APP_SECRET=$(openssl rand -hex 32)
+export WEBHOOK_URL=http://localhost:8000/api/v1/whatsapp/webhook
+python backend/tools/wa_webhook_simulator.py --audio
+```
+
+---
+
 ## Escalada y contactos
 
 Si un incidente requiere ayuda especializada:
