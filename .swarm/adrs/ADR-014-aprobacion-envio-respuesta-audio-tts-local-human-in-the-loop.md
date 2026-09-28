@@ -67,12 +67,21 @@ las columnas del audio **entrante** (SPEC-053/054/058); `config.py` líneas 420�
    local. La **subida** la realiza **solo** `app/integrations/whatsapp/` a `graph.facebook.com` (ADR-006) —
    **cero egress nuevo**. TTS de terceros **PROHIBIDO** (extiende ADR-009/ADR-012).
 
-4. **Motor = el validado por la prueba de viabilidad de THOR (SPEC-067) (Q3).** Piper es el candidato principal
-   y Coqui la comparativa; si ambos incumplen el techo con calidad es-CO aceptable en CPU, se evalúa un fallback
-   ligero (eSpeak-NG) y/o el **plan de contingencia escalonado (R-83)**: relajar el techo (best-effort, el audio
-   es asíncrono) / degradar de motor / acotar la longitud sintetizable / como último recurso caer a "solo texto"
-   y aplazar — **decisión final del Lead con la evidencia de SPEC-067**. Esta ADR registra el motor una vez F0
-   entregue su decisión.
+4. **Motor decidido (Q3, evidencia de SPEC-067): Piper TTS 1.8.0, voz `es_ES-davefx-medium`.** Única combinación
+   motor+voz de las evaluadas (4 voces Piper + Coqui `es/css10/vits`) que cumple el techo ≤10s en las 8 categorías
+   de guion probadas (peor caso p95 = 7.19s); cumple ≤5s en 6 de 8. Coqui excede el techo en ambos guiones largos
+   y su vocabulario **no incluye dígitos** (descarta cifras silenciosamente) — un modo de fallo más peligroso que
+   el de Piper (que las pronuncia, aunque mal, si no se normalizan antes). El Lead confirmó `es_ES-davefx-medium`
+   (mejor rendimiento medido) sobre la alternativa `es_MX-ald-medium` (acento más cercano a LatAm, pero falla por
+   poco el techo de 10s en el guion más largo probado, 10.137s). **`PIPER_VOICE=es_CO-pablo-medium` de `config.py`
+   no existe en el catálogo real de Piper (404) — no hay ninguna voz colombiana auténtica disponible hoy en
+   ninguna librería evaluada; se documenta como trade-off de acento aceptado, no como error a corregir.**
+   Requisito nuevo descubierto (SPEC-067): el guion debe **normalizarse** (cifras/siglas expandidas a palabras)
+   antes de sintetizar — ninguna voz las pronuncia bien en crudo; se incorpora al alcance de SPEC-069.
+   El **plan de contingencia (R-83)** no se activó de forma dura (Piper sí es viable); se aplica preventivamente
+   la vía "acotar longitud sintetizable" (~650–800 caracteres, el rango probado) y se deja preparada la vía
+   "relajar el techo a best-effort" como salvaguarda si la concurrencia real (no medida aquí por falta de acceso
+   a Docker en el sandbox del spike) resulta peor que la estimada — a re-validar en SPEC-071.
 
 5. **No persistir el clip por defecto (herencia ADR-012 §5).** Basta el guion aprobado (que ya vive en
    `rag_drafts`/`Message`). Si por auditoría se decide persistir, se rige por el **mismo `audio_store.py` cifrado
