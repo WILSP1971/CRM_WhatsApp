@@ -144,10 +144,15 @@ check_pattern() {
 
     echo -e "${YELLOW}  → Buscando ${violation_type}: '${pattern}'${NC}"
 
-    # Buscar en archivos de código (excluyendo tests: ver nota arriba)
+    # Buscar en archivos de código (excluyendo tests: ver nota arriba, y
+    # `.venv`/`venv`: son dependencias de terceros instaladas, no código de
+    # este proyecto — su propio código fuente puede mencionar dominios como
+    # `api.openai.com` de forma legítima, p.ej. `huggingface_hub` soporta
+    # múltiples proveedores de inferencia en su SDK sin que este proyecto
+    # los use; hallazgo THOR, SPEC-067).
     if grep -r --include="${file_type}" "${pattern}" "${BACKEND_DIR}" 2>/dev/null \
         | grep -v "node_modules" | grep -v ".git" | grep -v "__pycache__" \
-        | grep -v -E "(^|/)tests/"; then
+        | grep -v -E "(^|/)tests/" | grep -v -E "(^|/)\.?venv/"; then
         echo -e "${RED}    ✗ FALLO: encontrado '${pattern}' en ${file_type}${NC}"
         EXIT_CODE=1
     fi

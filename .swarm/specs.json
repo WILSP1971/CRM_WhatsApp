@@ -9,10 +9,10 @@
     "total_specs": 72,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 7,
+      "APROBADA": 6,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 24,
+      "CERRADA": 25,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-09-28"
@@ -1590,7 +1590,7 @@
       "id": "SPEC-067",
       "titulo": "Prueba de viabilidad de TTS local en CPU (THOR): Piper vs Coqui, voz es-CO, calidad+latencia vs techo, decision de motor",
       "archivo": ".swarm/specs/SPEC-067.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F0",
       "plan": "PLAN-008",
       "sensible": true,

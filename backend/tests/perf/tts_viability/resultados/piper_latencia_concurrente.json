@@ -1,0 +1,18 @@
+{
+  "motor": "piper",
+  "voz": "es_ES-davefx-medium",
+  "condicion": "CON carga CPU sintetica concurrente (3 procesos burn-CPU, proxy de STT batch+RAG+sentimiento; maquina de 4 cores; load average subio de ~0 a ~4.4)",
+  "nota_limitacion": "No se pudieron correr los workers reales (stt_worker.py/rag_ingest_worker.py/sentiment_worker.py) simultaneamente en este sandbox (sin acceso a Docker/Redis/Postgres orquestados, ver notas_instalacion.md). Se uso una carga CPU sintetica (3 procesos python puros saturando CPU) como proxy razonado, no como medicion exacta del workload real.",
+  "guiones_medidos_parcialmente": true,
+  "guiones": {
+    "corta_01": {"categoria": "corta", "synth_media_con_carga_s": 0.824, "synth_media_sin_carga_s": 0.433, "delta_pct": 90.5},
+    "corta_02": {"categoria": "corta", "synth_media_con_carga_s": 0.530, "synth_media_sin_carga_s": 0.274, "delta_pct": 93.2},
+    "corta_03": {"categoria": "corta", "synth_media_con_carga_s": 0.662, "synth_media_sin_carga_s": 0.345, "delta_pct": 91.9},
+    "media_01": {"categoria": "media", "synth_media_con_carga_s": 2.332, "synth_media_sin_carga_s": 1.182, "delta_pct": 97.3},
+    "media_02": {"categoria": "media", "synth_media_con_carga_s": 2.432, "synth_media_sin_carga_s": 1.196, "delta_pct": 103.4},
+    "media_03": {"categoria": "media", "synth_media_con_carga_s": 2.510, "synth_media_sin_carga_s": 1.590, "delta_pct": 57.9},
+    "larga_01": {"categoria": "larga", "synth_media_con_carga_s": 6.430, "synth_media_sin_carga_s": 3.648, "delta_pct": 76.3},
+    "larga_02": {"categoria": "larga", "nota": "no medido: el proceso de benchmark se corto por timeout del comando (90s) antes de llegar a este guion; extrapolando el patron de larga_01 (+76%) sobre el baseline sin carga (3.406s), se estimaria ~6.0s de sintesis, +transcode ffmpeg estatico ~2.3s = ~8.3s e2e, bajo el techo de 10s pero con margen reducido"}
+  },
+  "conclusion_dimensionamiento": "Con 3 procesos CPU concurrentes en una maquina de 4 cores, la latencia de sintesis de Piper (voz mas rapida evaluada) sube en promedio ~87% (rango +58%..+103%). Los guiones 'largos' (que sin carga ya rozan 6-7s de e2e con transcodificacion) superarian el techo de 10s bajo contencion sin throttling (proyeccion: 6.4s synth + ~3s transcode ffmpeg estatico = ~9.4s solo con UN guion largo; con contencion adicional de otro job largo en paralelo, se excede el techo). Esto respalda limitar la concurrencia de 'tts:jobs' a 1 job TTS a la vez en esta maquina de 4 cores mientras corren STT/RAG/sentimiento, y/o reservar explicitamente >=1 core para TTS (throttling), y/o acotar longitud de guiones largos (bajar a resumen si excede ~500 caracteres) como mitigacion adicional."
+}

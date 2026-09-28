@@ -46,6 +46,15 @@ backend/venv/
 backend/dist/
 backend/*.egg-info/
 
+# Spike de viabilidad TTS (SPEC-067) — artefactos binarios grandes y
+# reproducibles (venv aislado, modelos de voz descargados, binario de
+# ffmpeg, audio generado): se conservan los docs/scripts/tablas de
+# resultados, no los binarios (ver README del spike).
+backend/tests/perf/tts_viability/.venv_coqui/
+backend/tests/perf/tts_viability/voices/
+backend/tests/perf/tts_viability/tools/
+backend/tests/perf/tts_viability/audio_out/
+
 # Docker Compose (volúmenes locales — nunca commitear datos)
 /db_data/
 /redis_data/

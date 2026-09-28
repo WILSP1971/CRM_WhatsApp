@@ -1,8 +1,7 @@
 # SPEC-067 — Prueba de viabilidad de TTS local en CPU (THOR): Piper vs Coqui (fallback ligero), voz es-CO, calidad + latencia real vs techo ≤5–10 s, decisión de motor documentada 🔴 SENSIBLE
 
-- Estado: APROBADA · Responsable: THOR · Colaboran: BLACK PANTHER, CAPTAIN AMERICA, HAWKEYE, BLACK WIDOW, WOLVERINE · Prioridad: ALTA · Tipo: SPIKE/PERFORMANCE · Fase: F0
+- Estado: CERRADA — decisión de motor: **Piper TTS 1.8.0, voz `es_ES-davefx-medium`** (única combinación que cumple el techo ≤10s en las 8 categorías de guion probadas; confirmada por el Lead sobre la alternativa `es_MX-ald-medium`, que falla por poco el techo en el guion más largo). `es_CO-pablo-medium` de `config.py` no existe (404). Hallazgos para SPEC-069: normalización previa de cifras/siglas requerida; concurrencia inicial `tts:jobs`=1 (no medida con workers reales, sin Docker en este sandbox); `ffmpeg` no está en `Dockerfile` (gap a cerrar). Ninguna vía dura de contingencia (R-83) se activó; se aplica preventivamente "acotar longitud" (~650-800 caracteres). Fix colateral: `check-externos-backend.sh` excluía `tests/` pero no `.venv/`, causando falsos positivos con `huggingface_hub` (dependencia transitiva de Piper) — corregido. · Responsable: THOR · Colaboran: BLACK PANTHER, CAPTAIN AMERICA, HAWKEYE, BLACK WIDOW, WOLVERINE · Prioridad: ALTA · Tipo: SPIKE/PERFORMANCE · Fase: F0
 - Deriva de: PLAN-008 (F0, §2.IN.1, §4, §5, §6 R-83/R-84, CE-84/CE-86) · Clasificación: SENSIBLE (`.no-externo`) · ADR-005/ADR-009/ADR-012
-- APROBADO SPEC-067 por el Lead (bloque PLAN-008) — 2026-09-28.
 
 ## Objetivo
 

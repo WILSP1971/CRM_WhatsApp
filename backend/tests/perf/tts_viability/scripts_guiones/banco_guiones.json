@@ -1,0 +1,55 @@
+{
+  "version": "1.0",
+  "fecha": "2026-09-28",
+  "nota": "Guiones 100% ficticios (sin PII real, RNF-C3). Dominio: agendamiento/confirmaciones/precios de una clinica ficticia.",
+  "guiones": [
+    {
+      "id": "corta_01",
+      "categoria": "corta",
+      "texto": "Su cita quedo confirmada para manana a las diez de la manana.",
+      "rasgos": ["cifra_hora"]
+    },
+    {
+      "id": "corta_02",
+      "categoria": "corta",
+      "texto": "Hola Andrea, gracias por escribirnos.",
+      "rasgos": ["nombre_propio"]
+    },
+    {
+      "id": "corta_03",
+      "categoria": "corta",
+      "texto": "El doctor Ramirez la atendera en el consultorio tres.",
+      "rasgos": ["nombre_propio", "cifra"]
+    },
+    {
+      "id": "media_01",
+      "categoria": "media",
+      "texto": "Buenas tardes Wilson Sierra, le confirmamos su cita con el doctor Esteban Campbell el dia 30 de septiembre a las tres y cuarenta y cinco de la tarde. Por favor llegue quince minutos antes.",
+      "rasgos": ["nombre_propio", "cifra_fecha", "cifra_hora"]
+    },
+    {
+      "id": "media_02",
+      "categoria": "media",
+      "texto": "El valor de la consulta de odontologia general es de ciento veinte mil pesos. Aceptamos pago con tarjeta debito, credito o transferencia. Si tiene EPS Sura, el copago es de veinticinco mil pesos.",
+      "rasgos": ["cifra_precio", "sigla"]
+    },
+    {
+      "id": "media_03",
+      "categoria": "media",
+      "texto": "Su numero de radicado es C R M guion cero cero cuatro siete. Puede comunicarse al telefono tres uno cero, cuatro cinco seis, siete ocho nueve, para confirmar el estado de su tramite ante la EPS o la ADRES.",
+      "rasgos": ["sigla", "cifra_telefono", "codigo_alfanumerico"]
+    },
+    {
+      "id": "larga_01",
+      "categoria": "larga",
+      "texto": "Buenos dias senora Martha Gutierrez. Le escribimos de la Clinica Campbell para informarle que su examen de laboratorio, ordenado por el doctor Julian Beltran, ya se encuentra disponible. El resultado del hemograma y del perfil lipidico puede reclamarlo en la sede principal, ubicada en la carrera quince numero cuarenta y cinco guion veinte, en horario de siete de la manana a seis de la tarde, de lunes a sabado. Recuerde traer su cedula original y el numero de orden CRM cero uno dos tres cuatro. Si tiene alguna duda sobre la interpretacion de los resultados, puede agendar una cita de control con el doctor Beltran llamando a nuestra linea de atencion.",
+      "rasgos": ["nombre_propio", "cifra_direccion", "cifra_hora", "sigla", "codigo_alfanumerico"]
+    },
+    {
+      "id": "larga_02",
+      "categoria": "larga",
+      "texto": "Estimado senor Carlos Andres Lopez, le confirmamos la reprogramacion de su procedimiento de endoscopia digestiva alta para el proximo martes seis de octubre a las siete y treinta de la manana, con el doctor Fernando Rios, especialista en gastroenterologia. Es indispensable que asista en ayunas de al menos ocho horas y que suspenda cualquier anticoagulante segun las indicaciones de su EPS o IPS remitente. El valor del copago, segun el plan POS o el plan complementario, oscila entre cuarenta mil y ochenta mil pesos, y se liquida el mismo dia del procedimiento en la caja de admisiones, ventanilla numero dos.",
+      "rasgos": ["nombre_propio", "cifra_fecha", "cifra_hora", "sigla", "cifra_precio"]
+    }
+  ]
+}
