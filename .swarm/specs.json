@@ -9,10 +9,10 @@
     "total_specs": 72,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 6,
+      "APROBADA": 5,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 25,
+      "CERRADA": 26,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-09-28"
@@ -1608,7 +1608,7 @@
       "id": "SPEC-068",
       "titulo": "ADR-014 + modelo de datos aditivo (respuesta_modo/tts_estado/audio_salida_ref) + limpieza de residuos TTS_* de config",
       "archivo": ".swarm/specs/SPEC-068.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F1",
       "plan": "PLAN-008",
       "sensible": true,

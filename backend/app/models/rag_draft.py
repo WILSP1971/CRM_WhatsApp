@@ -29,6 +29,39 @@ como "leer en Python + mutar atributos + flush". Esto evita que dos
 `approve` concurrentes del mismo borrador (doble clic, doble pestaña, retry)
 generen dos mensajes salientes: solo una de las transacciones logra el
 UPDATE (rowcount == 1); la otra ve rowcount == 0 y falla con 409.
+
+Respuesta de audio (TTS de salida, Entregable #6, ADR-014/SPEC-068):
+
+- `respuesta_modo` (`RESPUESTA_MODO_VALIDOS`): opt-in (Q2-A) sobre el modo de
+  la respuesta que representa este borrador. Default `"texto"` = el
+  comportamiento actual e idéntico (SPEC-029/#5); el agente elige
+  explícitamente `"audio"` para que, al aprobar, además del `Message` de
+  texto de siempre se dispare la síntesis TTS del guion aprobado (SPEC-069,
+  fuera de alcance aquí). `NOT NULL` con `server_default='texto'` para no
+  romper ninguna fila existente (RNF-64).
+- `tts_estado` (`TTS_ESTADO_VALIDOS`): estado de la ruta OPCIONAL "escuchar
+  antes de enviar" (Q1-C) — el agente genera el clip bajo demanda para
+  reproducirlo antes de aprobar. `NULL` mientras nadie la solicita
+  (`"no_solicitado"` es el valor lógico por defecto, pero se deja la columna
+  nullable en vez de forzar ese string en cada fila: es un campo de "estado
+  de un proceso opcional", no un discriminador siempre poblado como
+  `respuesta_modo`). El invariante de aprobación (ADR-014 decisión 1) NO
+  depende de este campo: se puede aprobar el guion sin haber tocado nunca la
+  ruta de escucha.
+- `audio_salida_ref` (opcional, nullable): referencia OPACA al almacén
+  cifrado de audio (mismo patrón que `messages.audio_ref`/`calls.audio_ref`,
+  SPEC-035/036/053) del clip TTS de SALIDA. Por defecto `NULL` (ADR-012 §5,
+  herencia: el clip TTS no se persiste por defecto, basta el guion
+  aprobado); solo se puebla si una política de auditoría decide persistir el
+  clip (régimen SPEC-041, cifrado). Nunca una ruta física ni un binario ni
+  una URL externa (C3).
+
+Estos tres campos son deliberadamente aditivos/nullable-friendly y NO
+introducen ninguna dependencia nueva de `sent_message_id`/máquina de estados
+de `estado`: son ortogonales al ciclo `propuesto→editado→aprobado/descartado`
+ya existente. El servicio/worker que los popula (SPEC-069) está FUERA de
+alcance de este módulo: aquí solo se define el esquema y las constantes de
+valores válidos.
 """
 
 from __future__ import annotations
@@ -48,6 +81,17 @@ ESTADOS_DRAFT_VALIDOS = {"propuesto", "editado", "aprobado", "descartado"}
 # terminales). `aprobado`/`descartado` son finales: una vez ahí, el borrador
 # ya no se puede mutar (se debe generar uno nuevo).
 ESTADOS_DRAFT_MUTABLES = {"propuesto", "editado"}
+
+# Modo de la respuesta (opt-in, Q2-A, ADR-014). Default "texto" = idéntico al
+# comportamiento actual (SPEC-029/#5); "audio" activa la síntesis TTS del
+# guion aprobado (SPEC-069, fuera de alcance de este modelo).
+RESPUESTA_MODO_VALIDOS = {"texto", "audio"}
+RESPUESTA_MODO_DEFAULT = "texto"
+
+# Estados de la ruta OPCIONAL "escuchar antes de enviar" (Q1-C, ADR-014).
+# `NULL` (columna nullable) mientras nadie la solicita; estos son los únicos
+# valores válidos una vez que el agente pide generar el clip bajo demanda.
+TTS_ESTADO_VALIDOS = {"no_solicitado", "generando", "listo", "error"}
 
 
 class RagDraft(Base, TimestampMixin, TenantMixin, SoftDeleteMixin):
@@ -83,3 +127,14 @@ class RagDraft(Base, TimestampMixin, TenantMixin, SoftDeleteMixin):
         ForeignKey("messages.id", ondelete="RESTRICT"),
         nullable=True,
     )  # se completa SOLO al aprobar (RF: nada se envía antes de la aprobación)
+
+    # --- Respuesta de audio (TTS de salida, Entregable #6, ADR-014/SPEC-068) ---
+    respuesta_modo: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=RESPUESTA_MODO_DEFAULT
+    )  # "texto" (default, opt-in) | "audio" — Q2-A
+    tts_estado: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )  # no_solicitado | generando | listo | error — ruta "escuchar antes de enviar" (Q1-C)
+    audio_salida_ref: Mapped[str | None] = mapped_column(
+        String(500), nullable=True
+    )  # referencia opaca al almacén cifrado del clip TTS; NULL salvo auditoría (ADR-012 §5)

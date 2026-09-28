@@ -1,6 +1,6 @@
 # SPEC-068 — ADR-014 (aprobación híbrida del audio + opt-in + no-persistencia + disclaimer + motor de F0) + modelo de datos aditivo (`respuesta_modo`/`tts_estado`/`audio_salida_ref` opcional) + limpieza de residuos `TTS_*` de config CPU-only 🔴 SENSIBLE
 
-- Estado: APROBADA · Responsable: DOCTOR STRANGE (redacción de ADR); implementa CAPTAIN AMERICA (modelo de datos + config) · Colaboran: BLACK PANTHER, BLACK WIDOW, HAWKEYE, WOLVERINE · Prioridad: ALTA · Tipo: ADR/DATOS/BACKEND · Fase: F1
+- Estado: CERRADA — `respuesta_modo`/`tts_estado`/`audio_salida_ref` añadidas a `rag_drafts` (migración `ff1eb9091a91`, verificada upgrade/downgrade/upgrade contra Postgres real); `TTS_MODE`/`TTS_VRAM_FRACTION` eliminados de `config.py` (sin consumidor real, residuos de la fase GPU archivada); `PIPER_VOICE` corregido a `es_ES-davefx-medium` (default anterior `es_CO-pablo-medium` no existe). Suite completa 684 passed / 1 fallo conocido y ajeno. Responsable: DOCTOR STRANGE (redacción de ADR); implementa CAPTAIN AMERICA (modelo de datos + config) · Colaboran: BLACK PANTHER, BLACK WIDOW, HAWKEYE, WOLVERINE · Prioridad: ALTA · Tipo: ADR/DATOS/BACKEND · Fase: F1
 - Deriva de: PLAN-008 (F1, §2.IN.2/§2.IN.3, §3.5, §4, §11, R-87, CE-85/CE-87) · Clasificación: SENSIBLE (`.no-externo`) · ADR-013 (supersede §4)/ADR-012/ADR-009/ADR-006
 - APROBADO SPEC-068 por el Lead (bloque PLAN-008) — 2026-09-28.
 

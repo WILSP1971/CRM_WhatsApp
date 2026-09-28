@@ -417,26 +417,38 @@ class Settings:
             "STT_LIVE_COMPUTE_TYPE", "int8"
         )
 
-        # TTS en vivo: interfaz conmutable Piper generativo ↔ modo bajo-cómputo
-        # pregrabado (ADR-012 §3, ADR-011 §5). Interfaz permite cambiar sin
-        # rediseño de orquestador (SPEC-048).
-        self.tts_mode: str = os.getenv(
-            "TTS_MODE", "piper"
-        ).strip().lower()  # "piper" o "prerecorded"
-        if self.tts_mode not in ("piper", "prerecorded"):
-            self.tts_mode = "piper"
-        self.piper_voice: str = os.getenv("PIPER_VOICE", "es_CO-pablo-medium")
-        # Fracción de VRAM reservada exclusivamente para TTS en vivo (ADR-011 §2,
-        # ADR-012 §3). Evita contención bajo GPU compartida. Rango: 0.0-1.0
-        # (p.ej. 0.3 = 30% de VRAM para TTS, resto para batch/STT).
-        try:
-            self.tts_vram_fraction: float = float(
-                os.getenv("TTS_VRAM_FRACTION", "0.3")
-            )
-            if not 0.0 <= self.tts_vram_fraction <= 1.0:
-                self.tts_vram_fraction = 0.3
-        except ValueError:
-            self.tts_vram_fraction = 0.3
+        # TTS de respuesta en notas de voz (Entregable #6, CPU-only, ADR-014/
+        # SPEC-067/SPEC-068). Limpieza de residuos de la fase GPU archivada
+        # (PLAN-005/ADR-011/ADR-012, VoiceBot en vivo con barge-in ≤700ms):
+        # ese vector NO se implementó (memoria de proyecto: "No GPU / VoiceBot
+        # pivot") y sus 3 claves de config (`TTS_MODE`, `PIPER_VOICE`,
+        # `TTS_VRAM_FRACTION`) eran residuos sin consumidor real en el código
+        # (verificado: ningún `app/` importa `settings.tts_mode` ni
+        # `settings.tts_vram_fraction`). Decisión R-87 (SPEC-068):
+        #   - `TTS_MODE` se ELIMINA: describía una interfaz conmutable
+        #     "piper generativo ↔ modo bajo-cómputo pregrabado" para el
+        #     orquestador de voz EN VIVO (barge-in en tiempo real, SPEC-048,
+        #     archivado). El TTS asíncrono de #6 (ADR-014) no tiene esa
+        #     disyuntiva: el motor está fijado por evidencia (SPEC-067,
+        #     Piper TTS 1.8.0) y la generación siempre corre en background
+        #     tras la aprobación del guion — no hay modo "en vivo" que
+        #     conmutar. Si en el futuro se necesitara un modo pregrabado,
+        #     eso es una SPEC nueva, no la reactivación de este flag.
+        #   - `TTS_VRAM_FRACTION` se ELIMINA: no aplica en CPU-only (ninguna
+        #     GPU en esta máquina objetivo, R-87). El throttling/concurrencia
+        #     de `tts:jobs` (SPEC-069) se dimensiona por CPU (worker
+        #     pool/Redis), no por fracción de VRAM.
+        #   - `PIPER_VOICE` se CONSERVA, pero su valor por defecto se
+        #     corrige: `es_CO-pablo-medium` (residuo GPU) no existe en el
+        #     catálogo real de Piper (404, hallazgo de SPEC-067) — no hay voz
+        #     colombiana auténtica disponible en ninguna librería evaluada.
+        #     El Lead confirmó `es_ES-davefx-medium` (ADR-014 decisión 4):
+        #     única combinación motor+voz que cumple el techo ≤10s en las 8
+        #     categorías de guion probadas (peor caso p95 = 7.19s), preferida
+        #     sobre `es_MX-ald-medium` (acento más cercano a LatAm, pero
+        #     incumple por poco el techo en el guion más largo, 10.137s).
+        #     Documentado como trade-off de acento aceptado, no como error.
+        self.piper_voice: str = os.getenv("PIPER_VOICE", "es_ES-davefx-medium")
 
         # NLU de intent: confianza mínima de clasificación contra catálogo
         # cerrado (SPEC-045). Respuestas con confianza < umbral se escalan a

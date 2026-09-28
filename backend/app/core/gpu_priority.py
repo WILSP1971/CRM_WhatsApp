@@ -18,8 +18,13 @@ DISEÑO (F0, SPEC-044):
 - Sin GPU real en sandbox: se verifica por inspección/mock.
 - Con GPU real (F6, SPEC-050): se instrumenta contención real (latencia de
   GPU, backlog del batch) para evidenciar que la prioridad funciona.
-- Fracción de VRAM reservada: configurada por env (`TTS_VRAM_FRACTION`), se
-  pasa al orchestrador de GPU en F6 (no implementado en F0).
+- Nota (SPEC-068, R-87): el VoiceBot en vivo con GPU compartida descrito en
+  este módulo NO se implementó (memoria de proyecto: "No GPU / VoiceBot
+  pivot", CPU-only). La antigua clave `TTS_VRAM_FRACTION` (fracción de VRAM
+  para TTS en vivo) se ELIMINÓ de `config.py` por no tener sentido en
+  CPU-only; si en el futuro se reactivara este módulo con GPU real, la
+  configuración de reserva de VRAM se re-diseñaría en esa SPEC, no se
+  restauraría este flag archivado.
 
 RUNBOOK PARA ACTIVACION CON GPU REAL:
 1. En deployment con GPU: el `voice_gateway` SIEMPRE incrementa
