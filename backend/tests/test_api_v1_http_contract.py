@@ -102,6 +102,7 @@ PROTECTED_ENDPOINTS = [
     ("GET", f"/api/v1/documents/{uuid.uuid4()}"),
     ("DELETE", f"/api/v1/documents/{uuid.uuid4()}"),
     ("GET", "/api/v1/ai/health"),
+    ("GET", "/api/v1/analytics/business"),
 ]
 
 

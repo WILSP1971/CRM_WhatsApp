@@ -47,9 +47,9 @@ from app.schemas.analytics import (
 )
 from app.schemas.conversation import CANALES_VALIDOS
 from app.services.analytics_service import (
+    conversion_rate_from_metrics,
     get_ai_assistance_metrics,
     get_conversation_metrics,
-    get_conversion_rate,
     get_response_time_metrics,
 )
 
@@ -171,7 +171,7 @@ def get_business_analytics(
     tiempos_respuesta = get_response_time_metrics(
         db, desde=desde, hasta=hasta, canal=canal_validado
     )
-    conversion = get_conversion_rate(db, desde=desde, hasta=hasta, canal=canal_validado)
+    conversion = conversion_rate_from_metrics(conversaciones)
     ia_asistencia = get_ai_assistance_metrics(
         db, desde=desde, hasta=hasta, canal=canal_validado
     )

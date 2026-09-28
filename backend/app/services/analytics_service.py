@@ -194,13 +194,6 @@ def _filtro_canal(canal: str | None):
     return Conversation.canal == canal
 
 
-def _aplicar_filtro_canal(stmt, canal: str | None):
-    condicion = _filtro_canal(canal)
-    if condicion is not None:
-        stmt = stmt.where(condicion)
-    return stmt
-
-
 # ---------------------------------------------------------------------------
 # 1. Volumen de conversaciones
 # ---------------------------------------------------------------------------
@@ -615,6 +608,16 @@ def get_conversion_rate(
     (decisión documentada en SPEC-062/RF-03, criterio de aceptación
     explícito)."""
     metrics = get_conversation_metrics(db, desde=desde, hasta=hasta, canal=canal)
+    return conversion_rate_from_metrics(metrics)
+
+
+def conversion_rate_from_metrics(metrics: ConversationMetrics) -> ConversionMetrics:
+    """Deriva `ConversionMetrics` de un `ConversationMetrics` YA calculado,
+    sin volver a consultar la BD — usado por el router (SPEC-063) cuando ya
+    invocó `get_conversation_metrics` para los KPIs de volumen, evitando
+    repetir las 3 queries de esa función solo para la tasa de conversión
+    (hallazgo THOR, SPEC-065/CE-74). Misma semántica que `get_conversion_rate`
+    (ver su docstring para el criterio de `None` vs división por cero)."""
     if metrics.total == 0:
         tasa = None
     else:

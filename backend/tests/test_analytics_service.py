@@ -527,6 +527,124 @@ def test_multiples_idas_y_vueltas_promedian_cada_bloque(
     assert metrics.respuesta_promedio_seg == 20.0  # promedio de (10, 30)
 
 
+def test_mensaje_soft_deleted_se_excluye_de_tiempos_de_respuesta(
+    app_engine, postgres_engine, two_tenants_with_data
+):
+    """R-75 (HAWKEYE, SPEC-065): un mensaje saliente con `activo=False`
+    (borrado lógico, C2) NUNCA debe contar como la respuesta de un bloque
+    entrante -- `get_response_time_metrics` filtra `Message.activo.is_(True)`
+    explícitamente (ver docstring del servicio); este test lo ejerce con
+    datos reales: sin el filtro, esta conversación tendría TPR=10s; con el
+    filtro correcto, la respuesta inactiva se ignora y la conversación
+    queda SIN respuesta activa -> excluida de ambos promedios."""
+    tenant_id = two_tenants_with_data["tenant_a_id"]
+    contact_id = two_tenants_with_data["contact_a_id"]
+    hoy = date.today()
+
+    conv_id = _insert_conversation(
+        postgres_engine, tenant_id=tenant_id, contact_id=contact_id, created_at=_dt(hoy)
+    )
+    base = _dt(hoy, hour=9, minute=0)
+    _insert_message(
+        postgres_engine,
+        tenant_id=tenant_id,
+        conversation_id=conv_id,
+        remitente="contacto",
+        created_at=base,
+    )
+    # Única respuesta disponible: SOFT-DELETED. No debe contar.
+    _insert_message(
+        postgres_engine,
+        tenant_id=tenant_id,
+        conversation_id=conv_id,
+        remitente="agente",
+        created_at=base + timedelta(seconds=10),
+        activo=False,
+    )
+
+    with _session_with_tenant(app_engine, tenant_id) as session:
+        metrics = get_response_time_metrics(session, desde=hoy, hasta=hoy)
+        session.rollback()
+
+    assert metrics.conversaciones_con_respuesta == 0
+    assert metrics.primera_respuesta_promedio_seg is None
+    assert metrics.respuesta_promedio_seg is None
+
+
+def test_mensaje_soft_deleted_se_excluye_de_distribucion_de_sentimiento(
+    app_engine, postgres_engine, two_tenants_with_data
+):
+    """R-75: `get_ai_assistance_metrics` filtra `Message.activo.is_(True)`
+    también en la distribución de sentimiento -- un mensaje inactivo con
+    `sentimiento='negativo'` NUNCA debe sumar al conteo."""
+    tenant_id = two_tenants_with_data["tenant_a_id"]
+    contact_id = two_tenants_with_data["contact_a_id"]
+    hoy = date.today()
+
+    conv_id = _insert_conversation(
+        postgres_engine, tenant_id=tenant_id, contact_id=contact_id, created_at=_dt(hoy)
+    )
+    _insert_message(
+        postgres_engine,
+        tenant_id=tenant_id,
+        conversation_id=conv_id,
+        remitente="contacto",
+        created_at=_dt(hoy),
+        sentimiento="positivo",
+    )
+    # Mensaje inactivo (soft-deleted) con sentimiento negativo: NO debe contar.
+    _insert_message(
+        postgres_engine,
+        tenant_id=tenant_id,
+        conversation_id=conv_id,
+        remitente="contacto",
+        created_at=_dt(hoy, hour=10),
+        sentimiento="negativo",
+        activo=False,
+    )
+
+    with _session_with_tenant(app_engine, tenant_id) as session:
+        metrics = get_ai_assistance_metrics(session, desde=hoy, hasta=hoy)
+        session.rollback()
+
+    assert metrics is not None
+    assert metrics.sentimiento.positivo == 1
+    assert metrics.sentimiento.negativo == 0
+    assert metrics.sentimiento.sin_clasificar == 0
+
+
+def test_rag_draft_soft_deleted_se_excluye_del_pct_de_aprobados(
+    app_engine, postgres_engine, two_tenants_with_data
+):
+    """R-75: `get_ai_assistance_metrics` filtra `RagDraft.activo.is_(True)`
+    -- un borrador aprobado pero SOFT-DELETED no debe contar como
+    "conversación con draft aprobado"."""
+    tenant_id = two_tenants_with_data["tenant_a_id"]
+    contact_id = two_tenants_with_data["contact_a_id"]
+    hoy = date.today()
+
+    conv_id = _insert_conversation(
+        postgres_engine, tenant_id=tenant_id, contact_id=contact_id, created_at=_dt(hoy)
+    )
+    # Único draft aprobado de la conversación: SOFT-DELETED. No debe contar.
+    _insert_rag_draft(
+        postgres_engine,
+        tenant_id=tenant_id,
+        conversation_id=conv_id,
+        estado="aprobado",
+        activo=False,
+    )
+
+    with _session_with_tenant(app_engine, tenant_id) as session:
+        metrics = get_ai_assistance_metrics(session, desde=hoy, hasta=hoy)
+        session.rollback()
+
+    assert metrics is not None
+    assert metrics.conversaciones_total == 1
+    assert metrics.conversaciones_con_draft_aprobado == 0
+    assert metrics.pct_drafts_aprobados == 0.0
+
+
 # ---------------------------------------------------------------------------
 # 3. Conversión
 # ---------------------------------------------------------------------------

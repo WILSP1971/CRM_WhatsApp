@@ -9,10 +9,10 @@
     "total_specs": 66,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 3,
+      "APROBADA": 2,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 22,
+      "CERRADA": 23,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-09-28"
@@ -1524,7 +1524,7 @@
       "id": "SPEC-065",
       "titulo": "Pruebas + seguridad + performance + no-regresion del dashboard de metricas de negocio (exactitud, RLS cross-tenant, latencia THOR, cero regresion #1-#6 y /metrics)",
       "archivo": ".swarm/specs/SPEC-065.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F3",
       "plan": "PLAN-007",
       "sensible": true,

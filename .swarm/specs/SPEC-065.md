@@ -1,8 +1,8 @@
 # SPEC-065 — Pruebas + seguridad + performance + no-regresión del dashboard de métricas de negocio (exactitud, RLS cross-tenant, latencia THOR, cero regresión #1–#6 y `/metrics`) 🔴 SENSIBLE
 
-- Estado: PROPUESTA · Responsable: HAWKEYE · Colaboran: THOR, BLACK PANTHER, BLACK WIDOW, WOLVERINE, DAREDEVIL, CAPTAIN AMERICA · Prioridad: ALTA · Tipo: QA/PRUEBAS · Fase: F3
+- Estado: CERRADA — CE-71/72/73/75/76/77 verificados por HAWKEYE (98% cobertura, 88 tests nuevos/reforzados, no-regresión #1–#6 y `/metrics` intactos); CE-74 medido por el orquestador contra Postgres real (p95=1025.7ms, objetivo ≤1500ms, sin disk spill) tras corregir el benchmark de THOR (bug `SET LOCAL`/sintaxis LATERAL) y aplicar el fix de N+1 hallado por THOR (`get_conversion_rate` ya no reconsulta `get_conversation_metrics`) · Responsable: HAWKEYE · Colaboran: THOR, BLACK PANTHER, BLACK WIDOW, WOLVERINE, DAREDEVIL, CAPTAIN AMERICA · Prioridad: ALTA · Tipo: QA/PRUEBAS · Fase: F3
 - Deriva de: PLAN-007 (F3, CE-71..CE-77) · Clasificación: SENSIBLE (`.no-externo`) · ADR-004/ADR-008
-- Pendiente de aprobación explícita del Lead (no aprobar la propia SPEC).
+- APROBADO SPEC-065 por el Lead (bloque PLAN-007) — 2026-09-28.
 
 ## Objetivo
 
