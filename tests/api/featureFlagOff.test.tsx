@@ -74,4 +74,33 @@ describe("Feature-flag OFF — cero llamadas de red", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(wsSpy).not.toHaveBeenCalled();
   });
+
+  /**
+   * SPEC-064, RF-04 — mismo criterio aplicado a la Analítica: con el flag
+   * OFF, `useAnalyticsData` no dispara ningún `fetch` y `AnalyticsPage`
+   * renderiza la maqueta mock (Entregable #1, SPEC-008) intacta, sin la
+   * vista de datos reales.
+   */
+  it("AnalyticsPage no llama a fetch ni abre WebSocket con el flag apagado", async () => {
+    const fetchSpy = vi.fn();
+    const wsSpy = vi.fn();
+    global.fetch = fetchSpy as unknown as typeof fetch;
+    // @ts-expect-error -- espía simple para detectar cualquier intento de conexión
+    global.WebSocket = wsSpy;
+
+    const { AnalyticsPage } = await import("@/pages/AnalyticsPage");
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AnalyticsPage />
+      </MemoryRouter>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: /Analítica multisectorial/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Rango de fechas y canal de la analítica/i)).not.toBeInTheDocument();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(wsSpy).not.toHaveBeenCalled();
+  });
 });

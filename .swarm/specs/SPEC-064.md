@@ -1,8 +1,8 @@
 # SPEC-064 — SPA: `AnalyticsPage` a datos REALES por feature-flag (reemplaza el mock, Q3) — KPIs, series temporales, desglose por canal, selector de rango (hoy/7d/30d + custom)
 
-- Estado: PROPUESTA · Responsable: CAPTAIN AMERICA · Colaboran: DAREDEVIL, BLACK PANTHER, HAWKEYE, WOLVERINE, BLACK WIDOW · Prioridad: ALTA · Tipo: FRONTEND · Fase: F2
+- Estado: CERRADA — implementada, revisada (DAREDEVIL/WOLVERINE) y hallazgos importantes corregidos (filtro de canal RF-02, leyenda de tendencia engañosa en KPIs reales, test de no-regresión flag OFF) · Responsable: CAPTAIN AMERICA · Colaboran: DAREDEVIL, BLACK PANTHER, HAWKEYE, WOLVERINE, BLACK WIDOW · Prioridad: ALTA · Tipo: FRONTEND · Fase: F2
 - Deriva de: PLAN-007 (F2, Q3/Q4) · Clasificación: SENSIBLE (`.no-externo`) · ADR-004
-- Pendiente de aprobación explícita del Lead (no aprobar la propia SPEC).
+- APROBADO SPEC-064 por el Lead — 2026-09-28.
 
 ## Objetivo
 

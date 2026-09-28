@@ -9,13 +9,13 @@
     "total_specs": 66,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 4,
+      "APROBADA": 3,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 21,
+      "CERRADA": 22,
       "ARCHIVADA": 8
     },
-    "actualizado": "2026-09-27"
+    "actualizado": "2026-09-28"
   },
   "planes": [
     {
@@ -1502,7 +1502,7 @@
       "id": "SPEC-064",
       "titulo": "SPA: AnalyticsPage a datos reales por feature-flag (reemplaza el mock, Q3) - KPIs, series, desglose por canal, selector de rango hoy/7d/30d+custom",
       "archivo": ".swarm/specs/SPEC-064.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F2",
       "plan": "PLAN-007",
       "sensible": true,

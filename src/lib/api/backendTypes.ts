@@ -187,3 +187,68 @@ export interface BackendCallDetail {
   sentiment: BackendCallSentiment;
   rag_draft: BackendCallRagDraft | null;
 }
+
+/* ---------- Analítica de negocio (SPEC-063) ----------
+ *
+ * Ruta exacta de `backend/app/api/analytics.py` (montada bajo `/api/v1`):
+ *   GET /analytics/business?desde=YYYY-MM-DD&hasta=YYYY-MM-DD[&canal=...]
+ *
+ * Refleja 1:1 `backend/app/schemas/analytics.py` (`BusinessAnalyticsOut` y
+ * anidados) — SOLO agregados del tenant, sin PII individual (RF-04 SPEC-062).
+ */
+
+export interface BackendConversacionesPorCanal {
+  canal: string;
+  total: number;
+  abiertas: number;
+  cerradas: number;
+}
+
+export interface BackendSerieDiariaPunto {
+  fecha: string;
+  total: number;
+}
+
+export interface BackendConversationMetrics {
+  total: number;
+  abiertas: number;
+  cerradas: number;
+  por_canal: BackendConversacionesPorCanal[];
+  serie_diaria: BackendSerieDiariaPunto[];
+}
+
+export interface BackendResponseTimeMetrics {
+  primera_respuesta_promedio_seg: number | null;
+  respuesta_promedio_seg: number | null;
+  conversaciones_con_respuesta: number;
+}
+
+export interface BackendConversionMetrics {
+  tasa: number | null;
+  cerradas: number;
+  totales: number;
+}
+
+export interface BackendSentimientoDistribucion {
+  positivo: number;
+  neutral: number;
+  negativo: number;
+  sin_clasificar: number;
+}
+
+export interface BackendAiAssistanceMetrics {
+  pct_drafts_aprobados: number | null;
+  conversaciones_con_draft_aprobado: number;
+  conversaciones_total: number;
+  sentimiento: BackendSentimientoDistribucion;
+}
+
+export interface BackendBusinessAnalytics {
+  desde: string;
+  hasta: string;
+  canal: string | null;
+  conversaciones: BackendConversationMetrics;
+  tiempos_respuesta: BackendResponseTimeMetrics;
+  conversion: BackendConversionMetrics;
+  ia_asistencia: BackendAiAssistanceMetrics | null;
+}
