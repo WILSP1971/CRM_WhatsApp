@@ -881,6 +881,230 @@ python backend/tools/wa_webhook_simulator.py --audio
 
 ---
 
+## Dashboard de Analítica de Negocio (SPEC-064/066)
+
+### Operación: vista general
+
+El dashboard de analítica (`GET /api/v1/analytics/business`, endpoint SPEC-064; SPA `AnalyticsPage.tsx`) proporciona KPIs agregados en tiempo real: volumen de conversaciones, tiempos de respuesta, tasa de conversión y asistencia IA. Modo on-demand (sin caché): cada request recalcula sobre el rango pedido.
+
+**Visibilidad:** cada operador/supervisor ve SOLO datos de su tenant (RLS efectiva, ADR-004/008).
+
+### Configuración de feature-flag
+
+```bash
+# Editar .env para activar/desactivar la vista en tiempo real
+nano .env
+
+# Agregar (u modificar si existe):
+VITE_USE_REAL_API=true              # ON = datos reales; OFF/falta = mock (Entregable #1)
+VITE_API_BASE_URL=http://localhost:8000/api/v1  # URL del backend
+ANALYTICS_MAX_RANGE_DAYS=366        # Máximo rango de días en una query (protección runaway)
+```
+
+Cambio reversible: editar, rebuild del contenedor SPA (`docker compose build --no-cache spa`), reiniciar.
+
+Ver **ANALYTICS_FEATURE_FLAG_GUIDE.md** para procedimiento completo.
+
+### Prueba de extremo a extremo
+
+```bash
+# 1. Confirmar backend listo
+curl -s http://localhost:8000/readyz | jq .
+# Buscar: { "ready": true, "db": "ok", "redis": "ok", "ollama": "ok" }
+
+# 2. Autenticarse y obtener token JWT
+TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "admin@demo.com", "password": "password"}' \
+  | jq -r '.access_token')
+
+# 3. Probar endpoint con rango típico (últimos 30 días)
+TODAY=$(date +%Y-%m-%d)
+DESDE=$(date -d "30 days ago" +%Y-%m-%d)
+
+curl -s \
+  -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/v1/analytics/business?desde=${DESDE}&hasta=${TODAY}" \
+  | jq .
+
+# Salida esperada: 200 con estructura BusinessAnalyticsOut (conversaciones, tiempos_respuesta, conversion, etc.)
+
+# 4. Probar error 422 (rango inválido)
+curl -s \
+  -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/v1/analytics/business?desde=2026-09-27&hasta=2026-09-20" \
+  | jq '.detail'
+
+# Salida esperada: "El parámetro 'desde' no puede ser posterior a 'hasta'."
+
+# 5. Probar con filtro de canal
+curl -s \
+  -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/v1/analytics/business?desde=${DESDE}&hasta=${TODAY}&canal=whatsapp" \
+  | jq '.conversaciones.por_canal'
+
+# Salida esperada: array con máximo 1 entrada (canal "whatsapp")
+```
+
+### Interpretación de métricas
+
+Ver **METRICS_ANALYTICS.md** para definición precisa de:
+
+- **Volumen:** conversaciones total/abiertas/cerradas/por canal/serie diaria.
+- **Tiempos de respuesta:** TPR (primera respuesta) en segundos; respuesta promedio.
+- **Conversión:** = cerradas / totales. `null` si totales = 0 (ausencia de datos, no "0%").
+- **Asistencia IA:** % de conversaciones con >= 1 draft RAG aprobado; distribución de sentimiento.
+
+**Operador lee:**
+- TPR 245 s ≈ 4 min desde que un contacto abre hasta primera respuesta.
+- Conversión 83% = de 150 conversaciones, 125 se cerraron.
+- IA: 65% de conversaciones tuvieron borradores aprobados; 60% sentimiento positivo.
+
+### Performance y límites
+
+**Latencia objetivo (SPEC-065):** p95 ≤ 1500 ms.
+
+**Límites configurables (`.env`):**
+
+- `ANALYTICS_MAX_RANGE_DAYS` (default 366): máximo número de días en una query. Protege contra queries que exploten la BD. Si se excede: HTTP 422.
+
+**Índices requeridos (migración `b1c8f3d5a704`):**
+- `ix_messages_conversation_id_created_at` (compuesto, clave para tiempos de respuesta).
+- `ix_conversations_created_at` (filtro de rango de fechas).
+- `ix_conversations_canal` (filtro opcional por canal).
+
+Verificar disponibilidad:
+
+```bash
+docker compose exec db psql -U postgres -d omnicore_ai -c "\di" | grep -E "messages_conversation_id_created_at|conversations_created_at|conversations_canal"
+# Los 3 deben listarse (confirmando que la migración b1c8f3d5a704 pasó)
+```
+
+### Verificación de RLS efectiva
+
+Cada endpoint es ejecutado con `SET LOCAL app.tenant_id = '<id_del_jwt>'` antes del handler (fijado en `get_tenant_db`, SPEC-013). Verificar:
+
+```bash
+# Simular request de dos tenants distintos (para ambiente con múltiples tenants)
+# Tenant A obtiene token TA, solicita analytics
+TOKEN_A=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "admin_a@demo.com", "password": "pass_a"}' | jq -r '.access_token')
+
+# Tenant B obtiene token TB
+TOKEN_B=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "admin_b@demo.com", "password": "pass_b"}' | jq -r '.access_token')
+
+# Ambos consultan el mismo rango
+curl -s -H "Authorization: Bearer $TOKEN_A" \
+  "http://localhost:8000/api/v1/analytics/business?desde=2026-09-01&hasta=2026-09-30" | jq '.conversaciones.total' > /tmp/a.txt
+
+curl -s -H "Authorization: Bearer $TOKEN_B" \
+  "http://localhost:8000/api/v1/analytics/business?desde=2026-09-01&hasta=2026-09-30" | jq '.conversaciones.total' > /tmp/b.txt
+
+# Los totales DEBEN SER DISTINTOS (si ambos tenants tienen conversaciones)
+# Si son iguales: ALERTA — posible bypass de RLS
+diff /tmp/a.txt /tmp/b.txt
+# Si no hay salida: ✗ PROBLEMA (ambos ven lo mismo)
+# Si hay salida: ✓ OK (cada uno ve solo sus datos)
+```
+
+Los tests de SPEC-065 verifican esto de forma automatizada con fixtures de múltiples tenants.
+
+### Borrado lógico (C2)
+
+Todas las métricas excluyen registros con `is_active = False`:
+
+- `Conversation.is_active = True`
+- `Message.is_active = True`
+- `RagDraft.is_active = True`
+
+Verificar:
+
+```bash
+# 1. Crear una conversación
+# 2. Obtener analytics (incluye la conversación)
+# 3. Soft-delete la conversación (UPDATE Conversation SET is_active = false WHERE id = ...)
+# 4. Volver a obtener analytics → el total DEBE DISMINUIR en 1
+
+# En SQL (desde el contenedor db):
+docker compose exec db psql -U postgres -d omnicore_ai << 'EOF'
+-- Contar conversaciones activas
+SELECT COUNT(*) as activas FROM conversations WHERE is_active = true;
+-- Contar TODAS (incluyendo soft-deleted)
+SELECT COUNT(*) as todas FROM conversations;
+-- El endpoint solo cuenta "activas"
+EOF
+```
+
+### Caso de uso: supervisión de SLA
+
+Un supervisor quiere verificar el SLA de "Primera respuesta < 5 minutos" en los últimos 7 días:
+
+```bash
+# 1. Consultar dashboard con rango [hoy - 6 días, hoy]
+# 2. Leer "tiempos_respuesta.primera_respuesta_promedio_seg" = ~245 s ≈ 4 min
+# 3. Interpretar: el promedio está bajo 5 min ✓ SLA OK
+
+# En desarrollo:
+TODAY=$(date +%Y-%m-%d)
+DESDE=$(date -d "6 days ago" +%Y-%m-%d)
+
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/v1/analytics/business?desde=${DESDE}&hasta=${TODAY}" \
+  | jq '.tiempos_respuesta.primera_respuesta_promedio_seg'
+# Salida: 245.3 segundos = 4 min 5 s
+```
+
+### Troubleshooting
+
+**Síntoma:** endpoint devuelve latencia muy alta (>5000 ms).
+
+**Diagnóstico:**
+
+```bash
+# 1. Verificar índices (migración aplicada)
+docker compose exec db psql -U postgres -d omnicore_ai -c "\di" | grep messages_conversation_id_created_at
+# Si no aparece: la migración no pasó
+
+# 2. Verificar rango solicitado
+# Si rango > 90 días: esperado que sea lento (muchos datos)
+# Si rango < 7 días pero lento: posible problema de índices/stats
+
+# 3. Verificar CPU/memoria
+docker compose stats api db
+# Si DB está al 100% CPU: bottleneck de BD
+
+# 4. Ver plan de ejecución (EXPLAIN ANALYZE)
+# Desde dentro del contenedor db, ejecutar una versión simplificada de la query
+docker compose exec db psql -U postgres -d omnicore_ai << 'EOF'
+EXPLAIN ANALYZE
+SELECT COUNT(*) FROM conversations
+WHERE tenant_id = 'demo'  -- Tenant example
+  AND is_active = true
+  AND created_at >= '2026-09-01'::timestamp
+  AND created_at < '2026-10-01'::timestamp;
+EOF
+# Buscar "Index Scan" (rápido) vs. "Seq Scan" (lento)
+```
+
+**Síntoma:** endpoint devuelve 422 "rango no permitido".
+
+**Diagnóstico:**
+
+```bash
+# 1. Revisar ANALYTICS_MAX_RANGE_DAYS en .env
+grep ANALYTICS_MAX_RANGE_DAYS .env
+# Default: 366 días (1 año)
+
+# 2. Contar días solicitados
+# Error menciona: "X días solicitados, máximo Y"
+# Solución: el operador debe usar rangos más pequeños (p.ej. 30 días a la vez)
+```
+
+---
+
 ## Escalada y contactos
 
 Si un incidente requiere ayuda especializada:
@@ -907,6 +1131,8 @@ Si un incidente requiere ayuda especializada:
 | Limpiar caché Redis | `redis-cli FLUSHALL` | 10 s | ✓ Datos no críticos |
 | Verificar egress bloqueado | `docker exec crm_ia wget...` | 10 s | ✓ No destructivo |
 | Verificar RLS | Prueba cross-tenant | 20 s | ✓ No destructivo |
+| Activar dashboard analítica | Editar `.env`, rebuild SPA | 2 min | ✓ Reversible (toggle flag) |
+| Prueba e2e dashboard | Curl endpoint + verificación | 1 min | ✓ No destructivo |
 
 ---
 

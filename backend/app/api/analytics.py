@@ -128,39 +128,188 @@ def _ai_assistance_out(metrics) -> AiAssistanceMetricsOut | None:
     )
 
 
-@router.get("/business", response_model=BusinessAnalyticsOut)
+@router.get(
+    "/business",
+    response_model=BusinessAnalyticsOut,
+    summary="KPIs de negocio agregados",
+    tags=["Analytics"],
+)
 def get_business_analytics(
     desde: date = Query(
         ...,
-        description="Fecha inicial del rango (inclusive), formato ISO "
-        "YYYY-MM-DD. Se evalúa sobre `Conversation.created_at`.",
+        description=(
+            "Fecha inicial del rango (inclusive), formato ISO YYYY-MM-DD. "
+            "Se evalúa sobre `Conversation.created_at` (fecha de creación de la conversación, "
+            "nunca sobre `updated_at`). Máx. `ANALYTICS_MAX_RANGE_DAYS` días desde `hasta`. "
+            "Ejemplo: 2026-09-20."
+        ),
+        example="2026-09-20",
     ),
     hasta: date = Query(
         ...,
-        description="Fecha final del rango (inclusive), formato ISO "
-        "YYYY-MM-DD. Debe ser >= 'desde'.",
+        description=(
+            "Fecha final del rango (inclusive), formato ISO YYYY-MM-DD. "
+            "Debe ser >= 'desde'. El rango es cerrado: incluye conversaciones "
+            "creadas durante todo el día `hasta`. "
+            "Ejemplo: 2026-09-27."
+        ),
+        example="2026-09-27",
     ),
     canal: str
     | None = Query(
         default=None,
-        description="Filtro opcional de canal. Debe ser uno de: "
-        f"{sorted(CANALES_VALIDOS)}.",
+        description=(
+            "Filtro opcional de canal (nulleable). Válidos: "
+            + str(sorted(CANALES_VALIDOS)) + ". "
+            "Si se proporciona, todos los desgloses se acotan a ese canal. "
+            "Si está ausente (None), se devuelven todas los canales."
+        ),
+        example=None,
     ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_tenant_db),
 ) -> BusinessAnalyticsOut:
-    """KPIs agregados de negocio del tenant autenticado para `[desde, hasta]`
-    (inclusive), opcionalmente acotados a un `canal`.
+    """KPIs agregados de negocio del tenant autenticado para `[desde, hasta]` (inclusive).
 
-    Incluye volumen de conversaciones (total/abiertas/cerradas/por
-    canal/serie diaria), tiempos de respuesta (TPR y respuesta promedio),
-    tasa de conversión y asistencia IA (% de borradores RAG aprobados +
-    distribución de sentimiento). Modo on-demand: se recalcula en cada
-    llamada sobre datos ya persistidos, sin caché ni tiempo real.
+    ### Descripción
 
-    Un rango sin ninguna conversación devuelve 200 con todos los agregados en
-    cero/`null` (nunca un error). La respuesta contiene EXCLUSIVAMENTE
-    agregados: ningún id de contacto ni contenido de mensaje individual.
+    Devuelve el resumen operativo de conversaciones, tiempos de respuesta, tasa de conversión
+    y métricas de asistencia IA del tenant autenticado dentro del rango de fechas especificado.
+    Modo on-demand: se recalcula en cada request sobre datos ya persistidos (sin caché, sin
+    WebSocket de tiempo real).
+
+    ### Métricas
+
+    1. **Conversaciones:** volumen total, desgloses por estado (abierta/cerrada) y por canal.
+       Serie diaria que cubre completamente el rango (incluyendo días sin datos como total=0).
+
+    2. **Tiempos de respuesta:** TPR (Primera Respuesta, desde primer entrante hasta primera saliente)
+       y promedio de respuesta (media de todas las diferencias entrante→saliente). Expresados en
+       segundos. `null` si ninguna conversación del rango tuvo respuesta saliente.
+
+    3. **Tasa de conversión:** cerradas / totales. Expresada como decimal [0.0, 1.0].
+       `null` (no `0`) si totales=0 (ausencia de datos, no "0% de conversión").
+       Definición: conversión = conversaciones con `estado='cerrada'` / conversaciones totales.
+       No es un dominio nuevo (Q1(a) PLAN-007): es un cálculo sobre `Conversation.estado` ya persistido.
+
+    4. **Asistencia IA (opcional):** % de conversaciones con >= 1 `RagDraft.estado='aprobado'`,
+       y distribución de `Message.sentimiento` (positivo/neutral/negativo/sin_clasificar).
+
+    ### Borrado lógico (C2)
+
+    Todas las métricas excluyen registros con `is_active=False` (soft-delete).
+
+    ### Aislamiento multi-tenant
+
+    Aplicada RLS (Row Level Security) efectiva: el usuario solo ve datos de su tenant.
+
+    ### Rango sin datos
+
+    Si el rango no contiene conversaciones: devuelve 200 (no error) con todos los campos
+    en 0/null (según su semántica). La serie diaria cubre el rango completo día a día.
+
+    ### Error 422
+
+    - `desde > hasta`: "El parámetro 'desde' no puede ser posterior a 'hasta'."
+    - Rango > `ANALYTICS_MAX_RANGE_DAYS`: "El rango solicitado (...) supera el máximo permitido (...)"
+    - `canal` no válido: "canal inválido: debe ser uno de [...]"
+
+    ### Ejemplos
+
+    **Request (rango de 7 días, sin filtro de canal):**
+    ```
+    GET /api/v1/analytics/business?desde=2026-09-20&hasta=2026-09-27
+    ```
+
+    **Response (200 OK):**
+    ```json
+    {
+      "desde": "2026-09-20",
+      "hasta": "2026-09-27",
+      "canal": null,
+      "conversaciones": {
+        "total": 150,
+        "abiertas": 25,
+        "cerradas": 125,
+        "por_canal": [
+          {"canal": "whatsapp", "total": 80, "abiertas": 10, "cerradas": 70},
+          {"canal": "webchat", "total": 70, "abiertas": 15, "cerradas": 55}
+        ],
+        "serie_diaria": [
+          {"fecha": "2026-09-20", "total": 20},
+          {"fecha": "2026-09-21", "total": 22},
+          {"fecha": "2026-09-22", "total": 18},
+          {"fecha": "2026-09-23", "total": 19},
+          {"fecha": "2026-09-24", "total": 21},
+          {"fecha": "2026-09-25", "total": 25},
+          {"fecha": "2026-09-26", "total": 25}
+        ]
+      },
+      "tiempos_respuesta": {
+        "primera_respuesta_promedio_seg": 245.3,
+        "respuesta_promedio_seg": 189.7,
+        "conversaciones_con_respuesta": 140
+      },
+      "conversion": {
+        "tasa": 0.8333,
+        "cerradas": 125,
+        "totales": 150
+      },
+      "ia_asistencia": {
+        "pct_drafts_aprobados": 0.65,
+        "conversaciones_con_draft_aprobado": 91,
+        "conversaciones_total": 140,
+        "sentimiento": {
+          "positivo": 85,
+          "neutral": 45,
+          "negativo": 10,
+          "sin_clasificar": 0
+        }
+      }
+    }
+    ```
+
+    **Request (rango sin datos):**
+    ```
+    GET /api/v1/analytics/business?desde=2020-01-01&hasta=2020-01-02
+    ```
+
+    **Response (200 OK, con ceros/nulls):**
+    ```json
+    {
+      "desde": "2020-01-01",
+      "hasta": "2020-01-02",
+      "canal": null,
+      "conversaciones": {
+        "total": 0,
+        "abiertas": 0,
+        "cerradas": 0,
+        "por_canal": [],
+        "serie_diaria": [
+          {"fecha": "2020-01-01", "total": 0},
+          {"fecha": "2020-01-02", "total": 0}
+        ]
+      },
+      "tiempos_respuesta": {
+        "primera_respuesta_promedio_seg": null,
+        "respuesta_promedio_seg": null,
+        "conversaciones_con_respuesta": 0
+      },
+      "conversion": {
+        "tasa": null,
+        "cerradas": 0,
+        "totales": 0
+      },
+      "ia_asistencia": null
+    }
+    ```
+
+    ### Referencias
+
+    - METRICS_ANALYTICS.md: definición completa de cada métrica.
+    - PLAN-007: decisiones del Lead (Q1–Q4).
+    - SPEC-062/064/065: especificaciones y tests.
+    - ADR-004/008: Row Level Security efectiva.
     """
     canal_validado = _validar_canal(canal)
     _validar_rango(desde, hasta)
