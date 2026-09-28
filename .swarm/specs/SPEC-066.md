@@ -1,8 +1,8 @@
 # SPEC-066 — Documentación, runbook, notas OpenAPI, guía de feature-flag y deploy on-prem del dashboard de métricas de negocio
 
-- Estado: PROPUESTA · Responsable: QUICKSILVER · Colaboran: BLACK PANTHER, BLACK WIDOW, WOLVERINE, HAWKEYE, DAREDEVIL · Prioridad: MEDIA · Tipo: DOCS/DEPLOY · Fase: F4
+- Estado: CERRADA — documentación completa (METRICS_ANALYTICS.md, ANALYTICS_FEATURE_FLAG_GUIDE.md, sección de RUNBOOK.md, OpenAPI enriquecido, guía consolidada exportable a PDF); 3 errores factuales encontrados y corregidos en revisión (`is_active`→`activo`, `CANALES_VALIDOS` real, referencia cruzada SPEC-063/064) · Responsable: QUICKSILVER · Colaboran: BLACK PANTHER, BLACK WIDOW, WOLVERINE, HAWKEYE, DAREDEVIL · Prioridad: MEDIA · Tipo: DOCS/DEPLOY · Fase: F4
 - Deriva de: PLAN-007 (F4) · Clasificación: SENSIBLE (`.no-externo`) · ADR-004/ADR-008
-- Pendiente de aprobación explícita del Lead (no aprobar la propia SPEC).
+- APROBADO SPEC-066 por el Lead (bloque PLAN-007) — 2026-09-28. **Deploy on-prem (RF-04) diferido**: el Lead ejecutará el `docker compose build/up` de forma independiente cuando tenga los 7 secretos reales configurados en `.env` (`DB_PASSWORD`, `DB_APP_PASSWORD`, `JWT_SECRET_KEY`, `AUDIO_ENCRYPTION_KEY`, `WEBHOOK_SECRET`, `WEBHOOK_VERIFY_TOKEN`, `WHATSAPP_TOKEN`) — no ejecutado por el agente (C3: nunca se generan/inventan secretos de producción). Resto de criterios de aceptación cumplidos.
 
 ## Objetivo
 

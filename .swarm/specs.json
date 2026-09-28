@@ -9,10 +9,10 @@
     "total_specs": 66,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 2,
+      "APROBADA": 1,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 23,
+      "CERRADA": 24,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-09-28"
@@ -1547,7 +1547,7 @@
       "id": "SPEC-066",
       "titulo": "Documentacion, runbook, notas OpenAPI, guia de feature-flag y deploy on-prem del dashboard de metricas de negocio",
       "archivo": ".swarm/specs/SPEC-066.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F4",
       "plan": "PLAN-007",
       "sensible": true,
