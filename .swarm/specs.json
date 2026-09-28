@@ -4,12 +4,12 @@
   "actualizado": "2026-09-27T00:00:00-05:00",
   "contadores": {
     "next_plan": 8,
-    "next_spec": 67,
-    "next_adr": 14,
-    "total_specs": 66,
+    "next_spec": 73,
+    "next_adr": 15,
+    "total_specs": 72,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 1,
+      "APROBADA": 7,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
       "CERRADA": 24,
@@ -1585,6 +1585,126 @@
         "SPEC-064",
         "SPEC-065"
       ]
+    },
+    {
+      "id": "SPEC-067",
+      "titulo": "Prueba de viabilidad de TTS local en CPU (THOR): Piper vs Coqui, voz es-CO, calidad+latencia vs techo, decision de motor",
+      "archivo": ".swarm/specs/SPEC-067.md",
+      "estado": "APROBADA",
+      "fase": "F0",
+      "plan": "PLAN-008",
+      "sensible": true,
+      "responsable": "THOR",
+      "revisan": [
+        "BLACK PANTHER",
+        "CAPTAIN AMERICA",
+        "HAWKEYE",
+        "BLACK WIDOW",
+        "WOLVERINE"
+      ],
+      "depende_de": []
+    },
+    {
+      "id": "SPEC-068",
+      "titulo": "ADR-014 + modelo de datos aditivo (respuesta_modo/tts_estado/audio_salida_ref) + limpieza de residuos TTS_* de config",
+      "archivo": ".swarm/specs/SPEC-068.md",
+      "estado": "APROBADA",
+      "fase": "F1",
+      "plan": "PLAN-008",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-067"
+      ]
+    },
+    {
+      "id": "SPEC-069",
+      "titulo": "Servicio TTS local en ia_internal (sin egress) + cola tts:jobs/throttling + enganche hibrido al human-in-the-loop + subida por modulo WhatsApp",
+      "archivo": ".swarm/specs/SPEC-069.md",
+      "estado": "APROBADA",
+      "fase": "F2",
+      "plan": "PLAN-008",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "THOR",
+        "HAWKEYE",
+        "WOLVERINE",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-067",
+        "SPEC-068"
+      ]
+    },
+    {
+      "id": "SPEC-070",
+      "titulo": "SPA/UX opt-in responder con audio + escuchar antes de enviar + feature-flag + disclaimer de voz sintetica",
+      "archivo": ".swarm/specs/SPEC-070.md",
+      "estado": "APROBADA",
+      "fase": "F3",
+      "plan": "PLAN-008",
+      "sensible": true,
+      "responsable": "SPIDER-MAN",
+      "revisan": [
+        "DAREDEVIL",
+        "BLACK PANTHER",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-069"
+      ]
+    },
+    {
+      "id": "SPEC-071",
+      "titulo": "Pruebas + seguridad + no-regresion del Entregable 6 (cero egress de voz, aprobacion humana, cero regresion #4/#5/texto, cobertura)",
+      "archivo": ".swarm/specs/SPEC-071.md",
+      "estado": "APROBADA",
+      "fase": "F4",
+      "plan": "PLAN-008",
+      "sensible": true,
+      "responsable": "HAWKEYE",
+      "revisan": [
+        "THOR",
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "DAREDEVIL",
+        "CAPTAIN AMERICA"
+      ],
+      "depende_de": [
+        "SPEC-067",
+        "SPEC-068",
+        "SPEC-069",
+        "SPEC-070"
+      ]
+    },
+    {
+      "id": "SPEC-072",
+      "titulo": "Documentacion, runbook, limpieza de residuos, simulador local y deploy on-prem del Entregable 6",
+      "archivo": ".swarm/specs/SPEC-072.md",
+      "estado": "APROBADA",
+      "fase": "F5",
+      "plan": "PLAN-008",
+      "sensible": true,
+      "responsable": "QUICKSILVER",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "HAWKEYE",
+        "DAREDEVIL"
+      ],
+      "depende_de": [
+        "SPEC-071"
+      ]
     }
   ],
   "adrs": [
@@ -1691,6 +1811,13 @@
       "estado": "Aceptada",
       "fecha": "2026-09-25",
       "plan": "PLAN-006"
+    },
+    {
+      "id": "ADR-014",
+      "titulo": "Como se aprueba y envia una respuesta de audio (TTS local) manteniendo el human-in-the-loop",
+      "archivo": ".swarm/adrs/ADR-014-aprobacion-envio-respuesta-audio-tts-local-human-in-the-loop.md",
+      "estado": "Aceptada",
+      "plan": "PLAN-008"
     }
   ]
 }
