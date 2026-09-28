@@ -885,7 +885,7 @@ python backend/tools/wa_webhook_simulator.py --audio
 
 ### Operación: vista general
 
-El dashboard de analítica (`GET /api/v1/analytics/business`, endpoint SPEC-064; SPA `AnalyticsPage.tsx`) proporciona KPIs agregados en tiempo real: volumen de conversaciones, tiempos de respuesta, tasa de conversión y asistencia IA. Modo on-demand (sin caché): cada request recalcula sobre el rango pedido.
+El dashboard de analítica (`GET /api/v1/analytics/business`, endpoint SPEC-063; SPA `AnalyticsPage.tsx`, SPEC-064) proporciona KPIs agregados en tiempo real: volumen de conversaciones, tiempos de respuesta, tasa de conversión y asistencia IA. Modo on-demand (sin caché): cada request recalcula sobre el rango pedido.
 
 **Visibilidad:** cada operador/supervisor ve SOLO datos de su tenant (RLS efectiva, ADR-004/008).
 
