@@ -79,7 +79,7 @@ Ningún campo de la respuesta contiene datos de PII individual: **solo agregados
 
 ### Definición general
 
-**Universo:** `Conversation` con `is_active = True` (borrado lógico, C2) y `created_at` dentro de `[desde, hasta]` (ventana sobre fecha de creación de la conversación, **nunca sobre `updated_at`**, PLAN-007 §3.3).
+**Universo:** `Conversation` con `activo = True` (borrado lógico, C2) y `created_at` dentro de `[desde, hasta]` (ventana sobre fecha de creación de la conversación, **nunca sobre `updated_at`**, PLAN-007 §3.3).
 
 **Desglose:**
 - **`total`:** conteo de todas las conversaciones en el universo.
@@ -228,8 +228,8 @@ Si no: `ia_asistencia = null`.
 
 ### % de borradores RAG aprobados
 
-- **Universo:** conversaciones del rango con `is_active = True` y `created_at` en `[desde, hasta]` (mismo universo que volumen).
-- **Numerador:** conversaciones que tienen AL MENOS un `RagDraft` con `estado = "aprobado"` y `is_active = True`.
+- **Universo:** conversaciones del rango con `activo = True` y `created_at` en `[desde, hasta]` (mismo universo que volumen).
+- **Numerador:** conversaciones que tienen AL MENOS un `RagDraft` con `estado = "aprobado"` y `activo = True`.
 - **Denominador:** `conversaciones_total` (todas las conversaciones del universo).
 - **Fórmula:** `pct_drafts_aprobados = conversaciones_con_draft_aprobado / conversaciones_total` (si `total > 0`), else `null`.
 
@@ -326,13 +326,13 @@ El backend retorna HTTP 422 (Unprocessable Entity) con un `detail` descriptivo e
 
 ### Aplicación en cada métrica
 
-Todas las métricas **excluyen** registros con `is_active = False`:
+Todas las métricas **excluyen** registros con `activo = False`:
 
-- **Conversaciones:** `Conversation.is_active = True`.
-- **Mensajes:** `Message.is_active = True`.
-- **Borradores IA:** `RagDraft.is_active = True`.
+- **Conversaciones:** `Conversation.activo = True`.
+- **Mensajes:** `Message.activo = True`.
+- **Borradores IA:** `RagDraft.activo = True`.
 
-**Verificación:** tests de SPEC-065 cubren que un `SOFT DELETE` (UPDATE `is_active = false`) no es visible en ninguna métrica.
+**Verificación:** tests de SPEC-065 cubren que un `SOFT DELETE` (UPDATE `activo = false`) no es visible en ninguna métrica.
 
 ### Implicación para anonimización (HABEAS DATA)
 
@@ -388,13 +388,13 @@ Respuesta: HTTP 200 (no error). Todos los campos contienen valores "cero" o "nul
 GET /api/v1/analytics/business?desde=2026-09-20&hasta=2026-09-27&canal=telegram
 ```
 
-(Asumiendo que `CANALES_VALIDOS = {"whatsapp", "webchat", "email"}`)
+(`CANALES_VALIDOS = {"instagram", "messenger", "webchat", "whatsapp"}`, `app/schemas/conversation.py`)
 
 Respuesta: HTTP 422 Unprocessable Entity.
 
 ```json
 {
-  "detail": "canal inválido: debe ser uno de ['email', 'webchat', 'whatsapp']"
+  "detail": "canal inválido: debe ser uno de ['instagram', 'messenger', 'webchat', 'whatsapp']"
 }
 ```
 

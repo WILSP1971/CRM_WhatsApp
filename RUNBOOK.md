@@ -1014,24 +1014,24 @@ Los tests de SPEC-065 verifican esto de forma automatizada con fixtures de múlt
 
 ### Borrado lógico (C2)
 
-Todas las métricas excluyen registros con `is_active = False`:
+Todas las métricas excluyen registros con `activo = False`:
 
-- `Conversation.is_active = True`
-- `Message.is_active = True`
-- `RagDraft.is_active = True`
+- `Conversation.activo = True`
+- `Message.activo = True`
+- `RagDraft.activo = True`
 
 Verificar:
 
 ```bash
 # 1. Crear una conversación
 # 2. Obtener analytics (incluye la conversación)
-# 3. Soft-delete la conversación (UPDATE Conversation SET is_active = false WHERE id = ...)
+# 3. Soft-delete la conversación (UPDATE Conversation SET activo = false WHERE id = ...)
 # 4. Volver a obtener analytics → el total DEBE DISMINUIR en 1
 
 # En SQL (desde el contenedor db):
 docker compose exec db psql -U postgres -d omnicore_ai << 'EOF'
 -- Contar conversaciones activas
-SELECT COUNT(*) as activas FROM conversations WHERE is_active = true;
+SELECT COUNT(*) as activas FROM conversations WHERE activo = true;
 -- Contar TODAS (incluyendo soft-deleted)
 SELECT COUNT(*) as todas FROM conversations;
 -- El endpoint solo cuenta "activas"
@@ -1082,7 +1082,7 @@ docker compose exec db psql -U postgres -d omnicore_ai << 'EOF'
 EXPLAIN ANALYZE
 SELECT COUNT(*) FROM conversations
 WHERE tenant_id = 'demo'  -- Tenant example
-  AND is_active = true
+  AND activo = true
   AND created_at >= '2026-09-01'::timestamp
   AND created_at < '2026-10-01'::timestamp;
 EOF
