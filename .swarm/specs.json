@@ -169,6 +169,26 @@
       ],
       "adrs_recomendados": [],
       "nota": "Dashboard de metricas de NEGOCIO (no tecnico: distinto de Prometheus/metrics SPEC-022). Capa de servicio de agregacion (SPEC-062) + endpoint REST parametrizado por rango+canal (SPEC-063) + AnalyticsPage a datos reales por feature-flag VITE_USE_REAL_API (SPEC-064) + pruebas/seguridad/perf/no-regresion (SPEC-065) + docs/deploy (SPEC-066). Toda agregacion corre bajo RLS efectiva (rol omnicore_app NOSUPERUSER NOBYPASSRLS, tenant_id del JWT fijado por get_tenant_db) - PROHIBIDO bypass con rol owner (bug recurrente documentado en retention_service/call_retention_service). Decisiones VINCULANTES del Lead: Q1=conversion es conversacion cerrada (estado=cerrada), tasa=cerradas/totales, CERO dominio nuevo, sin ADR de dominio; Q2=on-demand con filtro de fecha (no tiempo real/WebSocket); Q3=REEMPLAZAR el mock de AnalyticsPage (kpis/analytics/sales.json, SPEC-008) por datos reales por feature-flag, misma ruta, flag OFF=mock intacto; Q4=presets hoy/7d/30d + rango custom. Tiempos de respuesta derivados de messages (contacto -> siguiente saliente agente/ia) con casos limite. Sin IA nueva (senales de IA leidas de columnas persistidas). NO genera specs (implementacion) hasta 'APROBADO PLAN-007'."
+    },
+    {
+      "id": "PLAN-008",
+      "titulo": "Entregable #6: respuesta en nota de voz TTS 100% local (CPU-only) a nota de voz entrante de WhatsApp, opt-in, aprobacion hibrida (texto + escuchar antes de enviar), sin egress nuevo",
+      "archivo": ".swarm/PLAN-008.md",
+      "estado": "APROBADO",
+      "origen": "prompt-lab/prompts/PROMPT-008-TTS-NOTAS-VOZ.md",
+      "sensible": true,
+      "specs_propuestas": [
+        "SPEC-067",
+        "SPEC-068",
+        "SPEC-069",
+        "SPEC-070",
+        "SPEC-071",
+        "SPEC-072"
+      ],
+      "adrs_recomendados": [
+        "ADR-014"
+      ],
+      "nota": "Desbloquea el P2 aplazado en ADR-013 SS4 (TTS de salida). Decisiones vinculantes del Lead (prompt SS7.1): aprobacion hibrida (Q1-C, guion por defecto + escuchar antes de enviar opcional), opt-in (Q2-A), Piper TTS candidato principal vs Coqui comparativa sujeto a prueba de viabilidad THOR (Q3), techo de latencia <=5-10s en background (Q4-b). F0 (SPEC-067, THOR) es puerta previa dura: sin decision de motor viable en CPU no arranca F2. Riesgo top R-83: si ningun motor cumple, plan de contingencia escalonado (relajar techo / degradar motor / acotar longitud / fallback a solo texto), decision final del Lead con evidencia. Pendiente de confirmar con el Lead al aprobar: disclaimer de voz sintetica si/no (recomendacion DOCTOR STRANGE: marca ligera)."
     }
   ],
   "specs": [
