@@ -15,6 +15,9 @@
 8. [Verificación de aislamiento multi-tenant (RLS)](#verificación-de-aislamiento-multi-tenant)
 9. [Logs y observabilidad](#logs-y-observabilidad)
 10. [Escenarios de degradación](#escenarios-de-degradación)
+11. [Entregable #5 — Notas de voz de WhatsApp: deploy on-prem](#entregable-5--notas-de-voz-de-whatsapp-deploy-on-prem)
+12. [Entregable #6 — TTS de respuesta en notas de voz (SPEC-067/069/072)](#entregable-6--tts-de-respuesta-en-notas-de-voz-spec-067069072)
+13. [Dashboard de Analítica de Negocio (SPEC-064/066)](#dashboard-de-analítica-de-negocio-spec-064066)
 
 ---
 
@@ -878,6 +881,351 @@ export WHATSAPP_APP_SECRET=$(openssl rand -hex 32)
 export WEBHOOK_URL=http://localhost:8000/api/v1/whatsapp/webhook
 python backend/tools/wa_webhook_simulator.py --audio
 ```
+
+---
+
+## Entregable #6 — TTS de respuesta en notas de voz (SPEC-067/069/072)
+
+### Motor, latencia y configuración
+
+El Entregable #6 (SPEC-067/069/070/071/072) implementa síntesis de voz **100% local** para responder con notas de voz de WhatsApp. No introduce egress externo de inferencia ni terceros.
+
+#### Motor TTS elegido y por qué
+
+- **Motor:** Piper TTS 1.8.0 (SPEC-067, decisión por evidencia medida)
+- **Voz:** `es_ES-davefx-medium` (única combinación motor+voz que cumple el techo de latencia ≤10 segundos en las 8 categorías de guion probadas, peor caso p95 = 7.19 s)
+- **Alternativa rechazada:** `es_MX-ald-medium` (acento más cercano a LatAm, pero incumple el techo en el guion más largo: 10.137 s medidos)
+- **Acento:** español peninsular; trade-off documentado como aceptable para el contexto de atención médica (entienden fácilmente hablantes de LatAm)
+- **Configuración:** CPU-only, `use_cuda=False` (ninguna GPU disponible en máquina objetivo)
+- **Pesos:** montados por volumen (`respuesta_tts_piper_voices`, sin descarga en runtime — ADR-009/012)
+
+#### Techo de latencia efectivo
+
+- **Objetivo:** ≤5 segundos (objetivo ambicioso para clips cortos)
+- **Aceptable:** ≤10 segundos (techo firme, medido por THOR en SPEC-071)
+- **Origen del techo:** evaluación de 8 guiones reales (corto 90 chars, medio 180 chars, largo 420 chars) bajo carga CPU concurrente (proxy de STT/RAG/sentimiento corriendo en paralelo)
+- **Máximo observado:** 3.67 segundos (guion mediano de 420 chars, bajo máxima concurrencia)
+- **Límite sintetizable:** 420 caracteres (bajado de 750 después de que THOR midió guiones más largos excediendo el techo: 11-15 segundos observados)
+
+**¿Por qué 420 caracteres?** El Lead decidió priorizar consistencia de latencia sobre soporte de guiones largos. Cualquier guion > 420 chars se rechaza con error (`tts_estado="error"`, fallback a texto intacto) en lugar de arriesgar exceder el techo bajo carga concurrente.
+
+#### Configuración de throttling y concurrencia
+
+```bash
+# En .env:
+RESPUESTA_TTS_MAX_CHARS=420              # Límite sintetizable (Q3-c, ADR-014)
+RESPUESTA_TTS_TIMEOUT_SECONDS=10         # Techo de latencia
+RESPUESTA_TTS_CONCURRENCIA=1             # 1 job de síntesis a la vez (R-84)
+RESPUESTA_TTS_ENGINE=piper               # Motor (solo "piper" válido hoy)
+RESPUESTA_TTS_PERSIST_ENABLED=false      # NO persistir clips por defecto
+```
+
+**¿Por qué concurrencia=1?** THOR (SPEC-071) no validó múltiples workers bajo carga real. Fijar en 1 evita contención CPU compartida con STT/RAG/análisis de sentimiento. Si en el futuro la máquina se amplía (más vCPU/GPU), reevaluar este parámetro con evidence medida.
+
+#### Política de retención
+
+**Por defecto:** No persistir el clip TTS tras envío.
+
+- **Ventaja:** basta el guion aprobado (persiste en `rag_drafts.content` + `Message.body`)
+- **Almacenamiento:** transitorios en el almacén cifrado (`/audio_store`), purgados automáticamente tras `wa_send_worker` enviar
+- **Conformidad:** C2 (borrado lógico), sin acumulación indefinida de audio sintético
+
+**Activar persistencia (auditoría):**
+
+```bash
+# En .env (SENSIBLE, C6 — requiere aprobación explícita del Lead):
+RESPUESTA_TTS_PERSIST_ENABLED=true
+AUDIO_RETENTION_DAYS=30  # Retención máxima del clip (configurable)
+```
+
+Si activado:
+- Los clips se cifran vía `app.services.telefonia.audio_store` (mismo régimen que audio entrante, SPEC-041)
+- Se puebla `rag_drafts.audio_salida_ref` (referencia opaca, namespaced por tenant/draft_id)
+- **Importante (verificado, no asumir):** a diferencia del audio ENTRANTE (`messages.audio_ref`, purgado por `call_retention_service`/`retention_service` existentes), **no existe hoy ningún job de purga automática para `rag_drafts.audio_salida_ref`** — `AUDIO_RETENTION_DAYS` gobierna la retención del audio entrante, no la de este clip de salida. Si se activa la persistencia por auditoría, la purga debe hacerse manualmente (o implementarse como SPEC nueva) hasta que exista ese job; no asumir limpieza automática.
+
+### Disclaimer de voz sintética
+
+La SPA (`src/components/rag/RagDraftCard.tsx`, SPEC-070) muestra un disclaimer **siempre** que `respuesta_modo=="audio"`:
+
+```
+🔊 Respuesta de voz asistida
+```
+
+- **Marca ligera**, no desactivable (requisito ADR-014)
+- **Propósito:** transparencia ante el usuario sobre si la respuesta es síntesis o grabada
+- **Control de activación:** toggle `VITE_USE_REAL_API` (reutilizado, no flag nuevo)
+  - `VITE_USE_REAL_API=true` → disclaimer visible, UX de audio activa
+  - `VITE_USE_REAL_API=false` → mock, sin audio (Entregable #1)
+
+### Operación de rutas híbridas
+
+El sistema soporta **dos rutas** de operación (ADR-014, aprobación híbrida):
+
+#### Ruta 1: Por defecto (aprobar → generar → enviar)
+
+```
+Agente approves guion → API: POST approve_and_send()
+  → Encola TtsSynthesisJob(modo="enviar")
+  → tts_worker: sintetiza
+  → Transiciona rag_drafts.tts_estado="listo"
+  → Encola WhatsAppOutboundJob (wa_send_worker lo envía)
+  → Usuario recibe nota de voz
+```
+
+**Curl de ejemplo** (rutas reales del router `app/api/rag.py`, montado bajo `/api/v1/rag`):
+
+```bash
+# 1. Aprobación (guion + TTS si respuesta_modo="audio"; endpoint real: /approve)
+curl -X POST http://localhost:8000/api/v1/rag/conversations/{conversation_id}/drafts/{draft_id}/approve \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json"
+# Salida esperada: 200 OK
+# rag_drafts.tts_estado pasa a "generando", luego "listo" (async, background)
+
+# 2. Verificar estado del clip (opcional, antes de envío)
+curl -X GET http://localhost:8000/api/v1/rag/conversations/{conversation_id}/drafts/{draft_id} \
+  -H "Authorization: Bearer $TOKEN"
+# Respuesta: {..., "tts_estado": "listo", "audio_listo": true, ...} (nunca expone audio_salida_ref crudo)
+```
+
+#### Ruta 2: Opcional — Escuchar antes de enviar
+
+```
+Agente solicita "escuchar" (opt-in) → API: POST listen
+  → Encola TtsSynthesisJob(modo="escuchar")
+  → tts_worker: sintetiza
+  → NO encola envío (clip queda en almacén, esperando)
+  → Agente: GET audio para descargar y reproducir localmente
+  → Agente: decide si aprueba (POST approve, reutiliza el clip ya listo) o rechaza
+```
+
+**Curl de ejemplo** (rutas reales del router `app/api/rag.py`, montado bajo `/api/v1/rag`):
+
+```bash
+# 1. Solicitar síntesis sin envío ("escuchar antes de decidir")
+curl -X POST http://localhost:8000/api/v1/rag/conversations/{conversation_id}/drafts/{draft_id}/listen \
+  -H "Authorization: Bearer $TOKEN"
+# Salida esperada: 202 Accepted
+# rag_drafts.tts_estado pasa a "generando", luego "listo"
+
+# 2. Descargar el clip (GET, reproducible en navegador)
+curl -X GET http://localhost:8000/api/v1/rag/conversations/{conversation_id}/drafts/{draft_id}/audio \
+  -H "Authorization: Bearer $TOKEN" \
+  --output clip.ogg
+# Salida esperada: 200 OK, binario audio/ogg (~30-100 KB típicamente); 404 si aún no hay clip "listo"
+
+# 3. Decidir: si OK, aprobar (el clip YA listo se envía directo, sin resintetizar)
+curl -X POST http://localhost:8000/api/v1/rag/conversations/{conversation_id}/drafts/{draft_id}/approve \
+  -H "Authorization: Bearer $TOKEN"
+
+# O: rechazar (vuelve a texto antes de aprobar)
+curl -X PATCH http://localhost:8000/api/v1/rag/conversations/{conversation_id}/drafts/{draft_id}/respuesta-modo \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"respuesta_modo":"texto"}'
+# Ruta de audio desactivada; enviar como texto
+```
+
+#### Endpoint de cambio de modo
+
+```bash
+# Cambiar modo PRE-aprobación (PATCH, idempotente); campo del body: "respuesta_modo"
+curl -X PATCH http://localhost:8000/api/v1/rag/conversations/{conversation_id}/drafts/{draft_id}/respuesta-modo \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"respuesta_modo":"audio"}'  # o "texto"
+# Salida esperada: 200 OK
+# rag_drafts.respuesta_modo se actualiza; SÍ puede cambiar antes de aprobar
+# Tras aprobar, cambiar modo ya no tiene efecto (síntesis ya encolada)
+```
+
+### Troubleshooting
+
+#### Síntoma: `tts_estado="error"` (sin generar clip)
+
+**Causas comunes:**
+
+1. **Guion > 420 caracteres**
+   ```bash
+   # Verificar longitud
+   echo "tu guion aquí" | wc -c
+   # Solución: acortar guion o aumentar RESPUESTA_TTS_MAX_CHARS (no recomendado)
+   ```
+
+2. **Motor Piper no cargado (pesos no encontrados)**
+   ```bash
+   # Verificar que el volumen está montado
+   docker compose exec tts_worker ls -la /piper_voices
+   # Esperado: es_ES-davefx-medium.onnx, es_ES-davefx-medium.onnx.json
+   # Si falta: descargar pre-deployment (manual, no en runtime)
+   ```
+
+3. **ffmpeg falla transcodificando**
+   ```bash
+   # Verificar que ffmpeg está disponible
+   docker compose exec tts_worker which ffmpeg
+   # Si falta: `apt-get install ffmpeg` en el Dockerfile o imagen base
+   ```
+
+4. **Timeout de síntesis (>10 segundos)**
+   ```bash
+   # Ver logs del worker
+   docker compose logs --tail=50 tts_worker | grep -i error
+   # Aumentar RESPUESTA_TTS_TIMEOUT_SECONDS si es legítimo (no recomendado; mejor acortar guion)
+   ```
+
+5. **Base de datos o Redis caídos**
+   ```bash
+   # Verificar que tts_worker puede conectar
+   docker compose exec tts_worker redis-cli -h redis ping
+   # Salida esperada: PONG
+   docker compose exec tts_worker pg_isready -h db -U omnicore_app
+   # Salida esperada: accepting connections
+   ```
+
+#### Síntoma: `tts_estado="listo"` pero clip no se envía
+
+**Causas comunes:**
+
+1. **wa_send_worker no leyó la cola `wa:outbound`**
+   ```bash
+   # Verificar que wa_send_worker está up
+   docker compose ps wa_send_worker
+   # Esperado: "Up"
+   
+   # Ver logs
+   docker compose logs --tail=20 wa_send_worker
+   ```
+
+2. **Credenciales WhatsApp no válidas**
+   ```bash
+   # Verificar token
+   echo $WHATSAPP_TOKEN | head -c 20
+   # Si vacío o "dev-only": actualizar .env con token real
+   
+   # Restart del worker
+   docker compose restart wa_send_worker
+   ```
+
+3. **Clip no persistido (si `RESPUESTA_TTS_PERSIST_ENABLED=false`)**
+   ```bash
+   # El clip se purga tras envío — si el envío falla, se pierde
+   # Activar persistencia para re-intentos:
+   # RESPUESTA_TTS_PERSIST_ENABLED=true (C6 change, requiere aprobación)
+   ```
+
+#### Síntoma: Formato OGG/Opus inválido
+
+**Verificación:**
+
+```bash
+# Descargar clip via API
+curl -X GET http://localhost:8000/api/v1/rag/conversations/{conversation_id}/drafts/{draft_id}/audio \
+  -H "Authorization: Bearer $TOKEN" \
+  -o test.ogg
+
+# Verificar firma OGG
+file test.ogg
+# Esperado: "test.ogg: Ogg data, Opus audio, ..."
+
+# O: hexdump (primeros 4 bytes deben ser 0x4F 0x67 0x67 0x53 = "OggS")
+hexdump -C test.ogg | head -1
+# Esperado: 00000000  4f 67 67 53 ...
+
+# Reproducir (si ffplay disponible localmente)
+ffplay test.ogg
+```
+
+### Limpieza de residuos documentada (PLAN-005 archivado)
+
+El proyecto archivó el VoiceBot en vivo (PLAN-005, barge-in ≤700 ms, nunca implementado) que usaba tres variables de config GPU:
+
+- `TTS_MODE` (interfaz conmutable "piper generativo" ↔ "modo pregrabado" de bajo cómputo)
+- `TTS_VRAM_FRACTION` (reserva de VRAM para TTS en vivo)
+- `PIPER_VOICE` (voz Piper, heredada — RETENIDA como única fuente de verdad, CORREGIDA en valor)
+
+**Estado actual:**
+
+| Variable | Estado | Ubicación | Motivo |
+|---|---|---|---|
+| `TTS_MODE` | ELIMINADA | (residuo, no usado) | No aplica en CPU-only; motor está fijado a Piper |
+| `TTS_VRAM_FRACTION` | ELIMINADA | (residuo, no usado) | CPU-only, no hay GPU en máquina objetivo (R-87) |
+| `PIPER_VOICE` | RETENIDA, CORREGIDA | `.env.example` línea 345 | Fuente única de verdad (motor+voz); `es_CO-pablo-medium` no existe (404); corregida a `es_ES-davefx-medium` |
+
+**Servicio legado (`voice_tts`):**
+
+El bloque `voice_tts` en `docker-compose.yml` (líneas 872-903) permanece **INTACTO A PROPÓSITO**:
+- Imagen placeholder (nunca ejecuta lógica real)
+- Heredan `TTS_MODE`, `PIPER_VOICE`, `TTS_VRAM_FRACTION` del `.env.example` (líneas 329-351)
+- NO se reactivan; quedan como documentación archivada del diseño de F0
+- El Entregable #6 REAL usa prefijo `RESPUESTA_TTS_*` (variables deliberadamente distintas)
+
+**Migración para `.env` existentes:**
+
+Si tus máquinas en producción aún tienen `.env` con `TTS_VRAM_FRACTION`:
+
+```bash
+# 1. Editar .env
+nano .env
+
+# 2. Buscar y eliminar (NUNCA reemplazar con otro valor; es residuo)
+# TTS_VRAM_FRACTION=...
+# → Eliminar la línea COMPLETA
+
+# 3. Guardar y reiniciar
+docker compose restart
+```
+
+No tienes que hacer nada especial. Las variables eliminadas simplemente se ignoran (no son consumidas por ningún módulo de código). Leyendo en `config.py`, las únicas variables leídas son:
+
+- `RESPUESTA_TTS_*` (TTS asincrónico, NUEVO)
+- `PIPER_VOICE` / `PIPER_VOICE_DIR` (compartidas, únicamente)
+- `AUDIO_*` (almacén, existentes)
+
+**Verificación automática:**
+
+```bash
+# Verificar que .env.example NO tiene TTS_VRAM_FRACTION en el bloque tts_worker
+grep -A 70 "# TTS asíncrono" .env.example | grep -i "TTS_VRAM_FRACTION"
+# Salida esperada: vacío (no encontrado)
+
+# Verificar que docker-compose.yml NO referencia TTS_VRAM_FRACTION en tts_worker
+sed -n '561,635p' docker-compose.yml | grep -i "TTS_VRAM_FRACTION"
+# Salida esperada: vacío
+```
+
+### Simulador local sin egress
+
+Para validar el slice end-to-end localmente (síntesis + formato) sin internet de inferencia:
+
+```bash
+# Simulador por defecto (guion ejemplo corto)
+python backend/tools/tts_simulator.py
+
+# Simulador con guion personalizado
+python backend/tools/tts_simulator.py --guion "Hola, buenos días. Confirmamos tu cita."
+
+# Simulador con guion cercano al límite (400 chars)
+python backend/tools/tts_simulator.py --guion "$(python -c 'print(\"Paso a confirmar tu información. Nombre, \" * 30)')"
+
+# Simulador con guion que EXCEDE el límite (430+ chars, debe rechazarse)
+python backend/tools/tts_simulator.py --guion "$(python -c 'print(\"a \" * 250)')"
+```
+
+**Qué valida:**
+
+1. Motor real (Piper TTS 1.8.0) desde `app.services.telefonia.tts_engine`
+2. Normalización de texto (cifras → palabras, siglas → letras)
+3. Formato OGG/Opus válido (firma `OggS`, codec Opus)
+4. Métricas de latencia (síntesis + transcodificación, objetivo ≤10s)
+5. Manejo de errores (`SynthesizableTextTooLongError`, modelo no encontrado, ffmpeg fallo)
+
+**Qué NO valida (scope limitado, como simuladores anteriores):**
+
+- Descarga real desde Graph API de Meta (no hay credenciales, no hay `media_id` real)
+- Upload real a WhatsApp (simulador imprime lo que se enviaría, sin ejecutarlo)
+
+Para e2e real, la suite de tests (`backend/tests/test_rag_tts_api.py`) sí valida el ciclo completo en Docker con mocks apropiados.
 
 ---
 
