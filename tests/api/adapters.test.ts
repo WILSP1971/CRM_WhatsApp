@@ -255,7 +255,7 @@ describe("adaptCitations / adaptDraft", () => {
     expect(result[0].id).toContain("doc-1");
   });
 
-  it("adapta un borrador real a RagDraft", () => {
+  it("adapta un borrador real a RagDraft (respuesta_modo='texto' default)", () => {
     const draft = adaptDraft({
       id: "draft-1",
       tenant_id: "t1",
@@ -269,6 +269,9 @@ describe("adaptCitations / adaptDraft", () => {
       edited_by: null,
       approved_by: null,
       sent_message_id: null,
+      respuesta_modo: "texto",
+      tts_estado: null,
+      audio_listo: false,
       activo: true,
       created_at: "2026-09-15T14:20:00-05:00",
       updated_at: "2026-09-15T14:20:00-05:00",
@@ -278,6 +281,36 @@ describe("adaptCitations / adaptDraft", () => {
       conversationId: "c1",
       text: "Respuesta sugerida",
       generatedAt: "2026-09-15T14:20:00-05:00",
+      respuestaModo: "texto",
+      ttsEstado: null,
+      audioListo: false,
     });
+  });
+
+  /** SPEC-069/070 (ADR-014) — copia 1:1 de respuesta_modo/tts_estado/audio_listo. */
+  it("adapta un borrador con respuesta_modo='audio' y tts_estado='listo'", () => {
+    const draft = adaptDraft({
+      id: "draft-2",
+      tenant_id: "t1",
+      conversation_id: "c1",
+      query: "q",
+      content: "Respuesta sugerida",
+      content_original: "Respuesta sugerida",
+      model: "qwen2.5:7b-instruct",
+      citations: [],
+      estado: "propuesto",
+      edited_by: null,
+      approved_by: null,
+      sent_message_id: null,
+      respuesta_modo: "audio",
+      tts_estado: "listo",
+      audio_listo: true,
+      activo: true,
+      created_at: "2026-09-15T14:20:00-05:00",
+      updated_at: "2026-09-15T14:20:00-05:00",
+    });
+    expect(draft.respuestaModo).toBe("audio");
+    expect(draft.ttsEstado).toBe("listo");
+    expect(draft.audioListo).toBe(true);
   });
 });

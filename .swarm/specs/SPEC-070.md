@@ -1,6 +1,6 @@
 # SPEC-070 — SPA/UX: acción opt-in "responder con audio" + botón "escuchar antes de enviar" + reproductor + estados AAA + feature-flag (flag OFF = texto intacto) + disclaimer de voz sintética (marca ligera) 🔴 SENSIBLE
 
-- Estado: APROBADA · Responsable: SPIDER-MAN · Colaboran: DAREDEVIL, CAPTAIN AMERICA, HAWKEYE, WOLVERINE, BLACK WIDOW · Prioridad: ALTA · Tipo: FRONTEND/UX · Fase: F3
+- Estado: CERRADA — toggle opt-in + botón "escuchar antes de enviar" + reproductor + disclaimer firme (verificado incondicional en el código) + estados AAA implementados en `RagDraftCard.tsx`; reutiliza `VITE_USE_REAL_API` (flag OFF = cero controles/fetches de audio); tsc/eslint limpios, 88/88 tests en verde (1 fallo de regex de test corregido por el orquestador). Responsable: SPIDER-MAN · Colaboran: DAREDEVIL, CAPTAIN AMERICA, HAWKEYE, WOLVERINE, BLACK WIDOW · Prioridad: ALTA · Tipo: FRONTEND/UX · Fase: F3
 - Deriva de: PLAN-008 (F3, §2.IN.7, §3.1/§3.4, §4, §6 R-85, CE-81/CE-85/CE-87) · Clasificación: SENSIBLE (`.no-externo`) · ADR-014/ADR-012
 - APROBADO SPEC-070 por el Lead (bloque PLAN-008) — 2026-09-28.
 

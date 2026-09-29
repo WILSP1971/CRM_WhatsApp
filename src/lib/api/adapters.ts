@@ -88,6 +88,16 @@
  *    `undefined`, sin regresión. Además, `contenido` puede llegar `null`
  *    (nota del schema `MessageOut`, un audio aún sin transcribir) — `text`
  *    hace fallback a cadena vacía (`?? ""`) para no romper el render.
+ *
+ * 10. `RagDraft.respuestaModo`/`ttsEstado`/`audioListo` (SPEC-069/070,
+ *     ADR-014, Entregable #6) <- `BackendDraft.respuesta_modo`/`tts_estado`/
+ *     `audio_listo`: copia 1:1 (mismo vocabulario, sin traducción) porque
+ *     `RagDraftCard` (SPEC-070) consume directamente esos valores para
+ *     decidir qué controles de audio mostrar. Puramente aditivo: con el
+ *     flag OFF la maqueta (`src/mocks/rag.json`) no pasa por este adaptador
+ *     y los tres campos quedan `undefined` — `RagDraftCard` los trata como
+ *     `"texto"`/sin solicitar, igual que el comportamiento previo a esta
+ *     SPEC (RNF-FLAG).
  */
 
 import type {
@@ -284,6 +294,9 @@ export function adaptDraft(draft: BackendDraft): RagDraft {
     conversationId: draft.conversation_id,
     text: draft.content,
     generatedAt: draft.created_at,
+    respuestaModo: draft.respuesta_modo,
+    ttsEstado: draft.tts_estado,
+    audioListo: draft.audio_listo,
   };
 }
 

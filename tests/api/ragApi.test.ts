@@ -73,4 +73,108 @@ describe("ragApi", () => {
       status: 503,
     });
   });
+
+  /** SPEC-070 (RF-01, ADR-014) — opt-in de audio ANTES de aprobar. */
+  it("setRespuestaModo llama a PATCH .../drafts/{id}/respuesta-modo con el body correcto", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: "draft-1", respuesta_modo: "audio" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { setRespuestaModo } = await import("@/lib/api/ragApi");
+    await setRespuestaModo("conv-abc", "draft-1", "audio");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(
+      "http://localhost:9999/api/v1/rag/conversations/conv-abc/drafts/draft-1/respuesta-modo",
+    );
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body as string)).toEqual({ respuesta_modo: "audio" });
+  });
+
+  /** SPEC-070 (RF-02, Q1-C) — "escuchar antes de enviar": encola bajo demanda. */
+  it("requestDraftAudio llama a POST .../drafts/{id}/listen", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ draft_id: "draft-1", tts_estado: "generando" }), {
+        status: 202,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { requestDraftAudio } = await import("@/lib/api/ragApi");
+    const result = await requestDraftAudio("conv-abc", "draft-1");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(
+      "http://localhost:9999/api/v1/rag/conversations/conv-abc/drafts/draft-1/listen",
+    );
+    expect(init.method).toBe("POST");
+    expect(result).toEqual({ draft_id: "draft-1", tts_estado: "generando" });
+  });
+
+  it("fetchDraft llama a GET .../drafts/{id} (usado para el poll de tts_estado)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: "draft-1", tts_estado: "listo" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { fetchDraft } = await import("@/lib/api/ragApi");
+    await fetchDraft("conv-abc", "draft-1");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(
+      "http://localhost:9999/api/v1/rag/conversations/conv-abc/drafts/draft-1",
+    );
+    expect(init.method ?? "GET").toBe("GET");
+  });
+
+  /**
+   * SPEC-070 — fetch autenticado del binario de audio (mismo patrón que
+   * `fetchCallAudioObjectUrl`, SPEC-040): header Authorization manual (no
+   * `apiFetch`, JSON-only), `Blob` -> Object URL.
+   */
+  it("fetchDraftAudioObjectUrl agrega Authorization y devuelve una Object URL", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Blob(["clip"], { type: "audio/ogg" }), {
+        status: 200,
+        headers: { "content-type": "audio/ogg" },
+      }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const createObjectURLMock = vi.fn().mockReturnValue("blob:mock-audio-url");
+    vi.stubGlobal("URL", { ...URL, createObjectURL: createObjectURLMock, revokeObjectURL: vi.fn() });
+
+    const { setAuthToken } = await import("@/lib/authStore");
+    setAuthToken("token-de-prueba");
+    const { fetchDraftAudioObjectUrl } = await import("@/lib/api/ragApi");
+
+    const result = await fetchDraftAudioObjectUrl("conv-abc", "draft-1");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(
+      "http://localhost:9999/api/v1/rag/conversations/conv-abc/drafts/draft-1/audio",
+    );
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      "Bearer token-de-prueba",
+    );
+    expect(result).toBe("blob:mock-audio-url");
+    vi.unstubAllGlobals();
+  });
+
+  it("fetchDraftAudioObjectUrl devuelve null en 404 (sin clip listo)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { fetchDraftAudioObjectUrl } = await import("@/lib/api/ragApi");
+    const result = await fetchDraftAudioObjectUrl("conv-abc", "draft-1");
+
+    expect(result).toBeNull();
+  });
 });

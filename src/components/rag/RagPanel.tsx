@@ -19,8 +19,23 @@ interface RagPanelProps {
  * base vectorial real, contenido de `src/mocks/rag.json`.
  */
 export function RagPanel({ conversationId, onUseDraft }: RagPanelProps) {
-  const { citations, draft, suggestions, loading, error, notaFicticia } =
-    useRagData(conversationId);
+  const {
+    citations,
+    draft,
+    suggestions,
+    loading,
+    error,
+    notaFicticia,
+    useRealApi,
+    approving,
+    settingRespuestaModo,
+    requestingAudio,
+    audioUrl,
+    audioError,
+    setRespuestaModo,
+    requestListen,
+    approve,
+  } = useRagData(conversationId);
 
   if (!conversationId) {
     return (
@@ -76,7 +91,20 @@ export function RagPanel({ conversationId, onUseDraft }: RagPanelProps) {
       )}
 
       <RagCitationList citations={citations} loading={loading} />
-      <RagDraftCard draft={draft} loading={loading} onUseDraft={onUseDraft} />
+      <RagDraftCard
+        draft={draft}
+        loading={loading}
+        onUseDraft={onUseDraft}
+        useRealApi={useRealApi}
+        approving={approving}
+        settingRespuestaModo={settingRespuestaModo}
+        requestingAudio={requestingAudio}
+        audioUrl={audioUrl}
+        audioError={audioError}
+        onSetRespuestaModo={setRespuestaModo}
+        onRequestListen={requestListen}
+        onApprove={approve}
+      />
       <RagSuggestionList suggestions={suggestions} loading={loading} />
 
       <p className="mt-auto border-t border-border-subtle pt-3 text-xs text-text-muted">

@@ -71,6 +71,21 @@ export interface BackendCitation {
   document_id: string;
 }
 
+/**
+ * Respuesta de audio (TTS de salida, Entregable #6, SPEC-069/070/ADR-014):
+ * `respuesta_modo` ("texto" default | "audio") y `tts_estado` (estado de la
+ * ruta OPCIONAL "escuchar antes de enviar", null/"no_solicitado"/"generando"/
+ * "listo"/"error") reflejan 1:1 `backend/app/schemas/rag.py::DraftOut`.
+ * `audio_listo` es un booleano YA derivado por el backend (`tts_estado ==
+ * "listo"`) — la SPA nunca reimplementa esa derivación.
+ */
+export type BackendRespuestaModo = "texto" | "audio";
+export type BackendTtsEstado =
+  | "no_solicitado"
+  | "generando"
+  | "listo"
+  | "error";
+
 export interface BackendDraft {
   id: string;
   tenant_id: string;
@@ -84,6 +99,9 @@ export interface BackendDraft {
   edited_by: string | null;
   approved_by: string | null;
   sent_message_id: string | null;
+  respuesta_modo: BackendRespuestaModo;
+  tts_estado: BackendTtsEstado | null;
+  audio_listo: boolean;
   activo: boolean;
   created_at: string;
   updated_at: string;

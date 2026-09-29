@@ -89,11 +89,33 @@ export interface RagCitation {
   similarityScore: number;
 }
 
+/**
+ * Modo de respuesta del borrador (SPEC-069/070, ADR-014, Entregable #6):
+ * opt-in explícito (Q2-A) — por defecto `"texto"` (comportamiento actual
+ * idéntico); `"audio"` habilita la UX de "responder con audio" en
+ * `RagDraftCard`. `undefined` en modo mock (flag OFF): la maqueta de
+ * #1-#5 no lo usa, sin regresión (RNF-FLAG SPEC-070).
+ */
+export type RagRespuestaModo = "texto" | "audio";
+
+/**
+ * Estado de la ruta OPCIONAL "escuchar antes de enviar" (SPEC-069/070,
+ * Q1-C): refleja 1:1 `BackendTtsEstado`. `undefined`/`null` = nunca
+ * solicitado o modo mock.
+ */
+export type RagTtsEstado = "no_solicitado" | "generando" | "listo" | "error";
+
 export interface RagDraft {
   id: string;
   conversationId: string;
   text: string;
   generatedAt: string;
+  /** Aditivo (SPEC-070): ausente en modo mock -> se trata como `"texto"`. */
+  respuestaModo?: RagRespuestaModo;
+  /** Aditivo (SPEC-070): ausente/`null` en modo mock o si nunca se pidió escuchar. */
+  ttsEstado?: RagTtsEstado | null;
+  /** Aditivo (SPEC-070): booleano derivado ya resuelto por el backend. */
+  audioListo?: boolean;
 }
 
 export interface RagSuggestion {

@@ -9,10 +9,10 @@
     "total_specs": 72,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 4,
+      "APROBADA": 3,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 27,
+      "CERRADA": 28,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-09-28"
@@ -1647,7 +1647,7 @@
       "id": "SPEC-070",
       "titulo": "SPA/UX opt-in responder con audio + escuchar antes de enviar + feature-flag + disclaimer de voz sintetica",
       "archivo": ".swarm/specs/SPEC-070.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F3",
       "plan": "PLAN-008",
       "sensible": true,
