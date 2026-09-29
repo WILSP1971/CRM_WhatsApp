@@ -1,6 +1,6 @@
 # SPEC-072 — Documentación, runbook (motor/latencia/throttling/retención/disclaimer), limpieza de residuos documentada, simulador local sin egress y deploy on-prem 🔴 SENSIBLE
 
-- Estado: APROBADA · Responsable: QUICKSILVER · Colaboran: BLACK PANTHER, BLACK WIDOW, WOLVERINE, HAWKEYE, DAREDEVIL · Prioridad: ALTA · Tipo: DOCS/OPS/DEPLOY · Fase: F5
+- Estado: CERRADA — runbook (motor/latencia/throttling/retención/disclaimer/troubleshooting), limpieza de residuos documentada y simulador local (verificado funcionando contra el motor real) entregados; el orquestador corrigió 5 errores reales en el runbook generado (rutas sin `/rag/`, endpoint inventado, campo de body incorrecto, job de purga inexistente). **Deploy on-prem (RF-04) diferido**: el Lead lo ejecutará de forma independiente con los secretos reales — mismo criterio que SPEC-066/PLAN-007 (el agente no genera/inventa secretos de producción, C3). Resto de criterios de aceptación cumplidos. Responsable: QUICKSILVER · Colaboran: BLACK PANTHER, BLACK WIDOW, WOLVERINE, HAWKEYE, DAREDEVIL · Prioridad: ALTA · Tipo: DOCS/OPS/DEPLOY · Fase: F5
 - Deriva de: PLAN-008 (F5, §2.IN.11, §4, §9, §10, CE-84/CE-87) · Clasificación: SENSIBLE (`.no-externo`) · ADR-014/ADR-005/ADR-006/ADR-009/ADR-012
 - APROBADO SPEC-072 por el Lead (bloque PLAN-008) — 2026-09-28.
 

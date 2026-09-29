@@ -9,10 +9,10 @@
     "total_specs": 72,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 2,
+      "APROBADA": 1,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 29,
+      "CERRADA": 30,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-09-28"
@@ -1690,7 +1690,7 @@
       "id": "SPEC-072",
       "titulo": "Documentacion, runbook, limpieza de residuos, simulador local y deploy on-prem del Entregable 6",
       "archivo": ".swarm/specs/SPEC-072.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F5",
       "plan": "PLAN-008",
       "sensible": true,
