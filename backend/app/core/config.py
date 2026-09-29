@@ -481,18 +481,25 @@ class Settings:
         # decisión en el runbook (SPEC-072) y facilitar una migración futura
         # documentada, no para conmutar en runtime.
         self.respuesta_tts_engine: str = os.getenv("RESPUESTA_TTS_ENGINE", "piper")
-        # `RESPUESTA_TTS_MAX_CHARS`: límite de longitud sintetizable (Adenda
-        # SPEC-067/SPEC-069, rango probado ~650-800 caracteres). Un guion más
-        # largo NO se sintetiza (cae a `tts_estado="error"`, fallback a texto)
-        # en vez de arriesgar exceder el techo de latencia sin evidencia.
+        # `RESPUESTA_TTS_MAX_CHARS`: límite de longitud sintetizable. THOR
+        # (SPEC-071, CE-84) midió el motor REAL bajo carga CPU concurrente
+        # (proxy de STT/RAG/sentimiento): los guiones largos (600-750 chars,
+        # el rango que la Adenda de SPEC-067/069 daba por aceptable SIN
+        # concurrencia) superaban el techo de 10s de forma reproducible
+        # (11-15s medidos). El Lead decidió bajar el límite a 420 — dentro
+        # del rango que THOR confirmó que SÍ cumple el techo incluso bajo
+        # carga concurrente (categorías corta/media, máximo observado
+        # 3.67s) — en vez de aceptar audios largos best-effort. Un guion más
+        # largo NO se sintetiza (cae a `tts_estado="error"`, fallback a
+        # texto) en vez de arriesgar exceder el techo de latencia.
         try:
             self.respuesta_tts_max_chars: int = int(
-                os.getenv("RESPUESTA_TTS_MAX_CHARS", "750")
+                os.getenv("RESPUESTA_TTS_MAX_CHARS", "420")
             )
             if self.respuesta_tts_max_chars <= 0:
-                self.respuesta_tts_max_chars = 750
+                self.respuesta_tts_max_chars = 420
         except ValueError:
-            self.respuesta_tts_max_chars = 750
+            self.respuesta_tts_max_chars = 420
         # `RESPUESTA_TTS_TIMEOUT_SECONDS`: techo de latencia (Q4-b, ADR-014,
         # ≤5-10s) que el worker aplica a la síntesis+transcodificación de un
         # job individual; si se excede, el job se marca `tts_estado="error"`

@@ -249,6 +249,21 @@ def api_as_tenant_local(app_engine):
     return _factory
 
 
+@pytest.fixture
+def audio_store_tmp(tmp_path, monkeypatch):
+    """MISMO patrón/hallazgo que `tests/test_wa_send_worker_audio.py::
+    audio_store_tmp`/`tests/test_tts_worker.py::audio_store_tmp` (HAWKEYE,
+    SPEC-071): `monkeypatch.setenv` + `get_settings.cache_clear()`, nunca
+    mutar el atributo del singleton cacheado directamente (frágil ante
+    `cache_clear()` de un fixture/test compañero)."""
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("AUDIO_STORAGE_PATH", str(tmp_path))
+    get_settings.cache_clear()
+    yield tmp_path
+    get_settings.cache_clear()
+
+
 # ---------------------------------------------------------------------------
 # (a) Invariante RNF-HITL: sin aprobación, no se encola nada de audio
 # ---------------------------------------------------------------------------
@@ -456,9 +471,126 @@ def test_get_audio_endpoint_returns_404_when_no_clip_ready(
     assert resp.status_code == 404
 
 
+def test_get_audio_endpoint_returns_404_when_ref_points_to_purged_clip(
+    client, postgres_engine, api_as_tenant_local, audio_store_tmp
+):
+    """HAWKEYE SPEC-071: `tts_estado="listo"` con `audio_salida_ref` poblado
+    pero el blob YA fue purgado físicamente (retención por defecto tras el
+    envío, RF-05) — el endpoint debe traducir `AudioStoreError` a 404, nunca
+    un 500, cubriendo la rama de `except audio_store.AudioStoreError` de
+    `get_draft_audio_endpoint` (gap de cobertura detectado por HAWKEYE)."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantTtsAudioPurgado")
+    contact_id = _crear_contacto(postgres_engine, tenant_id, "573000000010")
+    conversation_id = _crear_conversacion(
+        postgres_engine, tenant_id, contact_id, canal="whatsapp"
+    )
+    draft_id = _crear_draft(postgres_engine, tenant_id, conversation_id)
+
+    # `tts_estado="listo"` con una referencia que NUNCA se escribió en el
+    # almacén (simula el estado post-purga: la fila aún dice "listo" en un
+    # instante transitorio, pero el blob físico ya no existe).
+    with postgres_engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "UPDATE rag_drafts SET tts_estado = 'listo', "
+                "audio_salida_ref = 'ref-ya-purgado.enc' WHERE id = :id"
+            ),
+            {"id": draft_id},
+        )
+
+    with api_as_tenant_local(tenant_id):
+        resp = client.get(
+            f"/api/v1/rag/conversations/{conversation_id}/drafts/{draft_id}/audio"
+        )
+    assert resp.status_code == 404
+    assert "purga" in resp.json()["detail"].lower()
+
+
 # ---------------------------------------------------------------------------
 # (d) Aislamiento por tenant / estado mutable
 # ---------------------------------------------------------------------------
+
+
+def test_tts_endpoints_isolated_by_tenant_respuesta_modo_listen_audio(
+    client, postgres_engine, api_as_tenant_local, fake_redis, audio_store_tmp
+):
+    """RLS/HAWKEYE SPEC-071 (CE-85/RF-07): los TRES endpoints NUEVOS de
+    SPEC-069 (`respuesta-modo`, `listen`, `audio`) deben resolver 404 (nunca
+    200/403 con fuga de datos) cuando un tenant DISTINTO al dueño del
+    borrador intenta usarlos — mismo criterio que
+    `test_rag_draft_review_api.py::test_draft_isolated_by_tenant`, extendido
+    a los campos/endpoints aditivos de este entregable
+    (`respuesta_modo`/`tts_estado`/`audio_salida_ref`)."""
+    from app.services.telefonia import audio_store
+
+    tenant_dueno = _crear_tenant(postgres_engine, "TenantTtsDuenoDelDraft")
+    contact_id = _crear_contacto(postgres_engine, tenant_dueno, "573000000009")
+    conversation_id = _crear_conversacion(
+        postgres_engine, tenant_dueno, contact_id, canal="whatsapp"
+    )
+    draft_id = _crear_draft(postgres_engine, tenant_dueno, conversation_id)
+
+    # Deja el clip como si YA estuviera listo (binario REAL en el almacén,
+    # no solo el ref en BD, para que el control positivo de más abajo pueda
+    # servir un 200 real) para probar también que el tenant ajeno no puede
+    # leer el binario vía `GET .../audio`.
+    audio_ref = audio_store.build_audio_ref(
+        tenant_id=tenant_dueno, call_id=str(draft_id)
+    )
+    audio_store.store_audio(audio_ref=audio_ref, audio_bytes=b"OggS-fake-clip")
+    with postgres_engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "UPDATE rag_drafts SET tts_estado = 'listo', "
+                "audio_salida_ref = :ref WHERE id = :id"
+            ),
+            {"ref": audio_ref, "id": draft_id},
+        )
+
+    tenant_ajeno = uuid.uuid4()
+
+    with api_as_tenant_local(tenant_ajeno):
+        resp_modo = client.patch(
+            f"/api/v1/rag/conversations/{conversation_id}/drafts/{draft_id}/respuesta-modo",
+            json={"respuesta_modo": "audio"},
+        )
+    assert resp_modo.status_code == 404
+
+    with api_as_tenant_local(tenant_ajeno):
+        resp_listen = client.post(
+            f"/api/v1/rag/conversations/{conversation_id}/drafts/{draft_id}/listen"
+        )
+    assert resp_listen.status_code == 404
+
+    with api_as_tenant_local(tenant_ajeno):
+        resp_audio = client.get(
+            f"/api/v1/rag/conversations/{conversation_id}/drafts/{draft_id}/audio"
+        )
+    assert resp_audio.status_code == 404
+
+    # Ningún job de síntesis quedó encolado por los intentos fallidos del
+    # tenant ajeno (el 404 ocurre ANTES de tocar la cola).
+    import asyncio
+
+    tts_job, outbound_job = asyncio.run(_dequeue_snapshot(fake_redis))
+    assert tts_job is None
+    assert outbound_job is None
+
+    # El estado/campos del borrador del DUEÑO no fueron alterados por los
+    # intentos cross-tenant.
+    row = _draft_row(postgres_engine, draft_id)
+    assert row.respuesta_modo == "texto"
+    assert row.tts_estado == "listo"
+    assert row.audio_salida_ref == audio_ref
+
+    # Control positivo: el DUEÑO sí puede leer su propio borrador (confirma
+    # que el 404 de arriba es aislamiento RLS y no un bug del fixture/ruta).
+    with api_as_tenant_local(tenant_dueno):
+        resp_owner = client.get(
+            f"/api/v1/rag/conversations/{conversation_id}/drafts/{draft_id}/audio"
+        )
+    assert resp_owner.status_code == 200
+    assert resp_owner.content == b"OggS-fake-clip"
 
 
 def test_set_respuesta_modo_rejects_invalid_value():

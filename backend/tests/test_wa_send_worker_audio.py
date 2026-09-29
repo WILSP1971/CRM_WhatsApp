@@ -45,21 +45,29 @@ _AUDIO_MIME_TYPE = "audio/ogg; codecs=opus"
 
 
 @pytest.fixture
-def audio_store_tmp(tmp_path):
+def audio_store_tmp(tmp_path, monkeypatch):
+    """CORRECCIÓN (HAWKEYE, SPEC-071): usar `monkeypatch.setenv` + `get_settings.
+    cache_clear()` en vez de mutar el atributo del singleton cacheado — mutar
+    el atributo es FRÁGIL ante cualquier fixture compañero que también llame
+    `get_settings.cache_clear()` DESPUÉS (p.ej. `respuesta_tts_persist_
+    disabled`/`enabled`, más abajo): ese `cache_clear()` invalida la instancia
+    mutada y la próxima llamada a `get_settings()` construye una `Settings()`
+    NUEVA que vuelve a leer `AUDIO_STORAGE_PATH` del entorno real (`/audio_store`
+    por defecto, no escribible en CI) — bug de aislamiento entre fixtures
+    reproducido y corregido en esta SPEC (ver `AUDIO_STORAGE_PATH` vía env,
+    que SÍ sobrevive a cualquier `cache_clear()` posterior)."""
     from app.core.config import get_settings
 
-    settings = get_settings()
-    original = settings.audio_storage_path
-    settings.audio_storage_path = str(tmp_path)
+    monkeypatch.setenv("AUDIO_STORAGE_PATH", str(tmp_path))
+    get_settings.cache_clear()
     yield tmp_path
-    settings.audio_storage_path = original
+    get_settings.cache_clear()
 
 
 @pytest.fixture
 def respuesta_tts_persist_disabled(monkeypatch):
     from app.core.config import get_settings
 
-    get_settings.cache_clear()
     monkeypatch.setenv("RESPUESTA_TTS_PERSIST_ENABLED", "false")
     get_settings.cache_clear()
     yield
@@ -70,7 +78,6 @@ def respuesta_tts_persist_disabled(monkeypatch):
 def respuesta_tts_persist_enabled(monkeypatch):
     from app.core.config import get_settings
 
-    get_settings.cache_clear()
     monkeypatch.setenv("RESPUESTA_TTS_PERSIST_ENABLED", "true")
     get_settings.cache_clear()
     yield

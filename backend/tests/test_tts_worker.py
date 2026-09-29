@@ -172,14 +172,48 @@ def _fake_synthesis_result(texto: str) -> SynthesisResult:
 
 
 @pytest.fixture
-def audio_store_tmp(tmp_path):
+def audio_store_tmp(tmp_path, monkeypatch):
+    """CORRECCIÓN (HAWKEYE, SPEC-071, mismo hallazgo que `tests/
+    test_wa_send_worker_audio.py`): `monkeypatch.setenv` + `get_settings.
+    cache_clear()` en vez de mutar el atributo del singleton — sobrevive a
+    cualquier `cache_clear()` posterior de un fixture compañero (p.ej.
+    `respuesta_tts_persist_disabled`/`enabled` en otros módulos de la misma
+    sesión de pytest)."""
     from app.core.config import get_settings
 
-    settings = get_settings()
-    original = settings.audio_storage_path
-    settings.audio_storage_path = str(tmp_path)
+    monkeypatch.setenv("AUDIO_STORAGE_PATH", str(tmp_path))
+    get_settings.cache_clear()
     yield tmp_path
-    settings.audio_storage_path = original
+    get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# (f) Defensa en profundidad: IDs malformados en el job -> no-op sin crash
+# ---------------------------------------------------------------------------
+
+
+def test_process_job_with_malformed_ids_is_a_noop_without_crashing():
+    """HAWKEYE SPEC-071: si por corrupción/bug de otro componente llegara un
+    job con `draft_id`/`tenant_id` que no son UUID válidos, el worker debe
+    loguear y retornar (no-op), nunca lanzar una excepción no controlada que
+    tumbe el loop del worker."""
+    redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    job = TtsSynthesisJob(
+        draft_id="no-es-un-uuid",
+        tenant_id="tampoco-un-uuid",
+        conversation_id=str(uuid.uuid4()),
+        texto="Su pedido llega mañana.",
+        modo=TTS_JOB_MODO_ESCUCHAR,
+    )
+
+    with patch("app.workers.tts_worker.synthesize_to_ogg_opus") as mock_synth:
+        # No pasa `session_factory`: si el código intentara seguir adelante
+        # tras el ValueError, fallaría al abrir `SessionLocal()` contra una
+        # BD real no configurada en este test — confirma que el `return`
+        # temprano ocurre ANTES de tocar la BD.
+        tts_worker.process_job(job, redis_client=redis_client)
+
+    mock_synth.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -437,6 +471,62 @@ def test_process_job_synthesis_failure_marks_error_without_enqueueing_send(
             session_factory=_session_factory(postgres_engine),
             redis_client=redis_client,
         )
+
+    row = _draft_row(postgres_engine, draft_id)
+    assert row.tts_estado == "error"
+    assert row.audio_salida_ref is None
+
+    import asyncio
+
+    assert asyncio.run(dequeue_outbound_send(redis_client)) is None
+
+
+def test_process_job_audio_store_failure_marks_error_without_enqueueing_send(
+    postgres_engine, audio_store_tmp
+):
+    """HAWKEYE SPEC-071: cubre la rama de `AudioStoreError` al PERSISTIR el
+    clip ya sintetizado (fallo de E/S del almacén, p.ej. disco lleno/
+    permisos) — la síntesis en sí tuvo éxito pero el worker debe marcar
+    `tts_estado="error"` igual que un fallo de síntesis (d), sin encolar
+    ningún envío. Gap de cobertura detectado por HAWKEYE (líneas 204-215 de
+    `app/workers/tts_worker.py` sin ejercer por ningún test previo)."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantTtsWorkerStoreError")
+    contact_id = _crear_contacto(postgres_engine, tenant_id, "573001110008")
+    conversation_id = _crear_conversacion(postgres_engine, tenant_id, contact_id)
+    message_id = _crear_mensaje(postgres_engine, tenant_id, conversation_id)
+    draft_id = _crear_draft(
+        postgres_engine, tenant_id, conversation_id, sent_message_id=message_id
+    )
+
+    redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    job = TtsSynthesisJob(
+        draft_id=str(draft_id),
+        tenant_id=str(tenant_id),
+        conversation_id=str(conversation_id),
+        texto="Su pedido llega mañana.",
+        modo=TTS_JOB_MODO_ENVIAR,
+    )
+
+    from app.services.telefonia import audio_store as audio_store_module
+
+    with (
+        patch(
+            "app.workers.tts_worker.synthesize_to_ogg_opus",
+            return_value=_fake_synthesis_result("Su pedido llega mañana."),
+        ) as mock_synth,
+        patch.object(
+            audio_store_module,
+            "store_audio",
+            side_effect=audio_store_module.AudioStoreError("disco lleno (simulado)"),
+        ),
+    ):
+        tts_worker.process_job(
+            job,
+            session_factory=_session_factory(postgres_engine),
+            redis_client=redis_client,
+        )
+
+    assert mock_synth.call_count == 1
 
     row = _draft_row(postgres_engine, draft_id)
     assert row.tts_estado == "error"

@@ -1,6 +1,6 @@
 # SPEC-071 — Pruebas + seguridad + no-regresión: e2e opt-in, cero egress de voz, ningún audio sin aprobación, cero regresión #4/#5/texto, latencia/coste CPU (THOR), cobertura ≥80% 🔴 SENSIBLE
 
-- Estado: APROBADA · Responsable: HAWKEYE · Colaboran: BLACK WIDOW, WOLVERINE, THOR, BLACK PANTHER, CAPTAIN AMERICA, DAREDEVIL · Prioridad: ALTA · Tipo: QA/SEGURIDAD/PERF · Fase: F4
+- Estado: CERRADA — CE-81/82/83/85, seguridad (RLS cross-tenant nuevos endpoints, sin PII en logs) y AAA verificados con ejecución real (no solo lectura); cobertura 81% (test_egress negativo confirmado: dominio TTS prohibido rompe el build); HAWKEYE corrigió un bug real de aislamiento de fixtures (`audio_store_tmp` mutaba el singleton en vez de usar `monkeypatch`+`cache_clear`). **CE-84 no cumplía bajo carga CPU concurrente real** (THOR: guiones de 600-750 chars daban 11-15s, sobre el techo de 10s) — el Lead decidió bajar `RESPUESTA_TTS_MAX_CHARS` de 750 a 420 (rango que THOR confirmó cumple el techo incluso bajo carga); 70/70 tests en verde tras el cambio. CE-86 (concurrencia=1) confirmado correcto con el motor real. Responsable: HAWKEYE · Colaboran: BLACK WIDOW, WOLVERINE, THOR, BLACK PANTHER, CAPTAIN AMERICA, DAREDEVIL · Prioridad: ALTA · Tipo: QA/SEGURIDAD/PERF · Fase: F4
 - Deriva de: PLAN-008 (F4, §2.IN.10, §4, §6 R-81/R-82/R-84/R-86, CE-81..CE-86) · Clasificación: SENSIBLE (`.no-externo`) · ADR-014/ADR-005/ADR-006/ADR-009/ADR-012
 - APROBADO SPEC-071 por el Lead (bloque PLAN-008) — 2026-09-28.
 

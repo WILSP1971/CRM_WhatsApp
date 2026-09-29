@@ -75,6 +75,28 @@ def test_normalize_combines_numbers_and_acronyms():
     assert resultado == "Su N I T ciento veinte y tres está registrado"
 
 
+def test_normalize_expands_number_in_millions():
+    """HAWKEYE SPEC-071: cubre la rama de millones de `_numero_a_palabras`
+    (sin ejercer por ningún test previo, gap de cobertura detectado)."""
+    resultado = tts_engine.normalize_text("Recibió 2500000 pesos")
+    assert "dos millones" in resultado
+    assert "quinientos mil" in resultado
+    assert "2500000" not in resultado
+
+
+def test_normalize_expands_exactly_one_million():
+    resultado = tts_engine.normalize_text("El límite es 1000000")
+    assert "un millón" in resultado
+
+
+def test_normalize_leaves_number_beyond_reasonable_range_untouched():
+    """Números fuera del rango razonable de un guion (> 999_999_999) se
+    dejan tal cual (sin expandir) en vez de arriesgar una expansión
+    gigante/incorrecta — rama defensiva de `_expandir_numero`."""
+    resultado = tts_engine.normalize_text("Código 9999999999")
+    assert "9999999999" in resultado
+
+
 # ---------------------------------------------------------------------------
 # (b) Límite de longitud sintetizable (Adenda SPEC-067)
 # ---------------------------------------------------------------------------

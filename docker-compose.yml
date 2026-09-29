@@ -589,7 +589,7 @@ services:
       PIPER_VOICE: ${PIPER_VOICE:-es_ES-davefx-medium}
       PIPER_VOICE_DIR: ${PIPER_VOICE_DIR:-/piper_voices}
       RESPUESTA_TTS_ENGINE: ${RESPUESTA_TTS_ENGINE:-piper}
-      RESPUESTA_TTS_MAX_CHARS: ${RESPUESTA_TTS_MAX_CHARS:-750}
+      RESPUESTA_TTS_MAX_CHARS: ${RESPUESTA_TTS_MAX_CHARS:-420}
       RESPUESTA_TTS_TIMEOUT_SECONDS: ${RESPUESTA_TTS_TIMEOUT_SECONDS:-10}
       # Concurrencia inicial = 1 (Adenda SPEC-067, no medido con workers
       # reales; R-84, throttling sobre CPU compartida con STT/RAG/sentimiento;
