@@ -63,6 +63,13 @@ _SERVICIOS_SIN_EGRESS_ESPERADO = {
     "recording_ingest_worker",
     "voice_stt",
     "voice_tts",
+    # `tts_worker` (Entregable #6, SPEC-069, ADR-014): síntesis TTS 100%
+    # local (Piper, CPU-only) — hereda el MISMO aislamiento que `stt_worker`
+    # (ADR-005/009/012): NUNCA importa/ejecuta el cliente de subida de
+    # WhatsApp, la subida real la hace `wa_send_worker` (que SÍ tiene
+    # egress, ver `_SERVICIOS_CON_EGRESS_PERMITIDO`) leyendo el clip del
+    # almacén cifrado compartido.
+    "tts_worker",
     "db",
     "redis",
 }

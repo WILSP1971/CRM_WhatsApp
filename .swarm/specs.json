@@ -9,10 +9,10 @@
     "total_specs": 72,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 5,
+      "APROBADA": 4,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 26,
+      "CERRADA": 27,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-09-28"
@@ -1626,7 +1626,7 @@
       "id": "SPEC-069",
       "titulo": "Servicio TTS local en ia_internal (sin egress) + cola tts:jobs/throttling + enganche hibrido al human-in-the-loop + subida por modulo WhatsApp",
       "archivo": ".swarm/specs/SPEC-069.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F2",
       "plan": "PLAN-008",
       "sensible": true,

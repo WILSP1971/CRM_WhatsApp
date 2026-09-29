@@ -287,6 +287,110 @@ class GraphApiClient:
         )
         return _extract_wamid(data)
 
+    def upload_media(
+        self,
+        *,
+        phone_number_id: str,
+        content: bytes,
+        mime_type: str,
+        idempotency_key: str,
+    ) -> str:
+        """Sube un binario de media a la Graph API (Entregable #6, SPEC-069,
+        ADR-014/ADR-006) — `POST /<version>/<phone_number_id>/media`
+        (multipart/form-data), devuelve el `media_id` que
+        `send_audio_message` usa para el envío subsiguiente.
+
+        CHECKPOINT SENSIBLE: este es el ÚNICO punto de subida de un clip TTS
+        de salida — el servicio TTS (`app/services/telefonia/tts_engine.py`,
+        `app/workers/tts_worker.py`) NUNCA llama a este cliente ni a Graph
+        API directamente; solo deja el clip en memoria/almacén local y este
+        módulo (invocado por `wa_send_worker`) hace la subida real (cero
+        egress nuevo, mismo host/token ya autorizado, RF-05 SPEC-069).
+        """
+        url = f"{self._base_url}/{self._api_version}/{phone_number_id}/media"
+        _validate_graph_host(url)
+
+        client = self._get_client()
+        owns_client = self._client is None
+        try:
+            files = {
+                "file": ("audio.ogg", content, mime_type),
+            }
+            data = {
+                "messaging_product": "whatsapp",
+                "type": mime_type,
+            }
+            headers = {"Authorization": f"Bearer {self._access_token}"}
+            try:
+                response = client.post(url, headers=headers, data=data, files=files)
+            except httpx.HTTPError as exc:
+                logger.error(
+                    "whatsapp_graph_media_upload_network_error",
+                    idempotency_key=idempotency_key,
+                    error_type=type(exc).__name__,
+                )
+                raise GraphApiTransientError(
+                    f"Error de red subiendo media a Graph API: {type(exc).__name__}"
+                ) from exc
+        finally:
+            if owns_client:
+                client.close()
+
+        if response.status_code != 200:
+            logger.error(
+                "whatsapp_graph_media_upload_failed",
+                status_code=response.status_code,
+                idempotency_key=idempotency_key,
+            )
+            raise GraphApiError(
+                f"Graph API respondió {response.status_code} subiendo media "
+                "(no reintentable)"
+            )
+
+        try:
+            media_id = response.json()["id"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise GraphApiError(
+                "Respuesta de Graph API sin 'id' (media_id) esperado al subir media"
+            ) from exc
+        return media_id
+
+    def send_audio_message(
+        self,
+        *,
+        phone_number_id: str,
+        to: str,
+        audio_bytes: bytes,
+        mime_type: str,
+        idempotency_key: str,
+    ) -> GraphSendResult:
+        """Envía una nota de voz de SALIDA (Entregable #6, SPEC-069,
+        ADR-014): sube el clip (`upload_media`) y lo envía como
+        `type: "audio"` referenciando el `media_id` recién subido — MISMO
+        host/token/allowlist que `send_text_message` (ADR-006, cero egress
+        nuevo). El clip ya fue generado 100% local por el servicio TTS
+        (`tts_engine.py`, aislado en `ia_internal`) y aprobado por un humano
+        (invariante ADR-014, verificado por el llamador ANTES de invocar este
+        método — este cliente no decide aprobación, solo transporta).
+        """
+        media_id = self.upload_media(
+            phone_number_id=phone_number_id,
+            content=audio_bytes,
+            mime_type=mime_type,
+            idempotency_key=idempotency_key,
+        )
+        url = self._messages_url(phone_number_id)
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "audio",
+            "audio": {"id": media_id},
+        }
+        data = self._post_with_retries(
+            url, payload=payload, idempotency_key=idempotency_key
+        )
+        return _extract_wamid(data)
+
     def send_template_message(
         self,
         *,

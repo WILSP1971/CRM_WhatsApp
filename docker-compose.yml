@@ -540,6 +540,99 @@ services:
     restart: unless-stopped
     # Nota: SIN red `app`, NUNCA salida a internet
 
+  # Worker de TTS local (Entregable #6, SPEC-067/069, ADR-014): síntesis de
+  # voz 100% local con Piper TTS 1.8.0 (`es_ES-davefx-medium`, CPU-only,
+  # `use_cuda=False`) + transcodificación a OGG/Opus con `ffmpeg` local.
+  # (SPEC-069/ADR-005/009/012: SOLO en `ia_internal internal:true`, NUNCA en
+  # `app`. Jamás habla con Graph API ni internet — NO importa
+  # `app/integrations/whatsapp/` (verificado por `check-externos-backend.sh`).
+  # Deja el clip listo en el almacén cifrado compartido (`audio_store`,
+  # volumen ya usado por `stt_worker`/`recording_ingest_worker`) y encola el
+  # ENVÍO en `wa:outbound` (consumido por `wa_send_worker`, el único
+  # autorizado a hablar con Meta) — cero egress nuevo. TTS de terceros
+  # (ElevenLabs, AWS Polly, Google/Azure/OpenAI TTS, Deepgram, PlayHT,
+  # Coqui-cloud) PROHIBIDOS en auditoría CI (check-externos-backend.sh).
+  # DECISIÓN DE NOMBRES (confirmada por el Lead): variables `RESPUESTA_TTS_*`,
+  # deliberadamente DISTINTAS de `TTS_MODE`/`PIPER_VOICE`/`TTS_VRAM_FRACTION`
+  # del servicio `voice_tts` de más abajo (placeholder INERTE del VoiceBot en
+  # vivo archivado, PLAN-005 — se deja intacto, nunca reactivado por esta
+  # SPEC). `PIPER_VOICE` SÍ se reutiliza tal cual (misma voz Piper, una sola
+  # fuente de verdad, ver comentario en `app/core/config.py`).
+  tts_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crm_tts_worker
+    entrypoint: ["/app/app/workers/init_audio_store.sh"]
+    command: ["python", "-m", "app.workers.tts_worker"]
+    environment:
+      # Base de datos — RUNTIME (ADR-008): rol de aplicación NO-superusuario
+      # `omnicore_app` (NOSUPERUSER NOBYPASSRLS), igual que `stt_worker`.
+      DATABASE_URL: postgresql://${DB_APP_ROLE:-omnicore_app}:${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}@db:5432/${DB_NAME:-omnicore_ai}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-omnicore_ai}
+      DB_USER: ${DB_APP_ROLE:-omnicore_app}
+      DB_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}
+
+      # Redis (cola de síntesis: tts:jobs; también encola tts:jobs -> wa:outbound)
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      # TTS (SPEC-067/069, ADR-014): motor local Piper, sin servicios de
+      # terceros. Voz reutilizada de `PIPER_VOICE` (una sola fuente de
+      # verdad, ver `app/core/config.py`); `PIPER_VOICE_DIR` es la ruta de
+      # pesos PROPIA de este servicio (volumen `respuesta_tts_piper_voices`,
+      # separado del volumen legado `voice_piper_voices` del `voice_tts`
+      # inerte, para no acoplar ambos vectores).
+      PIPER_VOICE: ${PIPER_VOICE:-es_ES-davefx-medium}
+      PIPER_VOICE_DIR: ${PIPER_VOICE_DIR:-/piper_voices}
+      RESPUESTA_TTS_ENGINE: ${RESPUESTA_TTS_ENGINE:-piper}
+      RESPUESTA_TTS_MAX_CHARS: ${RESPUESTA_TTS_MAX_CHARS:-750}
+      RESPUESTA_TTS_TIMEOUT_SECONDS: ${RESPUESTA_TTS_TIMEOUT_SECONDS:-10}
+      # Concurrencia inicial = 1 (Adenda SPEC-067, no medido con workers
+      # reales; R-84, throttling sobre CPU compartida con STT/RAG/sentimiento;
+      # re-validar en SPEC-071).
+      RESPUESTA_TTS_CONCURRENCIA: ${RESPUESTA_TTS_CONCURRENCIA:-1}
+      # Retención por defecto = NO persistir el clip (ADR-012 §5/ADR-014
+      # decisión 5) — cambio a "true" es SENSIBLE (C6, régimen SPEC-041).
+      RESPUESTA_TTS_PERSIST_ENABLED: ${RESPUESTA_TTS_PERSIST_ENABLED:-false}
+
+      # Audio: MISMO almacén cifrado en reposo on-prem que el audio ENTRANTE
+      # (SPEC-035/037, ADR-009) — el clip TTS de salida es transitorio por
+      # defecto (se purga tras el envío, `wa_send_worker`).
+      AUDIO_STORAGE_PATH: ${AUDIO_STORAGE_PATH:-/audio_store}
+      AUDIO_ENCRYPTION_KEY: ${AUDIO_ENCRYPTION_KEY:?AUDIO_ENCRYPTION_KEY requerido (C3, ADR-009)}
+      AUDIO_RETENTION_DAYS: ${AUDIO_RETENTION_DAYS:-30}
+
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+
+      # Secretos (NUNCA hardcoded; desde variables de entorno; sin default débil)
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY requerido}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      # Volumen cifrado para almacén de audio (en reposo) — COMPARTIDO con
+      # stt_worker/recording_ingest_worker/wa_send_worker (mismo régimen
+      # cifrado SPEC-035, referencias opacas namespaced por tenant/draft_id).
+      - audio_store:/audio_store
+      # Pesos de la voz Piper (es_ES-davefx-medium) montados por volumen
+      # (sin descarga en runtime, ADR-009/012): descarga manual
+      # pre-deployment, análogo a whisper_models.
+      - respuesta_tts_piper_voices:/piper_voices
+    networks:
+      - ia_internal
+    restart: unless-stopped
+    # Nota: SIN red `app`, NUNCA salida a internet — la subida del clip la
+    # hace EXCLUSIVAMENTE `wa_send_worker` (abajo), vía `wa:outbound`.
+
   # Worker de ENVÍO saliente por WhatsApp (SPEC-029, ADR-006): consume la
   # cola Redis persistente `wa:outbound` (`app.core.whatsapp_outbound_queue`)
   # tras la APROBACIÓN HUMANA del borrador/mensaje (SPEC-019,
@@ -596,6 +689,15 @@ services:
       WHATSAPP_SEND_TIMEOUT_SECONDS: ${WHATSAPP_SEND_TIMEOUT_SECONDS:-10}
       WHATSAPP_SEND_MAX_RETRIES: ${WHATSAPP_SEND_MAX_RETRIES:-3}
       WHATSAPP_SEND_BACKOFF_BASE_SECONDS: ${WHATSAPP_SEND_BACKOFF_BASE_SECONDS:-1}
+
+      # Audio (Entregable #6, SPEC-069, ADR-014): este worker AHORA también
+      # lee el clip TTS de salida del MISMO almacén cifrado que el audio
+      # ENTRANTE (SPEC-035) para subirlo a Graph API (`send_audio_message`) y
+      # lo purga tras un envío exitoso salvo retención explícita por
+      # auditoría (`RESPUESTA_TTS_PERSIST_ENABLED=true`, cambio SENSIBLE C6).
+      AUDIO_STORAGE_PATH: ${AUDIO_STORAGE_PATH:-/audio_store}
+      AUDIO_ENCRYPTION_KEY: ${AUDIO_ENCRYPTION_KEY:?AUDIO_ENCRYPTION_KEY requerido (C3, ADR-009)}
+      RESPUESTA_TTS_PERSIST_ENABLED: ${RESPUESTA_TTS_PERSIST_ENABLED:-false}
     depends_on:
       db:
         condition: service_healthy
@@ -603,6 +705,11 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      # Volumen cifrado para almacén de audio (en reposo) — COMPARTIDO con
+      # stt_worker/recording_ingest_worker/tts_worker (mismo régimen cifrado
+      # SPEC-035): este worker SOLO lee el clip TTS ya generado (nunca
+      # sintetiza, nunca importa Piper/tts_engine) para subirlo/purgarlo.
+      - audio_store:/audio_store
     networks:
       - app
       - ia_internal
@@ -907,4 +1014,13 @@ volumes:
   # generados en bulk por TTS pre-deployment (modo bajo-cómputo, cero GPU en
   # vivo, ADR-011 §5). Montado por volumen; SPEC-045 lo puebla.
   voice_prerecorded_audio:
+    driver: local
+  # Pesos de la voz Piper `es_ES-davefx-medium` para el TTS ASÍNCRONO de
+  # respuesta (Entregable #6, SPEC-067/069, ADR-014) — servicio `tts_worker`.
+  # Volumen PROPIO, deliberadamente SEPARADO de `voice_piper_voices` (voz en
+  # vivo, VoiceBot archivado PLAN-005/inerte): evita acoplar el vector nuevo
+  # (asíncrono, CPU-only, producción) al volumen legado nunca poblado.
+  # Montado por volumen (sin descarga en runtime, ADR-009/012). Descarga
+  # manual pre-deployment (`python -m piper.download_voices` o equivalente).
+  respuesta_tts_piper_voices:
     driver: local

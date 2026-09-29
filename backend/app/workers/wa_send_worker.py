@@ -43,6 +43,20 @@ CHECKPOINT SENSIBLE (RNF-01/RF-02 SPEC-029, ADR-006): este módulo NUNCA
 importa `app.services.rag`/`app.services.ai_service` ni genera contenido —
 el texto que se envía es EXACTAMENTE `message.contenido`, ya aprobado por un
 humano y persistido antes de que este worker exista como job.
+
+Extensión aditiva (Entregable #6, SPEC-069, ADR-014): `process_job` ramifica
+por `job.tipo` (`OutboundSendJob`, `app.core.whatsapp_outbound_queue`) —
+`"texto"` (default) es EXACTAMENTE el comportamiento de arriba, sin cambio;
+`"audio"` envía el clip TTS de salida YA generado y aprobado (`tts_worker`,
+`app/services/telefonia/tts_engine.py`, aislado en `ia_internal` sin
+egress), leído del almacén cifrado (`audio_store.py`, SPEC-035, MISMO
+almacén que el audio ENTRANTE) por `audio_ref` y subido/enviado por el ÚNICO
+cliente autorizado (`GraphApiClient.send_audio_message`, ADR-006). Retención
+por defecto (RF-06 SPEC-069, ADR-014 decisión 5): tras un envío de audio
+EXITOSO, este worker PURGA el clip del almacén (`audio_store.purge_audio`)
+salvo que `Settings.respuesta_tts_persist_enabled` esté activo (auditoría
+explícita, cambio SENSIBLE C6) — el guion aprobado en `rag_drafts`/`Message`
+ya basta para reconstruir qué se dijo, no hace falta retener el binario.
 """
 
 from __future__ import annotations
@@ -62,6 +76,7 @@ from app.core.config import get_settings
 from app.core.redis_client import get_redis_client
 from app.core.whatsapp_outbound_queue import (
     OUTBOUND_QUEUE_KEY,
+    OUTBOUND_TIPO_AUDIO,
     OutboundSendJob,
     dequeue_outbound_send,
 )
@@ -76,11 +91,14 @@ from app.integrations.whatsapp.graph_client import (
 from app.models.contact import Contact
 from app.models.conversation import Conversation
 from app.models.message import ESTADO_ENTREGA_FAILED, Message
+from app.models.rag_draft import RagDraft
 from app.models.whatsapp_account import WhatsappAccount
+from app.services.telefonia import audio_store
 
 logger = structlog.get_logger(__name__)
 
 _REMITENTE_CONTACTO = "contacto"
+_DEFAULT_AUDIO_MIME_TYPE = "audio/ogg; codecs=opus"
 
 
 class OutboundConfigurationError(RuntimeError):
@@ -214,6 +232,8 @@ def process_job(
                 )
                 return
 
+            es_audio = job.tipo == OUTBOUND_TIPO_AUDIO
+
             try:
                 phone_number_id = _resolve_phone_number_id(db, tenant_id=tenant_id)
                 if not phone_number_id:
@@ -233,7 +253,31 @@ def process_job(
                 settings = get_settings()
                 client = graph_client or GraphApiClient()
 
-                if _within_service_window(last_inbound_at):
+                if es_audio:
+                    # SPEC-069/RF-05: el clip de audio NUNCA usa plantilla
+                    # HSM (WhatsApp no soporta plantillas de audio libre) —
+                    # fuera de la ventana de 24h se bloquea con motivo
+                    # explícito, mismo criterio fail-closed que el texto sin
+                    # plantilla configurada, en vez de intentar un envío que
+                    # Meta rechazaría.
+                    if not _within_service_window(last_inbound_at):
+                        raise WindowBlockedError(
+                            "fuera de ventana de 24h: un clip de audio no "
+                            "puede enviarse vía plantilla HSM (SPEC-069)"
+                        )
+                    if not job.audio_ref:
+                        raise OutboundConfigurationError(
+                            "job de audio sin audio_ref (clip TTS no referenciado)"
+                        )
+                    audio_bytes = _load_tts_clip_or_raise(job.audio_ref)
+                    result = client.send_audio_message(
+                        phone_number_id=phone_number_id,
+                        to=to,
+                        audio_bytes=audio_bytes,
+                        mime_type=job.audio_mime_type or _DEFAULT_AUDIO_MIME_TYPE,
+                        idempotency_key=str(message.id),
+                    )
+                elif _within_service_window(last_inbound_at):
                     result = client.send_text_message(
                         phone_number_id=phone_number_id,
                         to=to,
@@ -259,12 +303,14 @@ def process_job(
                 GraphApiError,
                 GraphApiHostError,
                 GraphApiTransientError,
+                audio_store.AudioStoreError,
             ) as exc:
                 logger.error(
                     "whatsapp_outbound_send_failed",
                     job_id=job.job_id,
                     message_id=job.message_id,
                     conversation_id=job.conversation_id,
+                    tipo=job.tipo,
                     error_type=type(exc).__name__,
                 )
                 _mark_failed(db, message)
@@ -273,14 +319,74 @@ def process_job(
             message.wamid = result.wamid
             db.flush()
 
+            if es_audio:
+                _purge_tts_clip_unless_retained(
+                    db, draft_message_id=message_id, audio_ref=job.audio_ref
+                )
+
         logger.info(
             "whatsapp_outbound_sent",
             job_id=job.job_id,
             message_id=job.message_id,
             conversation_id=job.conversation_id,
+            tipo=job.tipo,
         )
     finally:
         db.close()
+
+
+def _load_tts_clip_or_raise(audio_ref: str) -> bytes:
+    """Lee y descifra el clip TTS transitorio (`audio_store.py`, mismo
+    almacén cifrado que el audio ENTRANTE, SPEC-035/069) — se propaga
+    `AudioStoreError` al llamador (que lo trata igual que cualquier otro
+    fallo definitivo de envío, `estado_entrega="failed"`)."""
+    return audio_store.load_audio(audio_ref=audio_ref)
+
+
+def _purge_tts_clip_unless_retained(
+    db: Session, *, draft_message_id: uuid.UUID, audio_ref: str | None
+) -> None:
+    """Retención por defecto = NO persistir el clip TTS tras el envío
+    (RF-06 SPEC-069, ADR-014 decisión 5): purga el blob cifrado del almacén
+    INMEDIATAMENTE después de un envío exitoso, salvo que
+    `Settings.respuesta_tts_persist_enabled` esté activo (auditoría
+    explícita, cambio SENSIBLE C6) — en ese caso se conserva y se puebla
+    `rag_drafts.audio_salida_ref` con la misma referencia (régimen SPEC-041,
+    un solo régimen de retención cifrada).
+
+    Best-effort (nunca revierte el envío ya confirmado por Meta): un fallo de
+    purga se audita y se continúa — el mensaje YA se envió, no hay forma
+    segura de "deshacer" el envío por un fallo de limpieza del almacén.
+    """
+    if not audio_ref:
+        return
+
+    settings = get_settings()
+    if settings.respuesta_tts_persist_enabled:
+        try:
+            draft = db.scalar(
+                sa.select(RagDraft).where(RagDraft.sent_message_id == draft_message_id)
+            )
+            if draft is not None:
+                draft.audio_salida_ref = audio_ref
+                db.flush()
+        except Exception:  # noqa: BLE001 — best-effort, no revierte el envío
+            logger.error(
+                "whatsapp_outbound_audio_persist_ref_failed",
+                message_id=str(draft_message_id),
+                exc_info=True,
+            )
+        return
+
+    try:
+        audio_store.purge_audio(audio_ref=audio_ref)
+    except audio_store.AudioStoreError:
+        logger.error(
+            "whatsapp_outbound_audio_purge_failed",
+            message_id=str(draft_message_id),
+            audio_ref=audio_ref,
+            exc_info=True,
+        )
 
 
 async def drain_one(

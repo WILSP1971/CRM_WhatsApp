@@ -34,6 +34,15 @@ cryptography==41.0.7
 # check-externos-backend.sh, sección 10).
 faster-whisper==1.0.3
 
+# piper-tts: TTS 100% local (ONNX/CPU), Entregable #6 (SPEC-067/069, ADR-014).
+# Motor+voz decididos por evidencia de SPEC-067 (Piper 1.8.0,
+# es_ES-davefx-medium): `app/workers/tts_worker.py` carga el modelo UNA vez
+# por proceso (use_cuda=False) y nunca descarga pesos en runtime (voz
+# montada por volumen, mismo criterio que whisper_models/ADR-009).
+# PROHIBIDO: TTS de terceros en la nube (auditado en
+# check-externos-backend.sh, sección 10).
+piper-tts==1.8.0
+
 # HTTP y comunicación
 httpx==0.25.2
 websockets==12.0

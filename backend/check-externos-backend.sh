@@ -322,6 +322,43 @@ else
     EXIT_CODE=1
 fi
 
+# Verificar que el servicio/worker TTS (Entregable #6, SPEC-069, ADR-014) NUNCA
+# importa/ejecuta el cliente de SUBIDA de WhatsApp (`graph_client.py`) — el
+# servicio TTS corre 100% aislado en `ia_internal internal:true`; la subida del
+# clip la realiza EXCLUSIVAMENTE `wa_send_worker.py` (que SÍ está autorizado,
+# como `api`, a hablar con `graph.facebook.com`). Mismo estilo de verificación
+# activa que STT/IA arriba.
+echo -e "\n${YELLOW}    → Verificando que el servicio TTS NO importa el cliente de subida de WhatsApp (SPEC-069, ADR-005/006/014)...${NC}"
+declare -a TTS_FORBIDDEN_IMPORT_MODULES=(
+    "${BACKEND_DIR}/app/services/telefonia/tts_engine.py"
+    "${BACKEND_DIR}/app/workers/tts_worker.py"
+    "${BACKEND_DIR}/app/core/tts_queue.py"
+)
+
+TTS_GRAPH_VIOLATION=0
+for mod in "${TTS_FORBIDDEN_IMPORT_MODULES[@]}"; do
+    if [ -f "$mod" ]; then
+        # Solo líneas de import REAL de Python (no docstrings/comentarios que
+        # MENCIONEN estos nombres para documentar el invariante — mismo
+        # criterio que la sección 9, "módulos de IA NO importan httpx").
+        if grep -nE "^\s*(import|from)\s+.*(graph_client|GraphApiClient|httpx)" "$mod" 2>/dev/null; then
+            echo -e "${RED}    ✗ FALLO: el servicio TTS importa el cliente de subida de WhatsApp o httpx (prohibido, RNF-01 SPEC-069, ADR-005/006):${NC}"
+            TTS_GRAPH_VIOLATION=1
+        fi
+        if grep -n "graph\.facebook\.com" "$mod" 2>/dev/null; then
+            echo -e "${RED}    ✗ FALLO: el servicio TTS referencia graph.facebook.com (prohibido, RNF-01 SPEC-069, ADR-005/006):${NC}"
+            TTS_GRAPH_VIOLATION=1
+        fi
+    fi
+done
+
+if [ $TTS_GRAPH_VIOLATION -eq 0 ]; then
+    echo -e "${GREEN}    ✓ OK: tts_engine.py/tts_worker.py/tts_queue.py NO importan graph_client/httpx (SPEC-069, ADR-005/006/014)${NC}"
+else
+    EXIT_CODE=1
+    GRAPH_VIOLATION=1
+fi
+
 # Verificar que el módulo WhatsApp NO importe Ollama ni servicios de IA (separación: transporte ≠ inferencia)
 echo -e "\n${YELLOW}8. Verificando que módulo WhatsApp NO importa Ollama ni IA...${NC}"
 WHATSAPP_MODULE="${BACKEND_DIR}/app/integrations/whatsapp"

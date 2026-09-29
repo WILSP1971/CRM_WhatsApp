@@ -116,6 +116,14 @@ class DraftOut(BaseModel):
     original si aún no); `content_original` se conserva para auditoría de lo
     que propuso la IA. `sent_message_id` es `None` hasta la aprobación
     explícita (RF central de SPEC-019: nada se envía antes de eso).
+
+    `respuesta_modo`/`tts_estado` (SPEC-069/ADR-014, Entregable #6): opt-in
+    de audio y estado de la ruta "escuchar antes de enviar". `audio_listo`
+    expone SOLO un booleano de disponibilidad (derivado de `tts_estado ==
+    "listo"`) — NUNCA la referencia opaca `audio_salida_ref` (C3: no es un
+    dato para el cliente HTTP, es un identificador interno del almacén
+    cifrado); el binario se sirve por el endpoint dedicado
+    `GET .../drafts/{id}/audio`, que la SPA (SPEC-070) consume.
     """
 
     id: uuid.UUID
@@ -130,6 +138,9 @@ class DraftOut(BaseModel):
     edited_by: str | None
     approved_by: str | None
     sent_message_id: uuid.UUID | None
+    respuesta_modo: str
+    tts_estado: str | None
+    audio_listo: bool
     activo: bool
     created_at: datetime
     updated_at: datetime
@@ -143,3 +154,29 @@ class DraftApproveOut(BaseModel):
 
     draft: DraftOut
     sent_message_id: uuid.UUID
+
+
+# ---------------------------------------------------------------------------
+# Respuesta de audio (TTS de salida, Entregable #6, SPEC-069/ADR-014)
+# ---------------------------------------------------------------------------
+
+
+class DraftRespuestaModoRequest(BaseModel):
+    """Opt-in explícito (Q2-A, ADR-014) del modo de respuesta ANTES de
+    aprobar: el agente elige `"texto"` (default, sin cambio) o `"audio"` para
+    que, al aprobar el guion, además se dispare la síntesis TTS."""
+
+    respuesta_modo: str = Field(..., pattern="^(texto|audio)$")
+
+
+class DraftListenRequestedOut(BaseModel):
+    """Confirmación de que la ruta "escuchar antes de enviar" (Q1-C) quedó
+    encolada — el clip se genera EN BACKGROUND, sin enviarse. El agente debe
+    consultar `tts_estado` (vía `GET .../drafts/{id}`) hasta `"listo"`/
+    `"error"` y, si `"listo"`, puede descargar el clip
+    (`GET .../drafts/{id}/audio`, SPEC-070 lo consume) antes de decidir si lo
+    aprueba (`POST .../drafts/{id}/approve`, que reutiliza el clip ya
+    generado sin resintetizar) o lo descarta."""
+
+    draft_id: uuid.UUID
+    tts_estado: str

@@ -58,6 +58,9 @@ class _FakeGraphClient:
         self.raise_error = raise_error
         self.text_calls: list[dict] = []
         self.template_calls: list[dict] = []
+        # Entregable #6 (SPEC-069): registra los envíos de audio para que
+        # los tests verifiquen el clip/mime_type sin tocar Graph API real.
+        self.audio_calls: list[dict] = []
 
     def send_text_message(self, **kwargs) -> GraphSendResult:
         self.text_calls.append(kwargs)
@@ -67,6 +70,12 @@ class _FakeGraphClient:
 
     def send_template_message(self, **kwargs) -> GraphSendResult:
         self.template_calls.append(kwargs)
+        if self.raise_error:
+            raise self.raise_error
+        return GraphSendResult(wamid=self.wamid, raw={"messages": [{"id": self.wamid}]})
+
+    def send_audio_message(self, **kwargs) -> GraphSendResult:
+        self.audio_calls.append(kwargs)
         if self.raise_error:
             raise self.raise_error
         return GraphSendResult(wamid=self.wamid, raw={"messages": [{"id": self.wamid}]})

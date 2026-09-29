@@ -303,9 +303,9 @@ class Settings:
         # `"purge"` tiene efecto real sobre el audio. Un valor no reconocido
         # cae a `"purge"` (fail-safe: nunca retiene audio más allá de la
         # ventana por un typo de configuración).
-        self.audio_retention_action: str = os.getenv(
-            "AUDIO_RETENTION_ACTION", "purge"
-        ).strip().lower()
+        self.audio_retention_action: str = (
+            os.getenv("AUDIO_RETENTION_ACTION", "purge").strip().lower()
+        )
         if self.audio_retention_action not in ("purge", "anonymize"):
             self.audio_retention_action = "purge"
         # `CALL_TRANSCRIPT_RETENTION_ACTION`: acción al vencer la retención de
@@ -316,9 +316,9 @@ class Settings:
         # de anonimizar el texto, aplica borrado lógico (`activo=False`) de
         # forma explícita si aún no lo estaba (ya ocurre siempre antes por
         # C2, ver `call_retention_service`).
-        self.call_transcript_retention_action: str = os.getenv(
-            "CALL_TRANSCRIPT_RETENTION_ACTION", "anonymize"
-        ).strip().lower()
+        self.call_transcript_retention_action: str = (
+            os.getenv("CALL_TRANSCRIPT_RETENTION_ACTION", "anonymize").strip().lower()
+        )
         if self.call_transcript_retention_action not in ("purge", "anonymize"):
             self.call_transcript_retention_action = "anonymize"
         # `ENABLE_CALL_RETENTION_PURGE`: por defecto `false` — mismo criterio
@@ -413,9 +413,7 @@ class Settings:
         self.stt_live_device: str = os.getenv("STT_LIVE_DEVICE", "cuda")
         # Cuantización del modelo STT en vivo (int8 recomendado para GPU
         # compartida bajo presupuesto de latencia, ADR-011 §3).
-        self.stt_live_compute_type: str = os.getenv(
-            "STT_LIVE_COMPUTE_TYPE", "int8"
-        )
+        self.stt_live_compute_type: str = os.getenv("STT_LIVE_COMPUTE_TYPE", "int8")
 
         # TTS de respuesta en notas de voz (Entregable #6, CPU-only, ADR-014/
         # SPEC-067/SPEC-068). Limpieza de residuos de la fase GPU archivada
@@ -449,6 +447,85 @@ class Settings:
         #     incumple por poco el techo en el guion más largo, 10.137s).
         #     Documentado como trade-off de acento aceptado, no como error.
         self.piper_voice: str = os.getenv("PIPER_VOICE", "es_ES-davefx-medium")
+        # `PIPER_VOICE_DIR`: directorio de pesos Piper montado por volumen
+        # (SPEC-069, mismo criterio que `STT_MODEL_DIR`/`whisper_models`,
+        # ADR-009): nunca se descarga en runtime. Compartido conceptualmente
+        # entre el `voice_tts` archivado (que monta `voice_piper_voices` en
+        # `/root/.local/share/piper`) y este servicio nuevo — variable
+        # PROPIA para no acoplar el path del servicio nuevo al volumen legado
+        # inerte; en `docker-compose.yml` el volumen nuevo
+        # (`respuesta_tts_piper_voices`) se monta en esta misma ruta.
+        self.piper_voice_dir: str = os.getenv("PIPER_VOICE_DIR", "/piper_voices")
+
+        # --- TTS asíncrono de respuesta (Entregable #6, SPEC-069, ADR-014) ---
+        # DECISIÓN DE NOMBRES (confirmada por el Lead, PLAN-008 Entregable #6):
+        # el bloque `voice_tts` de `docker-compose.yml` (servicio INERTE del
+        # VoiceBot en vivo archivado, PLAN-005/ADR-011/ADR-012, nunca
+        # implementado) ya usa `TTS_MODE`/`PIPER_VOICE`/`TTS_VRAM_FRACTION` —
+        # se DEJA INTACTO a propósito (no se reactiva, no se borra). Este
+        # servicio nuevo (asíncrono, CPU-only, notas de voz de WhatsApp) usa
+        # el prefijo `RESPUESTA_TTS_*`, deliberadamente DISTINTO, para que
+        # nadie confunda ambos vectores en logs/deploy/runbook. `PIPER_VOICE`
+        # de arriba SÍ se reutiliza tal cual (misma voz, mismo motor Piper,
+        # sin necesidad de una segunda variable de voz): `es_ES-davefx-medium`
+        # es el único valor válido según la evidencia de SPEC-067; conservar
+        # una sola fuente de verdad para la voz evita que este servicio y un
+        # futuro reuso de `voice_tts` (si algún día se reactiva) diverjan sin
+        # querer.
+        #
+        # `RESPUESTA_TTS_ENGINE`: motor de síntesis (SPEC-067/ADR-014, Piper
+        # TTS 1.8.0, ÚNICO validado hoy). Configurable para no hardcodear un
+        # string mágico en el worker, pero SIN una segunda implementación de
+        # motor: un valor distinto de "piper" no tiene efecto (el worker no
+        # sabe sintetizar con nada más) — existe para dejar explícita la
+        # decisión en el runbook (SPEC-072) y facilitar una migración futura
+        # documentada, no para conmutar en runtime.
+        self.respuesta_tts_engine: str = os.getenv("RESPUESTA_TTS_ENGINE", "piper")
+        # `RESPUESTA_TTS_MAX_CHARS`: límite de longitud sintetizable (Adenda
+        # SPEC-067/SPEC-069, rango probado ~650-800 caracteres). Un guion más
+        # largo NO se sintetiza (cae a `tts_estado="error"`, fallback a texto)
+        # en vez de arriesgar exceder el techo de latencia sin evidencia.
+        try:
+            self.respuesta_tts_max_chars: int = int(
+                os.getenv("RESPUESTA_TTS_MAX_CHARS", "750")
+            )
+            if self.respuesta_tts_max_chars <= 0:
+                self.respuesta_tts_max_chars = 750
+        except ValueError:
+            self.respuesta_tts_max_chars = 750
+        # `RESPUESTA_TTS_TIMEOUT_SECONDS`: techo de latencia (Q4-b, ADR-014,
+        # ≤5-10s) que el worker aplica a la síntesis+transcodificación de un
+        # job individual; si se excede, el job se marca `tts_estado="error"`
+        # sin enviar audio a medias (RF-07).
+        try:
+            self.respuesta_tts_timeout_seconds: float = float(
+                os.getenv("RESPUESTA_TTS_TIMEOUT_SECONDS", "10")
+            )
+            if self.respuesta_tts_timeout_seconds <= 0:
+                self.respuesta_tts_timeout_seconds = 10.0
+        except ValueError:
+            self.respuesta_tts_timeout_seconds = 10.0
+        # `RESPUESTA_TTS_CONCURRENCIA`: throttling de `tts:jobs` (Adenda
+        # SPEC-067/SPEC-069, R-84) — concurrencia inicial = 1 (no medido con
+        # workers reales en el sandbox del spike; SPEC-071 re-valida). El
+        # worker corre N tareas concurrentes internas (asyncio.Semaphore)
+        # sobre la misma cola, sin escalar réplicas por defecto.
+        try:
+            self.respuesta_tts_concurrencia: int = int(
+                os.getenv("RESPUESTA_TTS_CONCURRENCIA", "1")
+            )
+            if self.respuesta_tts_concurrencia <= 0:
+                self.respuesta_tts_concurrencia = 1
+        except ValueError:
+            self.respuesta_tts_concurrencia = 1
+        # `RESPUESTA_TTS_PERSIST_ENABLED`: retención por defecto = NO
+        # persistir el clip (ADR-012 §5/ADR-014 decisión 5, herencia). Solo
+        # una política explícita de auditoría activa la persistencia cifrada
+        # (`audio_store.py` + `audio_salida_ref`, régimen SPEC-041) — cambio
+        # SENSIBLE (C6) que requiere decisión separada del Lead, no un default.
+        self.respuesta_tts_persist_enabled: bool = os.getenv(
+            "RESPUESTA_TTS_PERSIST_ENABLED", "false"
+        ).strip().lower() in ("1", "true", "yes")
 
         # NLU de intent: confianza mínima de clasificación contra catálogo
         # cerrado (SPEC-045). Respuestas con confianza < umbral se escalan a
@@ -466,9 +543,7 @@ class Settings:
         # conservador (1-3 por defecto piloto), fijado empíricamente por THOR
         # (F6) compartiendo GPU con batch. Al llegar C+1, la nueva llamada
         # recibe IVR mínimo + escalación (nunca se degrada una activa).
-        self.max_concurrent_calls: int = int(
-            os.getenv("MAX_CONCURRENT_CALLS", "1")
-        )
+        self.max_concurrent_calls: int = int(os.getenv("MAX_CONCURRENT_CALLS", "1"))
 
         # PBX de media en vivo (SPEC-044, SPEC-046, ADR-011 §7): host/puerto
         # del PBX que transporta media/SIP. Por defecto (vacío): PBX on-prem en

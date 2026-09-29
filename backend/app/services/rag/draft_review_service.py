@@ -36,7 +36,11 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models.message import Message
-from app.models.rag_draft import ESTADOS_DRAFT_MUTABLES, RagDraft
+from app.models.rag_draft import (
+    ESTADOS_DRAFT_MUTABLES,
+    RESPUESTA_MODO_VALIDOS,
+    RagDraft,
+)
 from app.services.message_service import create_message
 from app.services.rag.draft_service import Citation, RagDraftResult
 
@@ -147,11 +151,29 @@ def edit_draft(
     `created_by` (quién GENERÓ el borrador) tampoco se sobrescribe: quién
     edita se registra por separado en `edited_by` (hallazgo MAYOR, revisión
     BLACK PANTHER) para no perder el origen del borrador.
+
+    INVALIDACIÓN DEL CLIP TTS (SPEC-069, ADR-014, hallazgo de este
+    implementador): si el agente había pedido "escuchar antes de enviar"
+    (`tts_estado == "listo"`, un clip YA generado para el texto ANTERIOR) y
+    LUEGO edita el texto, ese clip ya NO representa el guion vigente — se
+    invalida (`tts_estado`/`audio_salida_ref` -> `NULL`) en la MISMA
+    transacción atómica que la edición, para que `approve_draft_endpoint`
+    JAMÁS reutilice por error un clip desincronizado del texto final (el
+    invariante "aprobar el guion ≈ aprobar lo que se dirá", ADR-014 decisión
+    1, se rompería si el audio enviado no correspondiera al texto editado).
+    Un `tts_estado` ya `"error"`/`None` se sobrescribe con el mismo valor
+    NULL sin efecto observable adicional.
     """
     _atomic_transition(
         db,
         draft,
-        values={"content": content, "estado": "editado", "edited_by": edited_by},
+        values={
+            "content": content,
+            "estado": "editado",
+            "edited_by": edited_by,
+            "tts_estado": None,
+            "audio_salida_ref": None,
+        },
     )
     return draft
 
@@ -159,6 +181,46 @@ def edit_draft(
 def discard_draft(db: Session, draft: RagDraft) -> RagDraft:
     """El agente descarta el borrador: NUNCA genera un mensaje saliente."""
     _atomic_transition(db, draft, values={"estado": "descartado"})
+    return draft
+
+
+class InvalidRespuestaModoError(ValueError):
+    """`respuesta_modo` fuera de `RESPUESTA_MODO_VALIDOS` (defensa en
+    profundidad; el schema Pydantic ya valida el patrón en la capa HTTP)."""
+
+
+def set_respuesta_modo(
+    db: Session, draft: RagDraft, *, respuesta_modo: str
+) -> RagDraft:
+    """Opt-in explícito (Q2-A, ADR-014) del modo de respuesta ANTES de
+    aprobar: `"texto"` (default, sin cambio de comportamiento) o `"audio"`
+    para que `approve_and_send` dispare además la síntesis TTS (SPEC-069).
+
+    NO transiciona `estado` (sigue `propuesto`/`editado`, mutable) — este
+    campo es ORTOGONAL a la máquina de estados del guion (ver docstring del
+    modelo `RagDraft`). Mismo criterio de UPDATE atómico condicional que el
+    resto de mutaciones: solo aplica si el borrador SIGUE mutable en la BD
+    (evita fijar el modo de un borrador ya aprobado/descartado por otra
+    request concurrente).
+    """
+    if respuesta_modo not in RESPUESTA_MODO_VALIDOS:
+        raise InvalidRespuestaModoError(
+            f"respuesta_modo inválido: {respuesta_modo!r} "
+            f"(válidos: {sorted(RESPUESTA_MODO_VALIDOS)})"
+        )
+    result = db.execute(
+        update(RagDraft)
+        .where(RagDraft.id == draft.id, RagDraft.estado.in_(ESTADOS_DRAFT_MUTABLES))
+        .values(respuesta_modo=respuesta_modo)
+    )
+    if result.rowcount == 0:
+        raise DraftNotMutableError(
+            "El borrador ya no admite cambiar el modo de respuesta: fue "
+            "aprobado, descartado, o modificado por otra solicitud "
+            "concurrente."
+        )
+    db.flush()
+    db.refresh(draft)
     return draft
 
 

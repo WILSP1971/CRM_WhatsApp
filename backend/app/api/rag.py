@@ -26,6 +26,24 @@ Endpoints (bajo `/api/v1`, protegidos por JWT + tenant RLS, mismo patrón que
   crea el `Message` saliente real y difunde por WebChat (SPEC-015).
 - `POST .../drafts/{draft_id}/discard`: descarta el borrador; NO envía nada.
 
+Respuesta de audio (TTS de salida, Entregable #6, SPEC-069/ADR-014):
+- `PATCH .../drafts/{draft_id}/respuesta-modo`: opt-in (Q2-A) de `"texto"`
+  (default)/`"audio"` ANTES de aprobar; NO genera ni envía nada.
+- `POST .../drafts/{draft_id}/listen`: ruta OPCIONAL "escuchar antes de
+  enviar" (Q1-C) — encola la síntesis del guion vigente BAJO DEMANDA, SIN
+  enviar; el agente decide después si aprueba (envía el clip) o descarta.
+- `GET .../drafts/{draft_id}/audio`: sirve el clip TTS YA generado (404 si no
+  hay uno `listo`) para que el agente lo reproduzca antes de aprobar/
+  descartar — contrato que consume la SPA (SPEC-070).
+- `POST .../drafts/{draft_id}/approve` (extendido): si `respuesta_modo ==
+  "audio"` y el canal es WhatsApp, ADEMÁS de enviar el texto de siempre,
+  dispara la respuesta de voz — reutiliza el clip ya escuchado si existe, o
+  encola la síntesis en background (`tts:jobs`, `app/workers/tts_worker.py`)
+  que el propio worker envía tras terminar. **Ningún audio se envía sin
+  aprobación humana** (del guion o del clip escuchado, ADR-014) — invariante
+  verificado: el encolado de `tts:jobs` en modo "enviar" es INALCANZABLE sin
+  que `approve_and_send` ya haya tenido éxito en esta misma request.
+
 CHECKPOINT SENSIBLE (.no-externo): los endpoints de generación usan
 EXCLUSIVAMENTE `AIClient` (SPEC-016, Ollama interno) vía `get_ai_client`.
 Modo degradado (R-21): si el servicio de IA local no está disponible, se
@@ -55,6 +73,7 @@ import uuid
 import redis.asyncio as redis_asyncio
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -71,20 +90,31 @@ from app.schemas.rag import (
     DraftApproveOut,
     DraftCreateRequest,
     DraftEditRequest,
+    DraftListenRequestedOut,
     DraftOut,
+    DraftRespuestaModoRequest,
     IngestQueuedOut,
     IngestRequest,
     RagDraftOut,
     RagDraftRequest,
+)
+from app.core.tts_queue import (
+    TTS_JOB_MODO_ENVIAR,
+    TTS_JOB_MODO_ESCUCHAR,
+    enqueue_tts_job,
 )
 from app.core.whatsapp_outbound_queue import enqueue_outbound_send
 from app.schemas.ws_chat import WsOutgoingMessage
 from app.services.ai_service import AIClient, AIServiceError, get_ai_client
 from app.services.rag import draft_review_service
 from app.services.rag.draft_service import InsufficientContextError, generate_rag_draft
+from app.services.telefonia import audio_store
 from app.workers.rag_ingest_worker import notify_new_job
 
 _CANAL_WHATSAPP = "whatsapp"
+_RESPUESTA_MODO_AUDIO = "audio"
+_TTS_ESTADO_LISTO = "listo"
+_AUDIO_MIME_TYPE = "audio/ogg; codecs=opus"
 
 logger = structlog.get_logger(__name__)
 
@@ -142,6 +172,9 @@ def _draft_out(draft: RagDraft) -> DraftOut:
         edited_by=draft.edited_by,
         approved_by=draft.approved_by,
         sent_message_id=draft.sent_message_id,
+        respuesta_modo=draft.respuesta_modo,
+        tts_estado=draft.tts_estado,
+        audio_listo=draft.tts_estado == _TTS_ESTADO_LISTO,
         activo=draft.activo,
         created_at=draft.created_at,
         updated_at=draft.updated_at,
@@ -339,6 +372,126 @@ def edit_draft_endpoint(
     return _draft_out(draft)
 
 
+# ---------------------------------------------------------------------------
+# Respuesta de audio (TTS de salida, Entregable #6, SPEC-069/ADR-014)
+# ---------------------------------------------------------------------------
+
+
+@router.patch(
+    "/conversations/{conversation_id}/drafts/{draft_id}/respuesta-modo",
+    response_model=DraftOut,
+    responses={
+        404: {"description": "Conversación o borrador no encontrados"},
+        409: {"description": "El borrador ya no admite este cambio (estado terminal)"},
+    },
+)
+def set_respuesta_modo_endpoint(
+    conversation_id: uuid.UUID,
+    draft_id: uuid.UUID,
+    payload: DraftRespuestaModoRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_tenant_db),
+) -> DraftOut:
+    """Opt-in explícito (Q2-A, ADR-014): el agente elige `"texto"` (default)
+    o `"audio"` ANTES de aprobar. NO genera ni envía nada — solo fija el modo
+    que `approve_draft_endpoint` consultará al aprobar (RF-03 SPEC-069)."""
+    _get_conversation_activa_or_404(db, conversation_id)
+    draft = _get_draft_activo_or_404(db, conversation_id, draft_id)
+    try:
+        draft = draft_review_service.set_respuesta_modo(
+            db, draft, respuesta_modo=payload.respuesta_modo
+        )
+    except draft_review_service.DraftNotMutableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    return _draft_out(draft)
+
+
+@router.post(
+    "/conversations/{conversation_id}/drafts/{draft_id}/listen",
+    response_model=DraftListenRequestedOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        404: {"description": "Conversación o borrador no encontrados"},
+    },
+)
+async def request_draft_audio_endpoint(
+    conversation_id: uuid.UUID,
+    draft_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_tenant_db),
+    redis_client: redis_asyncio.Redis = Depends(get_redis_client),
+) -> DraftListenRequestedOut:
+    """Ruta OPCIONAL "escuchar antes de enviar" (Q1-C, ADR-014, RF-04
+    SPEC-069): genera el clip TTS del guion vigente BAJO DEMANDA, SIN
+    enviarlo — el agente lo reproduce (SPA, SPEC-070, vía
+    `GET .../drafts/{id}/audio`) y decide después si lo aprueba
+    (`POST .../drafts/{id}/approve`, que reutiliza el clip ya generado sin
+    resintetizar) o lo descarta.
+
+    NO requiere que el borrador esté en un estado terminal ni cambia su
+    `estado`/`respuesta_modo` — es ortogonal a la máquina de estados del
+    guion (puede pedirse escuchar sobre un borrador `propuesto`/`editado`).
+    El guion que se sintetiza es el `content` VIGENTE en este instante
+    (snapshot congelado al encolar, ver `TtsSynthesisJob`); si el agente edita
+    el texto DESPUÉS de pedir escuchar, debe pedir escuchar de nuevo.
+    """
+    _get_conversation_activa_or_404(db, conversation_id)
+    draft = _get_draft_activo_or_404(db, conversation_id, draft_id)
+
+    await enqueue_tts_job(
+        redis_client,
+        draft_id=draft.id,
+        tenant_id=current_user.tenant_id,
+        conversation_id=conversation_id,
+        texto=draft.content,
+        modo=TTS_JOB_MODO_ESCUCHAR,
+    )
+
+    return DraftListenRequestedOut(draft_id=draft.id, tts_estado="generando")
+
+
+@router.get(
+    "/conversations/{conversation_id}/drafts/{draft_id}/audio",
+    responses={
+        404: {"description": "Conversación/borrador no encontrados o sin clip listo"},
+    },
+)
+def get_draft_audio_endpoint(
+    conversation_id: uuid.UUID,
+    draft_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_tenant_db),
+) -> Response:
+    """Sirve el clip TTS YA generado (RF-04, ruta "escuchar antes de
+    enviar") para que el agente lo reproduzca antes de aprobar/descartar —
+    contrato que consume la SPA (SPEC-070, fuera de este alcance).
+
+    404 si el borrador no tiene un clip `tts_estado == "listo"` (aún
+    generando, falló, o nunca se solicitó) — nunca se sirve un binario a
+    medias. El binario se lee bajo RLS (el borrador ya se resolvió dentro
+    del tenant autenticado) del almacén cifrado transitorio
+    (`audio_store.py`, SPEC-035) y se descifra SOLO en memoria de proceso
+    para esta respuesta, nunca se reescribe a disco sin cifrar.
+    """
+    _get_conversation_activa_or_404(db, conversation_id)
+    draft = _get_draft_activo_or_404(db, conversation_id, draft_id)
+    if draft.tts_estado != _TTS_ESTADO_LISTO or not draft.audio_salida_ref:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El borrador no tiene un clip de audio listo para reproducir",
+        )
+    try:
+        audio_bytes = audio_store.load_audio(audio_ref=draft.audio_salida_ref)
+    except audio_store.AudioStoreError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El clip de audio ya no está disponible (posible purga tras envío)",
+        ) from exc
+    return Response(content=audio_bytes, media_type=_AUDIO_MIME_TYPE)
+
+
 @router.post(
     "/conversations/{conversation_id}/drafts/{draft_id}/approve",
     response_model=DraftApproveOut,
@@ -413,6 +566,57 @@ async def approve_draft_endpoint(
                 tenant_id=str(current_user.tenant_id),
                 exc_info=True,
             )
+
+        # SPEC-069/RF-03 (SENSIBLE, ADR-014): SOLO tras la aprobación humana
+        # del GUION (arriba, `approve_and_send` ya persistió `message`) y
+        # SOLO si el agente eligió opt-in de audio (`respuesta_modo ==
+        # "audio"`, Q2-A), se dispara la respuesta de voz. Ningún otro path
+        # del backend encola `tts:jobs` en modo "enviar" (allowlist: SOLO
+        # este bloque, tras una aprobación ya confirmada) — el invariante
+        # "ningún audio se envía sin aprobación humana" se cumple porque
+        # este código es INALCANZABLE sin que `approve_and_send` de arriba
+        # ya haya tenido éxito.
+        if draft.respuesta_modo == _RESPUESTA_MODO_AUDIO:
+            try:
+                if draft.tts_estado == _TTS_ESTADO_LISTO and draft.audio_salida_ref:
+                    # Ruta "escuchar antes de enviar" (Q1-C): el agente YA
+                    # generó y escuchó el clip ANTES de aprobar (RF-04) — se
+                    # reutiliza el clip existente, se envía DIRECTO por
+                    # `wa:outbound` sin volver a pasar por `tts:jobs`
+                    # (idempotencia: nunca se sintetiza dos veces el mismo
+                    # guion aprobado).
+                    await enqueue_outbound_send(
+                        redis_client,
+                        tenant_id=current_user.tenant_id,
+                        conversation_id=conversation_id,
+                        message_id=message.id,
+                        tipo="audio",
+                        audio_ref=draft.audio_salida_ref,
+                        audio_mime_type=_AUDIO_MIME_TYPE,
+                    )
+                else:
+                    # Ruta por defecto (RF-03): nadie escuchó el clip antes
+                    # de aprobar — se encola la síntesis; el propio
+                    # `tts_worker`, tras sintetizar con éxito, encola el
+                    # envío por `wa:outbound` (ver
+                    # `app/workers/tts_worker.py::_dispatch_send_best_effort`).
+                    await enqueue_tts_job(
+                        redis_client,
+                        draft_id=draft.id,
+                        tenant_id=current_user.tenant_id,
+                        conversation_id=conversation_id,
+                        texto=draft.content,
+                        modo=TTS_JOB_MODO_ENVIAR,
+                    )
+            except Exception:  # noqa: BLE001 — best-effort, no revierte la aprobación
+                logger.error(
+                    "rag_draft_approve_audio_enqueue_failed",
+                    draft_id=str(draft.id),
+                    message_id=str(message.id),
+                    conversation_id=str(conversation_id),
+                    tenant_id=str(current_user.tenant_id),
+                    exc_info=True,
+                )
 
     message_out = MessageOut.model_validate(message)
     envelope = WsOutgoingMessage(message=message_out)
