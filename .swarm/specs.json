@@ -3,7 +3,7 @@
   "clasificacion": "SENSIBLE",
   "actualizado": "2026-09-27T00:00:00-05:00",
   "contadores": {
-    "next_plan": 8,
+    "next_plan": 10,
     "next_spec": 73,
     "next_adr": 15,
     "total_specs": 72,
@@ -189,6 +189,24 @@
         "ADR-014"
       ],
       "nota": "Desbloquea el P2 aplazado en ADR-013 SS4 (TTS de salida). Decisiones vinculantes del Lead (prompt SS7.1): aprobacion hibrida (Q1-C, guion por defecto + escuchar antes de enviar opcional), opt-in (Q2-A), Piper TTS candidato principal vs Coqui comparativa sujeto a prueba de viabilidad THOR (Q3), techo de latencia <=5-10s en background (Q4-b). F0 (SPEC-067, THOR) es puerta previa dura: sin decision de motor viable en CPU no arranca F2. Riesgo top R-83: si ningun motor cumple, plan de contingencia escalonado (relajar techo / degradar motor / acotar longitud / fallback a solo texto), decision final del Lead con evidencia. Pendiente de confirmar con el Lead al aprobar: disclaimer de voz sintetica si/no (recomendacion DOCTOR STRANGE: marca ligera)."
+    },
+    {
+      "id": "PLAN-009",
+      "titulo": "Alta administrativa interna de tenant nuevo (sede) + primer admin, atomica sobre RLS efectiva, admin de plataforma como concepto separado, sin autoregistro/canal/planes",
+      "archivo": ".swarm/PLAN-009.md",
+      "estado": "APROBADO",
+      "origen": "prompt-lab/prompts/PROMPT-009-ONBOARDING-MULTITENANT.md",
+      "sensible": true,
+      "specs_propuestas": [
+        "SPEC-073",
+        "SPEC-074",
+        "SPEC-075",
+        "SPEC-076"
+      ],
+      "adrs_recomendados": [
+        "ADR-015"
+      ],
+      "nota": "Caso de uso confirmado: grupo de clinicas multi-sede (NO SaaS externo). Decisiones vinculantes del Lead: alta administrativa interna (no autoregistro publico), tenant se crea SIN canal WhatsApp (se conecta despues), activacion inmediata (sin verificacion email), binario sin planes/billing. Decision arquitectonica de DOCTOR STRANGE (ADR-015): admin de plataforma = tabla platform_admins separada, FUERA del modelo tenant-scoped (no en TENANT_SCOPED_TABLES), en vez de un rol especial dentro de users (que forzaria bypass/ampliacion de RLS). Fila raiz tenants con privilegio elevado acotado (patron seed); primer user admin creado bajo RLS con app.tenant_id fijado, nunca bypass owner. Atomicidad tenant+admin en una sola transaccion. UI en la SPA queda OUT por defecto (endpoint+CLI bastan). Riesgo top: R-92 superficie de abuso del endpoint (quien puede invocarlo)."
     }
   ],
   "specs": [
