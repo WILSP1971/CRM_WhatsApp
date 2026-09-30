@@ -4,18 +4,18 @@
   "actualizado": "2026-09-27T00:00:00-05:00",
   "contadores": {
     "next_plan": 10,
-    "next_spec": 73,
-    "next_adr": 15,
-    "total_specs": 72,
+    "next_spec": 77,
+    "next_adr": 16,
+    "total_specs": 76,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 1,
+      "APROBADA": 4,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 30,
+      "CERRADA": 31,
       "ARCHIVADA": 8
     },
-    "actualizado": "2026-09-28"
+    "actualizado": "2026-09-30"
   },
   "planes": [
     {
@@ -1723,6 +1723,79 @@
       "depende_de": [
         "SPEC-071"
       ]
+    },
+    {
+      "id": "SPEC-073",
+      "titulo": "ADR-015: mecanismo del admin de plataforma (platform_admins separado) y provisioning atomico respetando RLS",
+      "archivo": ".swarm/specs/SPEC-073.md",
+      "estado": "CERRADA",
+      "fase": "F0",
+      "plan": "PLAN-009",
+      "sensible": true,
+      "responsable": "DOCTOR STRANGE",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW"
+      ],
+      "depende_de": []
+    },
+    {
+      "id": "SPEC-074",
+      "titulo": "Modelo de datos aditivo: tabla platform_admins (sin tenant_id, sin RLS) + semantica de rol=admin",
+      "archivo": ".swarm/specs/SPEC-074.md",
+      "estado": "APROBADA",
+      "fase": "F1",
+      "plan": "PLAN-009",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-073"
+      ]
+    },
+    {
+      "id": "SPEC-075",
+      "titulo": "tenant_provisioning_service atomico + guard require_platform_admin + endpoint POST /platform/tenants + CLI interno",
+      "archivo": ".swarm/specs/SPEC-075.md",
+      "estado": "APROBADA",
+      "fase": "F2",
+      "plan": "PLAN-009",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-073",
+        "SPEC-074"
+      ]
+    },
+    {
+      "id": "SPEC-076",
+      "titulo": "Pruebas + seguridad + docs/runbook + no-regresion del onboarding multi-tenant",
+      "archivo": ".swarm/specs/SPEC-076.md",
+      "estado": "APROBADA",
+      "fase": "F3",
+      "plan": "PLAN-009",
+      "sensible": true,
+      "responsable": "HAWKEYE",
+      "revisan": [
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "QUICKSILVER",
+        "CAPTAIN AMERICA"
+      ],
+      "depende_de": [
+        "SPEC-073",
+        "SPEC-074",
+        "SPEC-075"
+      ]
     }
   ],
   "adrs": [
@@ -1836,6 +1909,13 @@
       "archivo": ".swarm/adrs/ADR-014-aprobacion-envio-respuesta-audio-tts-local-human-in-the-loop.md",
       "estado": "Aceptada",
       "plan": "PLAN-008"
+    },
+    {
+      "id": "ADR-015",
+      "titulo": "Mecanismo del admin de plataforma y provisioning atomico de tenant + primer admin respetando RLS efectiva",
+      "archivo": ".swarm/adrs/ADR-015-admin-plataforma-separado-provisioning-atomico-tenant-rls.md",
+      "estado": "Aceptada",
+      "plan": "PLAN-009"
     }
   ]
 }
