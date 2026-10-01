@@ -28,6 +28,16 @@ settings = get_settings()
 
 TOKEN_TYPE_ACCESS = "access"
 
+# SPEC-075/ADR-015: tipo de token DISTINTO para el admin de plataforma
+# (`platform_admins`, sin `tenant_id`). Mismo secreto/algoritmo (no hay razón
+# de seguridad para una segunda clave: ambos tokens ya están firmados y
+# verificados server-side), pero el claim `type` los hace mutuamente
+# EXCLUYENTES: un JWT de tenant (`type="access"`) presentado donde se espera
+# uno de plataforma se decodifica con éxito pero es RECHAZADO explícitamente
+# por `decode_platform_access_token` (y viceversa) -> evita que un token de
+# un plano "cruce" al otro guard (RNF-AISLAMIENTO-AUTH).
+TOKEN_TYPE_PLATFORM_ACCESS = "platform_access"
+
 
 class InvalidTokenError(Exception):
     """Token ausente, mal formado, con firma inválida o expirado."""
@@ -35,11 +45,24 @@ class InvalidTokenError(Exception):
 
 @dataclass(frozen=True)
 class TokenPayload:
-    """Datos extraídos y validados de un JWT de acceso."""
+    """Datos extraídos y validados de un JWT de acceso de TENANT."""
 
     sub: str  # user id
     tenant_id: str
     rol: str
+    exp: datetime
+
+
+@dataclass(frozen=True)
+class PlatformTokenPayload:
+    """Datos extraídos y validados de un JWT de acceso de PLATAFORMA.
+
+    Deliberadamente SIN `tenant_id`/`rol` de tenant: el admin de plataforma
+    vive en el plano no-scoped (`platform_admins`, ADR-015), no es un usuario
+    de ningún tenant.
+    """
+
+    sub: str  # platform_admin id
     exp: datetime
 
 
@@ -103,5 +126,70 @@ def decode_access_token(token: str) -> TokenPayload:
         sub=sub,
         tenant_id=tenant_id,
         rol=rol,
+        exp=datetime.fromtimestamp(exp, tz=timezone.utc),
+    )
+
+
+def create_platform_access_token(
+    *,
+    platform_admin_id: uuid.UUID | str,
+    expires_minutes: int | None = None,
+) -> str:
+    """Emite un JWT de acceso de PLATAFORMA (SPEC-075/ADR-015).
+
+    Deliberadamente SIN `tenant_id`/`rol`: el admin de plataforma no
+    pertenece a ningún tenant (`platform_admins`, plano no-scoped). El claim
+    `type="platform_access"` (distinto de `type="access"` de
+    `create_access_token`) es lo que impide que este token se acepte en
+    `decode_access_token` (y viceversa) — los dos planos de autenticación
+    quedan mutuamente excluyentes aunque compartan secreto/algoritmo.
+    """
+    now = datetime.now(timezone.utc)
+    expire_minutes = (
+        expires_minutes
+        if expires_minutes is not None
+        else settings.jwt_access_token_expire_minutes
+    )
+    expire = now + timedelta(minutes=expire_minutes)
+
+    to_encode = {
+        "sub": str(platform_admin_id),
+        "type": TOKEN_TYPE_PLATFORM_ACCESS,
+        "iat": now,
+        "exp": expire,
+    }
+    return jwt.encode(
+        to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm
+    )
+
+
+def decode_platform_access_token(token: str) -> PlatformTokenPayload:
+    """Valida firma y expiración de un JWT de PLATAFORMA.
+
+    Lanza `InvalidTokenError` si el token es inválido/expirado O si es un
+    JWT de TENANT (`type="access"`) — ese caso se distingue explícitamente
+    del "token ausente/corrupto" en el guard (`require_platform_admin`, que
+    lo traduce a 403 en vez de 401, ver `app/api/platform_deps.py`).
+    """
+    if not token:
+        raise InvalidTokenError("Token ausente")
+
+    try:
+        payload = jwt.decode(
+            token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
+        )
+    except JWTError as exc:
+        raise InvalidTokenError("Token inválido o expirado") from exc
+
+    if payload.get("type") != TOKEN_TYPE_PLATFORM_ACCESS:
+        raise InvalidTokenError("Tipo de token inesperado")
+
+    sub = payload.get("sub")
+    exp = payload.get("exp")
+    if not sub or exp is None:
+        raise InvalidTokenError("Claims incompletos en el token")
+
+    return PlatformTokenPayload(
+        sub=sub,
         exp=datetime.fromtimestamp(exp, tz=timezone.utc),
     )

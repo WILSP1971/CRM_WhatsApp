@@ -1,7 +1,7 @@
 {
   "proyecto": "CRM_WhatsApp — OmniCore AI",
   "clasificacion": "SENSIBLE",
-  "actualizado": "2026-09-27T00:00:00-05:00",
+  "actualizado": "2026-10-01T00:00:00-05:00",
   "contadores": {
     "next_plan": 10,
     "next_spec": 77,
@@ -9,13 +9,13 @@
     "total_specs": 76,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 3,
+      "APROBADA": 2,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 32,
+      "CERRADA": 33,
       "ARCHIVADA": 8
     },
-    "actualizado": "2026-09-30"
+    "actualizado": "2026-10-01"
   },
   "planes": [
     {
@@ -1760,7 +1760,7 @@
       "id": "SPEC-075",
       "titulo": "tenant_provisioning_service atomico + guard require_platform_admin + endpoint POST /platform/tenants + CLI interno",
       "archivo": ".swarm/specs/SPEC-075.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F2",
       "plan": "PLAN-009",
       "sensible": true,

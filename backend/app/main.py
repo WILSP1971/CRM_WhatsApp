@@ -21,6 +21,7 @@ from app.api.contacts import router as contacts_router
 from app.api.conversations import router as conversations_router
 from app.api.documents import router as documents_router
 from app.api.messages import router as messages_router
+from app.api.platform import router as platform_router
 from app.api.rag import router as rag_router
 from app.api.tenants import router as tenants_router
 from app.api.privacy import router as privacy_router
@@ -216,6 +217,15 @@ app.include_router(whatsapp_webhook_router, prefix="/api/v1")
 # ingesta (`recording_ingest_worker`, SPEC-037).
 # ============================================================================
 app.include_router(pbx_webhook_router)
+
+# ============================================================================
+# PLANO-PLATAFORMA — login de admin de plataforma + alta atómica de tenant
+# nuevo + primer admin bajo RLS (SPEC-075, ADR-015, SENSIBLE: crea la raíz
+# de aislamiento). Protegido por `require_platform_admin`, independiente del
+# login de tenant (SPEC-013, `auth_router` arriba, sin cambios). Sin egress
+# nuevo.
+# ============================================================================
+app.include_router(platform_router, prefix="/api/v1")
 
 # ============================================================================
 # HEALTH CHECK ENDPOINTS (SPEC-011 RF-02)
