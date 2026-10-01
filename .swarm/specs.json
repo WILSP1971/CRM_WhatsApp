@@ -9,10 +9,10 @@
     "total_specs": 76,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 2,
+      "APROBADA": 1,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 33,
+      "CERRADA": 34,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-10-01"
@@ -1780,7 +1780,7 @@
       "id": "SPEC-076",
       "titulo": "Pruebas + seguridad + docs/runbook + no-regresion del onboarding multi-tenant",
       "archivo": ".swarm/specs/SPEC-076.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F3",
       "plan": "PLAN-009",
       "sensible": true,

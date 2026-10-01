@@ -15,9 +15,10 @@
 8. [Verificación de aislamiento multi-tenant (RLS)](#verificación-de-aislamiento-multi-tenant)
 9. [Logs y observabilidad](#logs-y-observabilidad)
 10. [Escenarios de degradación](#escenarios-de-degradación)
-11. [Entregable #5 — Notas de voz de WhatsApp: deploy on-prem](#entregable-5--notas-de-voz-de-whatsapp-deploy-on-prem)
-12. [Entregable #6 — TTS de respuesta en notas de voz (SPEC-067/069/072)](#entregable-6--tts-de-respuesta-en-notas-de-voz-spec-067069072)
-13. [Dashboard de Analítica de Negocio (SPEC-064/066)](#dashboard-de-analítica-de-negocio-spec-064066)
+11. [Onboarding multi-tenant (PLAN-009)](#onboarding-multi-tenant-plan-009)
+12. [Entregable #5 — Notas de voz de WhatsApp: deploy on-prem](#entregable-5--notas-de-voz-de-whatsapp-deploy-on-prem)
+13. [Entregable #6 — TTS de respuesta en notas de voz (SPEC-067/069/072)](#entregable-6--tts-de-respuesta-en-notas-de-voz-spec-067069072)
+14. [Dashboard de Analítica de Negocio (SPEC-064/066)](#dashboard-de-analítica-de-negocio-spec-064066)
 
 ---
 
@@ -825,6 +826,376 @@ curl -s http://localhost:8000/metrics | head -30
    docker compose exec db psql -U postgres -d omnicore_ai -c "\d+ contacts"
    # Buscar índices en tenant_id, user_id, etc.
    ```
+
+---
+
+## Onboarding multi-tenant (PLAN-009)
+
+### Resumen
+
+El onboarding multi-tenant implementa un flujo seguro y atómico para que un **admin de plataforma** (credencial separada del modelo de tenants) cree una **sede nueva** (tenant) con su **primer usuario administrador** en una única operación. El tenant queda aislado por RLS desde el primer commit, y el admin puede autenticarse inmediatamente con las credenciales de SPEC-013 (sin cambios).
+
+**Nota importante:** El antiguo flujo de alta manual vía `backend/app/db/seed.py` queda **SOLO para demo y pruebas locales**. La alta de producción real de nuevas sedes usa el flujo nuevo (API o CLI interno), decisión ya confirmada por el Lead (PLAN-009 §12.4).
+
+### Crear o renovar el primer admin de plataforma (bootstrap, C3)
+
+El admin de plataforma es un usuario separado del modelo tenant-scoped (tabla `platform_admins`, sin `tenant_id`). Su credencial se establece mediante bootstrap — una operación de plataforma idempotente que:
+
+1. Lee credenciales **exclusivamente de variables de entorno** (nunca hardcodeadas, C3).
+2. Hashea la contraseña con bcrypt (patrón SPEC-013).
+3. Inserta en `platform_admins` usando `ON CONFLICT ... DO NOTHING` (no falla ni duplica si el email ya existe).
+
+**Variables de entorno requeridas:**
+
+```bash
+PLATFORM_ADMIN_BOOTSTRAP_EMAIL=<EMAIL_AQUI>
+PLATFORM_ADMIN_BOOTSTRAP_PASSWORD=<TU_PASSWORD_AQUI>  # 8 caracteres mínimo
+PLATFORM_ADMIN_BOOTSTRAP_NOMBRE="Admin de Plataforma"  # Opcional, default si no se define
+```
+
+**Ejecución (una sola vez o re-ejecución segura):**
+
+```bash
+# En el host del servidor, con DATABASE_URL ya en el entorno:
+cd /ruta/a/CRM_WhatsApp
+export PLATFORM_ADMIN_BOOTSTRAP_EMAIL=admin@platform.local
+export PLATFORM_ADMIN_BOOTSTRAP_PASSWORD=CAMBIA-ESTO-2026
+export PLATFORM_ADMIN_BOOTSTRAP_NOMBRE="Admin Operativo"
+
+python -m app.db.bootstrap_platform_admin
+
+# Salida esperada:
+# Si es la primera vez:
+#   "Bootstrap completo: platform_admin creado (id=..., email='admin@platform.local')."
+# Si se re-ejecuta (mismo email):
+#   "Bootstrap idempotente: ya existía un platform_admin con email 'admin@platform.local' (sin cambios)."
+```
+
+**Seguridad (C3):** Las credenciales NO deben pegarse en chat, logs ni historial de shell. Se recomienda:
+- Usar variables de entorno en el servidor (ej. `/etc/systemd/system/crm-bootstrap.service`).
+- Nunca guardar la contraseña en un archivo versionado; crearla ad-hoc con `openssl rand -hex 16` y comunicarla por canal seguro.
+- Verificar que `.env` está en `.gitignore` y que `bootstrap_platform_admin.py` **nunca** imprime la contraseña.
+
+### Alta de una sede nueva: vía API REST
+
+Una vez que el admin de plataforma está creado, puede autenticarse y crear tenants.
+
+#### Paso 1: Obtener JWT de plataforma
+
+```bash
+curl -X POST http://localhost:8000/api/v1/platform/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "admin@platform.local",
+    "password": "CAMBIA-ESTO-2026"
+  }' | jq .
+
+# Respuesta esperada (200 OK):
+# {
+#   "access_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+#   "token_type": "bearer",
+#   "expires_in": 3600
+# }
+```
+
+**Errores esperados:**
+
+- `401 Unauthorized / "Credenciales inválidas"` — email no existe, contraseña incorrecta o admin inactivo.
+- `429 Too Many Requests` — demasiados intentos fallidos (rate-limit), reintentar después de `Retry-After` segundos.
+- `503 Service Unavailable` — servicio de autenticación (Redis) no disponible.
+
+#### Paso 2: Dar de alta el tenant + primer admin
+
+```bash
+TOKEN="eyJ0eXAiOiJKV1QiLCJhbGc..."  # Del paso 1
+
+curl -X POST http://localhost:8000/api/v1/platform/tenants \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nombre": "Clínica Campbell Sede Bogotá",
+    "slug": "clinica-campbell-bogota",
+    "admin_email": "admin@clinica-bogota.local",
+    "admin_password": "AdminPassword123!",
+    "admin_nombre": "Administrador Bogotá"
+  }' | jq .
+
+# Respuesta esperada (201 Created):
+# {
+#   "tenant_id": "550e8400-e29b-41d4-a716-446655440000",
+#   "slug": "clinica-campbell-bogota"
+# }
+```
+
+**Campos del body (`TenantProvisionRequest`):**
+
+| Campo | Tipo | Restricciones | Ejemplo |
+|-------|------|---------------|---------|
+| `nombre` | string | 1–255 caracteres, no vacío | "Clínica Campbell Sede Bogotá" |
+| `slug` | string | 1–100 caracteres, solo dígitos + guiones simples tras normalizar (mayúsculas se bajan a minúsculas automáticamente, igual que `admin_email`; espacios/underscore/guion inicial-final SÍ rechazan); reservados: `platform`, `admin`, `api`, `me` | "clinica-campbell-bogota" |
+| `admin_email` | string | 3–255 caracteres, email válido, **único por-tenant** | "admin@clinica-bogota.local" |
+| `admin_password` | string | 8–255 caracteres mínimo | "AdminPassword123!" |
+| `admin_nombre` | string | 1–255 caracteres, no vacío | "Administrador Bogotá" |
+
+**Errores esperados (tipados, no 500):**
+
+| Código | Descripción | Causa | Acción |
+|--------|-------------|-------|--------|
+| `401 Unauthorized` | "No autenticado" | Header `Authorization` ausente, malformado o con credenciales inválidas. | Verificar que el JWT de plataforma es válido y no ha expirado. Reintentar `POST /platform/auth/login`. |
+| `403 Forbidden` | "Este endpoint requiere credenciales de administrador de plataforma" | Se presentó un JWT de TENANT válido (ej. de un usuario de un tenant existente) en lugar de uno de PLATAFORMA. | Usar únicamente JWT obtenidos de `POST /platform/auth/login`, no de `/api/v1/auth/login`. |
+| `409 Conflict` | "El slug '...' ya está en uso" o "El email '...' ya está en uso en este tenant" | Colisión de slug (único global en `tenants`) o email (único por-tenant). | Elegir un slug/email diferente. El slug es único globalmente; el email es único dentro del tenant, pero si se reintenta la misma combinación slug+email tras un fallo, colisiona. |
+| `422 Unprocessable Entity` | "El slug debe contener solo minúsculas..." o "La contraseña debe tener al menos 8 caracteres..." | Validación de formato: slug con espacios/underscore/guion inicial-final/caracteres inválidos (las mayúsculas NO fallan, se normalizan solas), password corta, nombre vacío, email con formato inválido o slug reservado. | Revisar el formato según la tabla arriba. Ejemplo: si slug es "Clinica Demo", cambiar a "clinica-demo" (el espacio es el problema, no las mayúsculas). |
+
+#### Paso 3: Verificar que el tenant está aislado
+
+Tras el alta, el tenant existe y el primer admin puede autenticarse:
+
+```bash
+# Autenticarse como el primer admin del tenant recién creado (SPEC-013, sin cambios)
+TENANT_TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tenant_slug": "clinica-campbell-bogota",
+    "email": "admin@clinica-bogota.local",
+    "password": "AdminPassword123!"
+  }' | jq -r '.access_token')
+
+# Verificar que puede acceder a sus propios datos (vacíos de inicio)
+curl -s -H "Authorization: Bearer $TENANT_TOKEN" \
+  http://localhost:8000/api/v1/tenants/me | jq .
+
+# Salida esperada:
+# {
+#   "tenant_id": "550e8400-...",
+#   "nombre": "Clínica Campbell Sede Bogotá",
+#   "slug": "clinica-campbell-bogota"
+# }
+```
+
+### Alta de una sede nueva: vía CLI interno
+
+Para uso administrativo desde el servidor (sin HTTP), hay un CLI que invoca el mismo servicio:
+
+```bash
+cd /ruta/a/CRM_WhatsApp
+
+# Opción 1: Password vía variable de entorno (recomendado, C3)
+export PROVISION_TENANT_ADMIN_PASSWORD="AdminPassword123!"
+python -m app.db.provision_tenant \
+  --nombre "Clínica Campbell Sede Cali" \
+  --slug clinica-campbell-cali \
+  --admin-email admin@clinica-cali.local \
+  --admin-nombre "Administrador Cali"
+
+# Opción 2: Password vía argumento (NO recomendado, queda en historial de shell)
+python -m app.db.provision_tenant \
+  --nombre "Clínica Campbell Sede Cali" \
+  --slug clinica-campbell-cali \
+  --admin-email admin@clinica-cali.local \
+  --admin-password "AdminPassword123!" \
+  --admin-nombre "Administrador Cali"
+```
+
+**Salida esperada (éxito):**
+
+```
+Tenant aprovisionado: tenant_id=550e8400-e29b-41d4-a716-446655440000 slug=clinica-campbell-cali admin_user_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8
+```
+
+**Errores esperados (codigo de salida distinto a 0):**
+
+- **Código 2:** Error de validación (slug inválido, password corta, nombre vacío, email con formato inválido, slug reservado).
+- **Código 1:** Error de colisión (slug ya existe, email ya existe, u otro error de integridad).
+
+**Variables de entorno:**
+
+| Variable | Requerida | Fuente | Propósito |
+|----------|-----------|--------|----------|
+| `DATABASE_URL` | Sí | Sistema (`.env` o entorno del servidor) | Conexión a PostgreSQL |
+| `PROVISION_TENANT_ADMIN_PASSWORD` | No (opcional) | Sistema | Si se define, se usa en lugar de `--admin-password` (C3) |
+
+### Garantías de atomicidad y aislamiento
+
+Ambos flujos (API y CLI) invocan el **mismo servicio transaccional** `tenant_provisioning_service.provision_tenant`, que garantiza:
+
+1. **Atomicidad (todo o nada):** Si algo falla a mitad del proceso (p.ej. el email ya existe en ese tenant, aunque es improbable en un recién creado), toda la transacción se revierte. **Nunca se crea un tenant huérfano sin admin, ni un admin sin tenant.**
+
+2. **Aislamiento inmediato (RLS efectiva):** El tenant se crea y queda aislado desde el primer `INSERT` en `tenants`. El primer admin se inserta bajo RLS efectiva (patrón `set_tenant_session` → `app.tenant_id` fijado), no con bypass owner. Es exactamente el patrón de `auth_service.authenticate` (SPEC-013), probado y documentado en ADR-004/ADR-008.
+
+3. **Validación tipada:** No hay excepciones 500 inesperadas. Todos los errores operacionales se tipan (409 colisión, 422 validación, 401/403 autenticación).
+
+**Verificar aislamiento cruzado (test manual, multi-tenant):**
+
+```bash
+# Suponiendo 2 tenants: "clinica-campbell-bogota" y "clinica-campbell-cali"
+# Admin de Bogotá obtiene token
+TOKEN_A=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tenant_slug": "clinica-campbell-bogota",
+    "email": "admin@clinica-bogota.local",
+    "password": "AdminPassword123!"
+  }' | jq -r '.access_token')
+
+# Admin de Cali obtiene token
+TOKEN_B=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tenant_slug": "clinica-campbell-cali",
+    "email": "admin@clinica-cali.local",
+    "password": "AdminPassword456!"
+  }' | jq -r '.access_token')
+
+# Bogotá intenta acceder a contactos (vacío, ya que no hay datos)
+curl -s -H "Authorization: Bearer $TOKEN_A" \
+  http://localhost:8000/api/v1/contacts | jq '.items | length'
+# Salida: 0
+
+# Cali intenta acceder a contactos (vacío también)
+curl -s -H "Authorization: Bearer $TOKEN_B" \
+  http://localhost:8000/api/v1/contacts | jq '.items | length'
+# Salida: 0
+
+# Ambos ven sus propios datos, nunca los del otro (RLS funciona)
+```
+
+### Seed.py: uso limitado (demo/pruebas, no producción)
+
+El archivo `backend/app/db/seed.py` permanece **intacto** pero es ahora **solo para demo local y CI/tests**. Define dos tenants ficticios (`clinica-demo-norte` y `clinica-demo-sur`) con datos de ejemplo.
+
+**Cuándo usar `seed.py`:**
+
+- Desarrollo local (`docker compose up`): proporciona datos iniciales para pruebas manuales.
+- Tests automatizados (`pytest`): fixtures usan datos del seed para verificar aislamiento RLS.
+- Documentación/demostraciones: la base de datos comienza con tenants de ejemplo.
+
+**Cuándo NO usar `seed.py`:**
+
+- **Producción real:** No ejecutes `python -m app.db.seed` en un servidor de producción. El alta de nuevas sedes debe hacerse vía:
+  - API: `POST /platform/tenants` (requiere JWT de admin de plataforma).
+  - CLI: `python -m app.db.provision_tenant` (directa, para equipo interno confiable).
+- **Migración de tenants existentes:** Si ya tienes tenants en producción creados de otra forma, son conservados tales cuales (out of scope).
+
+**Verificar que seed.py se ejecutó** (para local/CI):
+
+```bash
+docker compose exec db psql -U postgres -d omnicore_ai << 'EOF'
+SELECT COUNT(*) as tenants_count FROM tenants;
+SELECT COUNT(*) as users_count FROM users;
+EOF
+
+# Salida esperada (tras seed):
+# tenants_count | 2
+# users_count   | 2 (si el seed también crea usuarios, depende de la versión)
+```
+
+### Troubleshooting
+
+#### Síntoma: `401 Unauthorized` en `POST /platform/auth/login`
+
+**Causa 1:** Email no existe en `platform_admins`.
+```bash
+# Verificar que el bootstrap se ejecutó correctamente
+docker compose exec db psql -U postgres -d omnicore_ai \
+  -c "SELECT id, email, activo FROM platform_admins;"
+
+# Si está vacío, ejecutar bootstrap (ver arriba)
+```
+
+**Causa 2:** Contraseña incorrecta.
+```bash
+# Verificar que escribes correctamente la contraseña
+# (se hashea con bcrypt; el hash en BD no es reversible, así que solo se puede verificar re-ejecutando bootstrap)
+```
+
+**Causa 3:** Admin inactivo (`activo = false`).
+```bash
+# Ver estado del admin
+docker compose exec db psql -U postgres -d omnicore_ai \
+  -c "SELECT id, email, activo FROM platform_admins WHERE email = 'admin@platform.local';"
+
+# Si activo = false, actualizar:
+# UPDATE platform_admins SET activo = true WHERE email = 'admin@platform.local';
+```
+
+#### Síntoma: `403 Forbidden / "Este endpoint requiere credenciales de administrador de plataforma"`
+
+**Causa:** Se está presentando un JWT de tenant (de `POST /api/v1/auth/login`) en lugar de uno de plataforma (de `POST /api/v1/platform/auth/login`).
+
+```bash
+# Asegurar que usas el JWT de PLATAFORMA, no el de tenant
+# Correcto:
+curl -X POST http://localhost:8000/api/v1/platform/tenants \
+  -H "Authorization: Bearer <PLATFORM_JWT_DE_POST_/platform/auth/login>"
+
+# Incorrecto (JWT de tenant, rechazado con 403):
+curl -X POST http://localhost:8000/api/v1/platform/tenants \
+  -H "Authorization: Bearer <TENANT_JWT_DE_POST_/api/v1/auth/login>"
+```
+
+#### Síntoma: `409 Conflict / "El slug ... ya está en uso"`
+
+**Causa:** El slug ya existe en `tenants` (único global).
+
+```bash
+# Ver slugs existentes
+docker compose exec db psql -U postgres -d omnicore_ai \
+  -c "SELECT slug FROM tenants WHERE activo = true;"
+
+# Elegir un slug diferente
+# Ejemplo: cambiar "clinica-demo" a "clinica-demo-nueva"
+```
+
+#### Síntoma: `422 Unprocessable Entity / "El slug debe contener solo minúsculas..."`
+
+**Causa:** Formato inválido del slug.
+
+**Ejemplos incorrectos:**
+- "Clinica Demo" → el ESPACIO es el problema, no las mayúsculas (cambiar a "clinica-demo"; "Clinica-Demo" sin espacio sí sería aceptado y normalizado a "clinica-demo")
+- "clinica_demo" → underscore (cambiar a "clinica-demo")
+- "clinica--demo" → guiones dobles (cambiar a "clinica-demo")
+- "-clinica-demo" → empieza con guion (cambiar a "clinica-demo")
+- "clinica-demo-" → termina con guion (cambiar a "clinica-demo")
+
+**Slugs reservados (siempre 422):**
+- "platform"
+- "admin"
+- "api"
+- "me"
+
+#### Síntoma: `422 Unprocessable Entity / "La contraseña debe tener al menos 8 caracteres..."`
+
+**Causa:** Password demasiado corta.
+
+- Mínimo: 8 caracteres.
+- Recomendación: ≥12 caracteres con mezcla de mayúsculas, dígitos, caracteres especiales.
+
+#### Síntoma: Tenant creado pero no puedo autenticar el primer admin
+
+**Verificación:**
+
+```bash
+# 1. Verificar que el tenant existe
+docker compose exec db psql -U postgres -d omnicore_ai \
+  -c "SELECT id, nombre, slug FROM tenants WHERE slug = 'clinica-campbell-bogota';"
+
+# 2. Verificar que el usuario existe en ese tenant
+docker compose exec db psql -U postgres -d omnicore_ai \
+  -c "SELECT id, email, rol FROM users WHERE tenant_id = '<TENANT_ID_DEL_PASO_1>';"
+
+# 3. Intentar login con el flujo de SPEC-013
+curl -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tenant_slug": "clinica-campbell-bogota",
+    "email": "admin@clinica-bogota.local",
+    "password": "AdminPassword123!"
+  }' | jq .
+
+# Si falla, revisar que:
+# - Email coincide exactamente (se normaliza a .strip().lower())
+# - Password es la misma que se usó en el alta
+```
 
 ---
 
