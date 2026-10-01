@@ -1,6 +1,6 @@
 # SPEC-074 — Modelo de datos aditivo: migración Alembic de `platform_admins` (sin `tenant_id`, NO scoped, sin RLS) + semántica de `rol="admin"` del primer usuario del tenant (columna `rol` existente, sin cambio de esquema en `users`) 🔴 SENSIBLE
 
-- Estado: APROBADA (bloque PLAN-009, 2026-09-30). · Responsable: CAPTAIN AMERICA · Colaboran/revisan: BLACK PANTHER, BLACK WIDOW, HAWKEYE, WOLVERINE · Prioridad: ALTA · Tipo: BACKEND/MIGRACIÓN · Fase: F1
+- Estado: CERRADA — tabla `platform_admins` (migración `0c3a64369baa`) verificada contra Postgres real: sin RLS (`relrowsecurity=false`, confirmado contra `users=true` como control), upgrade/downgrade/upgrade limpio, no registrada en `TENANT_SCOPED_TABLES`. Semántica de `rol="admin"` documentada sin cambio de esquema. 720 passed en suite completa (sin regresión nueva; únicos fallos son el caveat ya conocido de `test_rag_tts_api.py` y el flake documentado de `test_privacy_api.py`). Responsable: CAPTAIN AMERICA · Colaboran/revisan: BLACK PANTHER, BLACK WIDOW, HAWKEYE, WOLVERINE · Prioridad: ALTA · Tipo: BACKEND/MIGRACIÓN · Fase: F1
 - Deriva de: PLAN-009 (F1, §2.IN.1/4, §3.2, §4, §9, R-94/R-95, CE-91/CE-94) · Clasificación: SENSIBLE (`.no-externo`) · Depende de SPEC-073/ADR-015 · Consume ADR-004/ADR-008/SPEC-012/SPEC-013
 
 ## Objetivo

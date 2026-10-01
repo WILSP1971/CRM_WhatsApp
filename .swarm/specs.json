@@ -9,10 +9,10 @@
     "total_specs": 76,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 4,
+      "APROBADA": 3,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 31,
+      "CERRADA": 32,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-09-30"
@@ -1743,7 +1743,7 @@
       "id": "SPEC-074",
       "titulo": "Modelo de datos aditivo: tabla platform_admins (sin tenant_id, sin RLS) + semantica de rol=admin",
       "archivo": ".swarm/specs/SPEC-074.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F1",
       "plan": "PLAN-009",
       "sensible": true,

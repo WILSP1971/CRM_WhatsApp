@@ -4,6 +4,20 @@ Modelo `users` — usuarios/agentes de un tenant (SPEC-012).
 Alcance SPEC-012: solo el esquema, RLS y borrado lógico. Hashing de contraseñas,
 roles finos y emisión de JWT son de SPEC-013 (fuera de alcance aquí); se deja la
 columna `password_hash` preparada para que SPEC-013 la use.
+
+Semántica de `rol` (ADR-015/SPEC-074): `rol` sigue siendo texto libre (String(50),
+sin enum/validación en esquema ni en `app/schemas/auth.py`, para no romper
+usuarios existentes con roles ad-hoc). El default para usuarios creados por los
+flujos ya existentes sigue siendo `"agente"`. A partir de SPEC-075, el PRIMER
+usuario de un tenant recién aprovisionado (provisioning atómico tenant+admin,
+ADR-015 punto 5) nace con `rol="admin"`: es un valor de texto reconocido por
+convención de negocio (no por constraint de BD) que denota al administrador
+inicial de esa sede/tenant, quien en fases futuras (OUT de SPEC-074/075) podrá
+gestionar más usuarios/roles finos del propio tenant. No confundir con
+`PlatformAdmin` (`app/models/platform_admin.py`): ese es un actor de
+plano-plataforma, sin `tenant_id`, que puede crear tenants nuevos; `rol="admin"`
+aquí es un usuario de tenant normal (fila de `users`, bajo RLS), solo que es el
+primero y con ese valor de `rol`.
 """
 
 import uuid

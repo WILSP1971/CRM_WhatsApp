@@ -6,6 +6,7 @@ antes de que Alembic autogenere/valide migraciones.
 """
 
 from app.models.tenant import Tenant  # noqa: F401
+from app.models.platform_admin import PlatformAdmin  # noqa: F401
 from app.models.user import User  # noqa: F401
 from app.models.contact import Contact  # noqa: F401
 from app.models.conversation import Conversation  # noqa: F401
@@ -21,6 +22,7 @@ from app.models.pbx_line import PbxLine  # noqa: F401
 
 __all__ = [
     "Tenant",
+    "PlatformAdmin",
     "User",
     "Contact",
     "Conversation",
