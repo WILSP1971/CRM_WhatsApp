@@ -97,12 +97,22 @@ async def lifespan(app: FastAPI):
     logger.info("FastAPI application shutting down")
 
 
+# Swagger UI / ReDoc: deshabilitados fuera de `development` (SPEC-083,
+# PLAN-011 F3, materialización de D-1 §11.2, ADR-016 — decisión YA tomada
+# por el arquitecto, no se reabre). Preferencia documentada: apagar Swagger
+# en producción reduce la superficie expuesta de un backend con PHI
+# potencial (ADR-009) y evita tener que mantener una CSP relajada fuera de
+# desarrollo. `openapi.json` se conserva siempre (no sirve HTML/JS inline,
+# no activa la excepción de CSP de `security_headers.py`).
+_docs_enabled = ENVIRONMENT == "development"
+
 # Crear aplicación FastAPI
 app = FastAPI(
     title="OmniCore AI Backend",
     description="API del CRM omnicanal con IA local (SENSIBLE: .no-externo)",
     version="0.1.0",
-    docs_url="/docs",
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )

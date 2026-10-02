@@ -23,8 +23,17 @@ services:
       # C3: sin default débil, obligatorio.
       DB_APP_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}
       DB_APP_ROLE: ${DB_APP_ROLE:-omnicore_app}
-    ports:
-      - "${DB_PORT:-5432}:5432"
+    # SPEC-083 (PLAN-011 F3, RF-02/CE-109, ADR-016): deja de publicarse a
+    # `0.0.0.0`. `db` NO necesita acceso directo ocasional desde el host: las
+    # migraciones (`alembic upgrade head`) corren DENTRO del contenedor `api`
+    # (`make migrate` -> `docker compose exec api alembic upgrade head`,
+    # VARIABLE `DATABASE_URL_MIGRATIONS` ya apunta a `db:5432` por red Docker
+    # interna, nunca a `localhost`) y los healthchecks (`pg_isready`, arriba)
+    # también van por red Docker interna (`ia_internal`), no por el puerto
+    # publicado al host. Si un operador necesita psql interactivo puntual:
+    # `docker compose exec db psql -U ${DB_MIGRATION_USER:-postgres} -d
+    # ${DB_NAME:-omnicore_ai}` (sin publicar el puerto). Queda SIN `ports:` —
+    # patrón `ia`/observabilidad (R-108, CE-109).
     volumes:
       - db_data:/var/lib/postgresql/data
       # ADR-008: rol de aplicación NOSUPERUSER/NOBYPASSRLS + GRANTs mínimos.
@@ -72,8 +81,12 @@ services:
     image: redis:7-alpine
     container_name: crm_redis
     command: redis-server --appendonly yes
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
+    # SPEC-083 (PLAN-011 F3, RF-02/CE-109, ADR-016): deja de publicarse a
+    # `0.0.0.0`. `redis` solo lo consumen `api`/workers por red Docker interna
+    # (`REDIS_URL=redis://redis:6379`, `ia_internal`); el healthcheck
+    # (`redis-cli ping`, abajo) también va por red interna. Acceso puntual de
+    # operador: `docker compose exec redis redis-cli` (sin publicar el
+    # puerto). Queda SIN `ports:` — patrón `ia`/observabilidad (R-108, CE-109).
     volumes:
       - redis_data:/data
     healthcheck:
@@ -250,8 +263,16 @@ services:
       # `recording_ingest_worker`). C3: sin default débil fuera de development.
       WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN:?WEBHOOK_VERIFY_TOKEN requerido (C3)}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:?WEBHOOK_SECRET requerido (C3)}
+    # SPEC-083 (PLAN-011 F3, RF-02/CE-109, ADR-016): `api` deja de publicarse
+    # a `0.0.0.0`; queda tras LOOPBACK (`127.0.0.1`), igual que el patrón ya
+    # correcto de `ia` (`127.0.0.1:11434`). El webhook del PBX
+    # (`/webhooks/pbx/recordings`) y `/voice/ws` siguen accesibles vía Caddy
+    # (red `app`, servicio `caddy` -> `reverse_proxy api:8000` por red Docker
+    # interna, NO por este puerto publicado). El healthcheck de abajo
+    # (`curl http://localhost:8000/healthz`) corre DENTRO del propio
+    # contenedor `api`, por eso no depende de la publicación al host.
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy

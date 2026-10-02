@@ -1,7 +1,7 @@
 {
   "proyecto": "CRM_WhatsApp — OmniCore AI",
   "clasificacion": "SENSIBLE",
-  "actualizado": "2026-10-02T00:00:00-05:00",
+  "actualizado": "2026-10-03T00:00:00-05:00",
   "contadores": {
     "next_plan": 12,
     "next_spec": 85,
@@ -9,13 +9,13 @@
     "total_specs": 84,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 3,
+      "APROBADA": 2,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 40,
+      "CERRADA": 41,
       "ARCHIVADA": 8
     },
-    "actualizado": "2026-10-02"
+    "actualizado": "2026-10-03"
   },
   "planes": [
     {
@@ -1945,7 +1945,7 @@
       "id": "SPEC-083",
       "titulo": "Firewall de host nftables + puertos restringidos + materializa D-1 (HSTS/CSP) + TLS de produccion de Caddy; produce ADR-016",
       "archivo": ".swarm/specs/SPEC-083.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F3",
       "plan": "PLAN-011",
       "sensible": true,

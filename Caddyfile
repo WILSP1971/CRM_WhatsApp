@@ -1,15 +1,48 @@
 # Caddyfile — Reverse proxy TLS (SPEC-035, SPEC-044, ADR-010, ADR-011)
+# TLS de producción parametrizado por dominio/env — SPEC-083 (PLAN-011 F3, ADR-016)
 # Expone SOLO:
 # 1. Path del webhook de grabaciones (/webhooks/pbx/recordings) — SPEC-035
 # 2. Path del voice_gateway (/voice/ws) con soporte WebSocket/WSS — SPEC-044
-# Nunca STT/IA ni BD. En producción: usar certificado válido (Let's Encrypt, etc).
-# En desarrollo: Caddy auto-genera certificado autofirmado para localhost.
+# Nunca STT/IA ni BD.
+#
+# TLS (SPEC-083, C3: sin secretos en el repo):
+# - `{$CADDY_DOMAIN:localhost}` (desarrollo, por defecto): Caddy sirve HTTP
+#   plano sobre `localhost`/vacío — Caddy NO emite certificados ACME para
+#   `localhost` (no es un dominio público resoluble), así que el
+#   comportamiento de desarrollo queda INTACTO. Para HTTPS local opcional,
+#   Caddy seguiría pudiendo auto-generar un certificado autofirmado si se
+#   solicita explícitamente, pero no es el comportamiento por defecto aquí.
+# - Con un DOMINIO REAL (p. ej. `CADDY_DOMAIN=crm.ejemplo.com` en el `.env`
+#   del host de producción — nunca commiteado, ver `.env.example`): Caddy
+#   detecta automáticamente que `{$CADDY_DOMAIN}` ya NO es `localhost` y
+#   gestiona TLS vía ACME/Let's Encrypt de forma AUTOMÁTICA (comportamiento
+#   nativo de Caddy 2 cuando el "site address" del bloque es un dominio
+#   público): solicita, instala y renueva el certificado sin configuración
+#   adicional ni credenciales en este archivo. Persistencia de certificados
+#   ya versionada en `docker-compose.yml` (volúmenes `caddy_data`/
+#   `caddy_config`). El reto ACME HTTP-01 requiere que el puerto 80 esté
+#   accesible desde internet hacia este host (borde ENTRANTE acotado, ADR-016
+#   §4 — no es egress de datos de negocio/PHI).
+# - Activar TLS de producción real: en el `.env` del host (NUNCA en este
+#   archivo ni en el repo) fijar `CADDY_DOMAIN=<dominio real>` y asegurar que
+#   el firewall de host (`scripts/ops/firewall-host.sh`, SPEC-083) permite
+#   80/443 entrantes — aplicar ese firewall en un entorno real es un cambio
+#   SENSIBLE (C6) que requiere aprobación del Lead + notificación.
 
-# Dominio de listening (desarrollo: localhost, producción: reemplazar por dominio real)
+# Dominio de listening (desarrollo: localhost, producción: reemplazar por
+# dominio real vía la variable de entorno CADDY_DOMAIN — ver .env.example,
+# NUNCA un valor hardcodeado aquí).
 {$CADDY_DOMAIN:localhost} {
-  # TLS: por defecto, Caddy auto-genera en desarrollo; en producción, usar cert válido
-  # TLS_CERT / TLS_KEY (si aplica, no en Caddyfile para evitar secretos en repo):
-  # tls /path/to/cert /path/to/key
+  # TLS: Caddy decide automáticamente según el dominio de arriba.
+  # - `localhost`/vacío: HTTP plano de desarrollo (Caddy no emite ACME para
+  #   hosts no públicos); comportamiento intacto respecto a antes de SPEC-083.
+  # - Dominio público real: Caddy gestiona TLS automático vía ACME/Let's
+  #   Encrypt (ningún bloque `tls` explícito necesario; evita hardcodear
+  #   rutas de certificado/clave que serían secretos en el repo, C3).
+  # Si en el futuro se requiere un certificado propio (CA corporativa en vez
+  # de Let's Encrypt), usar `tls /path/to/cert /path/to/key` — rutas de
+  # archivo montadas por volumen, NUNCA contenido de certificado/clave
+  # literal en este Caddyfile.
 
   # Proxy a PATHS PERMITIDOS:
   # 1. /webhooks/pbx/recordings (webhook de grabaciones, SPEC-035)
