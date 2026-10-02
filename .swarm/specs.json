@@ -9,10 +9,10 @@
     "total_specs": 79,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 2,
+      "APROBADA": 1,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 36,
+      "CERRADA": 37,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-10-02"
@@ -212,7 +212,7 @@
       "id": "PLAN-010",
       "titulo": "Observabilidad real (Prometheus+Grafana+Alertmanager as-code, sin egress nuevo) sobre /metrics ya existente; backups automatizados quedan DIFERIDOS a fase posterior (decisiones Q2/Q3 del Lead ya registradas en PLAN-010 S13 para retomar sin reabrir)",
       "archivo": ".swarm/PLAN-010.md",
-      "estado": "APROBADO",
+      "estado": "CERRADO",
       "origen": "prompt-lab/prompts/PROMPT-010-OBSERVABILIDAD-BACKUPS.md",
       "sensible": true,
       "specs_propuestas": [
@@ -1854,7 +1854,7 @@
       "id": "SPEC-079",
       "titulo": "Pruebas+seguridad+no-regresion+docs del stack de observabilidad (cierra PLAN-010): auditoria cero tenant_id/PII, egress verde, secretos, cero regresion, runbook",
       "archivo": ".swarm/specs/SPEC-079.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F2",
       "plan": "PLAN-010",
       "sensible": true,

@@ -167,6 +167,17 @@
   - [ ] Alerta si PostgreSQL pool está agotado (todas las conexiones en uso)
   - [ ] Alerta si Redis está caído o lento
 
+- [ ] **Stack de observabilidad as-code (PLAN-010, SPEC-077/078/079)**
+  - [ ] `GF_SECURITY_ADMIN_PASSWORD` configurada en el secret manager del host de PROD (sin default débil; `docker-compose.yml` falla rápido si falta)
+  - [ ] `docker compose up -d prometheus grafana alertmanager` levanta los 3 servicios `healthy`
+  - [ ] Los 3 servicios están ÚNICAMENTE en la red `ia_internal` (`internal: true`); ninguno publica `ports:` al host (`docker compose config` sin `ports:` en esos 3 servicios)
+  - [ ] Target `api` aparece UP (`up{job="api"}==1` vía `GET /api/v1/query` de Prometheus)
+  - [ ] Dashboard `CRM WhatsApp — Backend Observabilidad` provisionado desde el repo, no creado a mano (`allowUiUpdates: false`)
+  - [ ] `check-externos-backend.sh` sigue "✓ APROBADO" tras levantar el stack (sin egress nuevo); `observability/alertmanager/alertmanager.yml` sin `webhook_configs`/`email_configs`/`slack_configs`/`pagerduty_configs`/`smtp_`
+  - [ ] Auditoría de aislamiento: ninguna serie/label/recording-rule/dashboard de `observability/` expone `tenant_id` ni PII (ver RUNBOOK.md, sección Observabilidad PLAN-010)
+  - [ ] `PROMETHEUS_RETENTION_TIME` fijada acorde a la política de retención de métricas del host (default `15d`)
+  - [ ] Backups de `prometheus_data`/`grafana_data`/`alertmanager_data`: **DIFERIDO** (PLAN-010 §13, fuera de alcance de esta fase — no bloquea el deploy)
+
 ---
 
 ## Fase 7: Multi-tenant y RLS (SPEC-012, SPEC-013)

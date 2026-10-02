@@ -19,6 +19,7 @@
 12. [Entregable #5 — Notas de voz de WhatsApp: deploy on-prem](#entregable-5--notas-de-voz-de-whatsapp-deploy-on-prem)
 13. [Entregable #6 — TTS de respuesta en notas de voz (SPEC-067/069/072)](#entregable-6--tts-de-respuesta-en-notas-de-voz-spec-067069072)
 14. [Dashboard de Analítica de Negocio (SPEC-064/066)](#dashboard-de-analítica-de-negocio-spec-064066)
+15. [Observabilidad (PLAN-010)](#observabilidad-plan-010)
 
 ---
 
@@ -1824,6 +1825,75 @@ grep ANALYTICS_MAX_RANGE_DAYS .env
 
 ---
 
+## Observabilidad (PLAN-010)
+
+Stack self-hosted **Prometheus + Grafana + Alertmanager** (SPEC-077/078/079) que scrapea el `/metrics` que `api` ya expone (`backend/app/core/metrics.py`, SPEC-022), lo visualiza en un dashboard-as-code y evalúa reglas de alerta sobre disponibilidad/rendimiento. Los tres servicios viven **exclusivamente en la red `ia_internal` (`internal: true`)**: ningún egress nuevo, ningún `ports:` publicado al host. Las alertas son visibles **solo en Grafana/Alertmanager** — cero notificación push externa (Telegram/Slack/email/PagerDuty/webhook), decisión vinculante del Lead (Q1-sub, PLAN-010).
+
+**Invariante de seguridad (no se relaja nunca):** ninguna serie, label, recording rule, scrape config o dashboard de este stack lleva `tenant_id` ni ningún otro identificador de PII — la desagregación por tenant es exclusiva de los logs `structlog`, nunca de Prometheus (ver docstring de `backend/app/core/metrics.py`).
+
+### Levantar el stack
+
+```bash
+# Requiere GF_SECURITY_ADMIN_PASSWORD configurada en .env (sin default débil,
+# el compose falla rápido si falta — ver docker-compose.yml:1040)
+docker compose up -d prometheus grafana alertmanager
+
+# Verificar que los 3 contenedores están healthy
+docker compose ps prometheus grafana alertmanager
+# Salida esperada: STATUS "Up ... (healthy)" en los tres
+```
+
+### Acceso a los UIs (solo interno, sin `ports:` al host)
+
+Ninguno de los tres servicios publica `ports:` al host (ver `docker-compose.yml`, servicios `prometheus`/`alertmanager`/`grafana`): el acceso es **exclusivamente dentro de `ia_internal`**, vía `docker compose exec`/un proxy interno que se añada en el futuro — no hay URL pública en esta fase.
+
+```bash
+# Grafana (requiere auth, GF_SECURITY_ADMIN_USER/GF_SECURITY_ADMIN_PASSWORD por env):
+# acceso vía un túnel/proxy interno a demanda, p.ej.:
+docker compose exec grafana wget -qO- http://localhost:3000/api/health
+# Salida esperada: {"commit":"...","database":"ok","version":"11.2.0"}
+
+# Prometheus (sin auth propia, protegido por estar solo en ia_internal):
+docker compose exec prometheus wget -qO- http://localhost:9090/-/healthy
+
+# Alertmanager:
+docker compose exec alertmanager wget -qO- http://localhost:9093/-/healthy
+```
+
+Para explorar los dashboards/UI de forma interactiva en un entorno de operación real, exponer temporalmente con un túnel SSH (`ssh -L 3000:localhost:3000 ...` tras entrar a la red del host) o levantar un proxy autenticado dedicado — **no publicar `ports:` en el compose** sin antes revisar el checkpoint C6 (cambio sensible, requiere aprobación del Lead).
+
+### Verificar que el target `api` está UP (CE-95)
+
+```bash
+docker compose exec prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=up{job="api"}'
+# Salida esperada: "status":"success", value [<timestamp>, "1"]  (1 = UP)
+```
+
+### Ver el dashboard (CE-96)
+
+El dashboard `CRM WhatsApp — Backend Observabilidad` (`observability/grafana/dashboards/backend-observabilidad.json`) se provisiona automáticamente desde el repo (carpeta Grafana `CRM WhatsApp`, `allowUiUpdates: false` — nunca se edita a mano en la UI). Paneles: latencia HTTP p95 por ruta, tasa de error 5xx, latencia IA p95 vs RNF-04 (≤6s), RTF de STT vs RNF-42 (≤1.0), trabajos STT por resultado, y el propio `up{job="api"}`.
+
+### Ver las alertas en Alertmanager (CE-97)
+
+```bash
+docker compose exec alertmanager wget -qO- http://localhost:9093/api/v2/alerts
+# Salida: lista JSON de alertas activas (vacía si todo está sano)
+```
+
+Reglas activas (`observability/prometheus/rules/alerts.yml`): `APITargetDown` (target caído ≥2 min), `APIHighErrorRate5xx` (5xx > 5% en 5 min), `APIReadyzUnhealthy` (`/readyz` con 5xx), más dos reglas opcionales de rendimiento IA/STT (`severity: warning`, esperables en hosts CPU-only). Ninguna regla notifica a un destino externo — los dos receivers de Alertmanager (`null`/`null-por-severidad`) son inertes por diseño (Q1-sub).
+
+**Prueba controlada de disparo** (reproducible, usada para verificar CE-97): detener el contenedor `api` (`docker compose stop api`) y esperar ~2 minutos; `APITargetDown` transiciona de `inactive` a `firing`, visible en `GET /api/v2/alerts` de Alertmanager y en el panel de estado de Grafana. Revertir con `docker compose start api`.
+
+### Retención de la TSDB
+
+Configurable por `PROMETHEUS_RETENTION_TIME` (`.env`, default `15d`) — son series de métricas (sin `tenant_id`/PII), no datos de negocio, por lo que no hay tensión con HABEAS DATA/retención de datos personales.
+
+### Backups del stack de observabilidad — DIFERIDO
+
+**Nota explícita:** la estrategia de backups (del stack de observabilidad y en general) queda **diferida** a una fase posterior (PLAN-010 §13). Esta sección no cubre backup/restore de `prometheus_data`/`grafana_data`/`alertmanager_data`; ver la sección [Backups de PostgreSQL](#backups-de-postgresql) para el procedimiento ya existente de la base de datos, que tampoco fue tocado por esta fase.
+
+---
+
 ## Escalada y contactos
 
 Si un incidente requiere ayuda especializada:
@@ -1852,13 +1922,15 @@ Si un incidente requiere ayuda especializada:
 | Verificar RLS | Prueba cross-tenant | 20 s | ✓ No destructivo |
 | Activar dashboard analítica | Editar `.env`, rebuild SPA | 2 min | ✓ Reversible (toggle flag) |
 | Prueba e2e dashboard | Curl endpoint + verificación | 1 min | ✓ No destructivo |
+| Levantar stack observabilidad | `docker compose up -d prometheus grafana alertmanager` | 1 min | ✓ Reversible (`docker compose stop ...`) |
+| Verificar target `api` UP | Query a Prometheus (`up{job="api"}`) | 10 s | ✓ No destructivo |
 
 ---
 
 ## Checkpoints aplicables
 
 - **C2 (Borrado lógico):** Backups NO incluyen DELETE físicos; datos inactivos se marcan como Inactivo.
-- **C3 (Secretos):** Procedimientos de cambio de secretos NO muestran valores en logs; `.env` en `.gitignore`.
+- **C3 (Secretos):** Procedimientos de cambio de secretos NO muestran valores en logs; `.env` en `.gitignore`. Admin de Grafana (`GF_SECURITY_ADMIN_PASSWORD`) exclusivamente por env, sin default débil (PLAN-010).
 - **C4 (Criterios verificables):** Todos los procedimientos son reproducibles; no dependen de configuración manual ad-hoc.
 - **C6 (Deploy sensible):** Rollbacks documentados; cambios de secretos requieren aprobación explícita.
 
