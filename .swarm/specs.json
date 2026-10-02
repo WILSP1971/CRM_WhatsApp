@@ -3,13 +3,13 @@
   "clasificacion": "SENSIBLE",
   "actualizado": "2026-10-02T00:00:00-05:00",
   "contadores": {
-    "next_plan": 11,
-    "next_spec": 80,
-    "next_adr": 16,
-    "total_specs": 79,
+    "next_plan": 12,
+    "next_spec": 85,
+    "next_adr": 17,
+    "total_specs": 84,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 1,
+      "APROBADA": 6,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
       "CERRADA": 37,
@@ -222,6 +222,25 @@
       ],
       "adrs_recomendados": [],
       "nota": "Fase B de 4 (tras PLAN-009 onboarding multi-tenant). Decisiones vinculantes del Lead: stack Prometheus+Grafana+Alertmanager (sin Loki), alertas solo visibles en Grafana/Alertmanager sin push externo (no se reusa el bridge de Telegram). Invariante intocable: ninguna metrica de /metrics lleva tenant_id como label (fijado en metrics.py, SPEC-022) - ninguna SPEC de esta fase puede relajarla. Sin ADR nuevo: el stack vive en red ia_internal (internal:true), sin egress a internet. Backups automatizados (Postgres+audio_store cifrado, destino LAN/NAS interna, Q2/Q3 ya respondidas) quedan DIFERIDOS por instruccion directa del Lead (2026-10-02, posterior a la aprobacion de las 4 decisiones vinculantes) - documentados en PLAN-010 S13 para retomar como fase separada (futuro PLAN-011) sin volver a preguntar."
+    },
+    {
+      "id": "PLAN-011",
+      "titulo": "Hardening de produccion (Fase C): contenedores no-root + limites de recursos, rate-limiting general de API, escaneo de vulnerabilidades bloqueante en CI, firewall de host + restriccion de puertos, coherencia HSTS/CSP, TLS de produccion y Dockerfile de produccion - sin CD/staging, sin tocar runbook operativo, sin retomar backups",
+      "archivo": ".swarm/PLAN-011.md",
+      "estado": "APROBADO",
+      "origen": "prompt-lab/prompts/PROMPT-011-HARDENING-PRODUCCION.md",
+      "sensible": true,
+      "specs_propuestas": [
+        "SPEC-080",
+        "SPEC-081",
+        "SPEC-082",
+        "SPEC-083",
+        "SPEC-084"
+      ],
+      "adrs_recomendados": [
+        "ADR-016"
+      ],
+      "nota": "Fase C de 4 (tras PLAN-009 onboarding y PLAN-010 observabilidad). Hallazgo central de XAVIER: la seguridad de APLICACION ya esta madura (fail-fast de secretos, RLS, CORS, security headers, cifrado de audio, egress acotado) - el hueco real esta en la capa INFRA/OPERACION. Decisiones vinculantes del Lead: solo hardening tecnico (sin runbook operativo, sin CD/staging), sobre la infra docker-compose actual (sin servidor de produccion dedicado confirmado), rate-limiting general ALTA prioridad, escaneo de vulnerabilidades BLOQUEANTE en HIGH/CRITICAL sin marco de compliance formal, backups automatizados (diferidos en PLAN-010 S13) SIGUEN DIFERIDOS. DOCTOR STRANGE resolvio sin reabrir el Lead: (D-1) diverrgencia HSTS/CSP se resuelve endureciendo el codigo al nivel del checklist (HSTS 1 año, CSP estricta sin unsafe-inline, Swagger OFF en produccion), y recomienda UN ADR nuevo (candidato ADR-016) para la politica de firewall de host como contrato de seguridad estructural por encima del aislamiento de red de Docker. Riesgo top: R-103, que los limites de recursos asfixien STT/IA en la maquina CPU-only compartida - THOR es puerta dura antes de fijar cualquier limite."
     }
   ],
   "specs": [
@@ -1870,6 +1889,99 @@
         "SPEC-077",
         "SPEC-078"
       ]
+    },
+    {
+      "id": "SPEC-080",
+      "titulo": "Contenedores + Dockerfile de produccion: imagen no-root sin --reload/tests/bind-mount + limites de recursos/capabilities, con THOR como puerta dura (R-103) antes de limitar api/stt_worker/ia",
+      "archivo": ".swarm/specs/SPEC-080.md",
+      "estado": "APROBADA",
+      "fase": "F0",
+      "plan": "PLAN-011",
+      "sensible": true,
+      "responsable": "BLACK PANTHER",
+      "revisan": [
+        "THOR",
+        "QUICKSILVER",
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": []
+    },
+    {
+      "id": "SPEC-081",
+      "titulo": "Rate-limiting GENERAL de API por IP/endpoint sobre Redis existente, coexiste con LoginRateLimiter, holgura para webhooks WhatsApp/PBX sin romper HMAC/idempotencia (ADR-007)",
+      "archivo": ".swarm/specs/SPEC-081.md",
+      "estado": "APROBADA",
+      "fase": "F1",
+      "plan": "PLAN-011",
+      "sensible": true,
+      "responsable": "BLACK PANTHER",
+      "revisan": [
+        "THOR",
+        "HAWKEYE",
+        "BLACK WIDOW",
+        "WOLVERINE"
+      ],
+      "depende_de": []
+    },
+    {
+      "id": "SPEC-082",
+      "titulo": "Escaneo de vulnerabilidades en CI (gate bloqueante HIGH/CRITICAL): pip-audit+bandit+npm audit+Dependabot, corre solo en plano CI, nunca confundido con runtime aislado (R-106)",
+      "archivo": ".swarm/specs/SPEC-082.md",
+      "estado": "APROBADA",
+      "fase": "F2",
+      "plan": "PLAN-011",
+      "sensible": true,
+      "responsable": "WOLVERINE",
+      "revisan": [
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "BLACK PANTHER"
+      ],
+      "depende_de": []
+    },
+    {
+      "id": "SPEC-083",
+      "titulo": "Firewall de host nftables + puertos restringidos + materializa D-1 (HSTS/CSP) + TLS de produccion de Caddy; produce ADR-016",
+      "archivo": ".swarm/specs/SPEC-083.md",
+      "estado": "APROBADA",
+      "fase": "F3",
+      "plan": "PLAN-011",
+      "sensible": true,
+      "responsable": "BLACK PANTHER",
+      "revisan": [
+        "BLACK WIDOW",
+        "QUICKSILVER",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-080"
+      ]
+    },
+    {
+      "id": "SPEC-084",
+      "titulo": "Pruebas+seguridad+no-regresion+docs que cierra PLAN-011: 429, no-root, headers, CI falla ante vuln sembrada, auditoria de no-relajacion de invariantes, cero regresion",
+      "archivo": ".swarm/specs/SPEC-084.md",
+      "estado": "APROBADA",
+      "fase": "F4",
+      "plan": "PLAN-011",
+      "sensible": true,
+      "responsable": "HAWKEYE",
+      "revisan": [
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "QUICKSILVER",
+        "BLACK PANTHER",
+        "THOR"
+      ],
+      "depende_de": [
+        "SPEC-080",
+        "SPEC-081",
+        "SPEC-082",
+        "SPEC-083"
+      ]
     }
   ],
   "adrs": [
@@ -1990,6 +2102,14 @@
       "archivo": ".swarm/adrs/ADR-015-admin-plataforma-separado-provisioning-atomico-tenant-rls.md",
       "estado": "Aceptada",
       "plan": "PLAN-009"
+    },
+    {
+      "id": "ADR-016",
+      "titulo": "Politica de firewall de host (nftables) como contrato de seguridad estructural por encima del aislamiento de red de Docker",
+      "archivo": ".swarm/adrs/ADR-016-politica-firewall-host-contrato-seguridad.md",
+      "estado": "Aceptada",
+      "fecha": "2026-10-02",
+      "plan": "PLAN-011"
     }
   ]
 }
