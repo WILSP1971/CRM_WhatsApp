@@ -31,10 +31,10 @@ jobs:
 
       - name: Security audit with npm audit (SPEC-082, RF-02)
         run: |
-          npm audit --audit-level=high || true
-          # npm audit exit code: 0 if no vulnerabilities, 1 if vulnerabilities found
-          # We use '|| true' to not fail here; we'll check the exit code explicitly below
-          npm audit --json > npm-audit-report.json || EXIT_CODE=$?
+          # `npm audit` sale con 1 si encuentra vulnerabilidades -- el gate real es
+          # el step siguiente (Python, fuente autoritativa M-2), así que aquí solo
+          # generamos el reporte JSON sin dejar que este step aborte por `set -e`.
+          npm audit --json > npm-audit-report.json || true
           echo "✓ npm audit completed (checking for HIGH/CRITICAL vulnerabilities)"
 
       - name: Enforce npm audit gate (fail on HIGH/CRITICAL, SPEC-082, RF-02)
@@ -50,19 +50,36 @@ jobs:
               print("✓ npm audit report not found (no vulnerabilities)")
               sys.exit(0)
 
-          # Check for HIGH and CRITICAL vulnerabilities
-          metadata = report.get('metadata', {})
-          vulnerabilities = metadata.get('vulnerabilities', {})
+          # Check for HIGH and CRITICAL vulnerabilities.
+          # (BLACK WIDOW, M-2, SPEC-082): la fuente AUTORITATIVA es la lista real de
+          # `report['vulnerabilities']` (por paquete/severidad), no el contador de
+          # `metadata.vulnerabilities` -- en algunos formatos de `npm audit --json`
+          # ese contador puede no coincidir con la lista real (falso-verde si el
+          # contador da 0 pero sí hay entradas HIGH/CRITICAL en la lista). El
+          # metadata se usa solo como cross-check informativo, nunca como fuente
+          # de la decisión de bloquear el gate.
+          vulnerable_packages = [
+              (pkg_name, vuln_data.get('severity', 'unknown'))
+              for pkg_name, vuln_data in report.get('vulnerabilities', {}).items()
+              if vuln_data.get('severity') in ('high', 'critical')
+          ]
+          high_critical_count = len(vulnerable_packages)
 
-          high_critical_count = vulnerabilities.get('high', 0) + vulnerabilities.get('critical', 0)
+          metadata = report.get('metadata', {})
+          metadata_vulns = metadata.get('vulnerabilities', {})
+          metadata_count = metadata_vulns.get('high', 0) + metadata_vulns.get('critical', 0)
+          if metadata_count != high_critical_count:
+              print(
+                  f"::warning::npm audit metadata count ({metadata_count}) no coincide con "
+                  f"el conteo real de 'vulnerabilities' ({high_critical_count}); se usa el "
+                  "conteo real como fuente autoritativa del gate (M-2)."
+              )
 
           if high_critical_count > 0:
               print(f"::error::Found {high_critical_count} HIGH/CRITICAL vulnerabilities in npm audit")
               print("\nVulnerable packages:")
-              for pkg_name, vuln_data in report.get('vulnerabilities', {}).items():
-                  severity = vuln_data.get('severity', 'unknown')
-                  if severity in ['high', 'critical']:
-                      print(f"  - {pkg_name}: {severity}")
+              for pkg_name, severity in vulnerable_packages:
+                  print(f"  - {pkg_name}: {severity}")
               sys.exit(1)
           else:
               print("✓ npm audit passed (no HIGH/CRITICAL vulnerabilities found)")

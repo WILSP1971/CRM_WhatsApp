@@ -182,8 +182,9 @@ def list_calls(
     request: Request,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    contact_id: uuid.UUID
-    | None = Query(default=None, description="Filtro por contacto"),
+    contact_id: uuid.UUID | None = Query(
+        default=None, description="Filtro por contacto"
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_tenant_db),
 ) -> Page[CallOut]:
@@ -239,9 +240,11 @@ def get_call_detail(
 @router.get(
     "/{call_id}/audio",
     responses={
-        404: {"description": "Llamada no encontrada, o sin audio disponible "
-              "(nunca hubo audio, o fue purgado/anonimizado por retención, "
-              "SPEC-041)"},
+        404: {
+            "description": "Llamada no encontrada, o sin audio disponible "
+            "(nunca hubo audio, o fue purgado/anonimizado por retención, "
+            "SPEC-041)"
+        },
     },
 )
 def stream_call_audio(

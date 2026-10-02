@@ -56,7 +56,10 @@ import redis.asyncio as redis_asyncio
 import structlog
 
 from app.core.async_utils import run_coroutine_best_effort
-from app.core.recording_queue import build_recording_inbound_job, enqueue_recording_inbound_event
+from app.core.recording_queue import (
+    build_recording_inbound_job,
+    enqueue_recording_inbound_event,
+)
 from app.core.recording_fetch_queue import (
     RECORDING_FETCH_QUEUE_KEY,
     RecordingFetchJob,
@@ -86,7 +89,11 @@ def process_job(
     sigue siendo hacia `app/services/telefonia/`, el único módulo permitido,
     ADR-010).
     """
-    from app.services.telefonia.pbx_client import PbxDownloadError, PbxHostNotAllowedError, download_recording
+    from app.services.telefonia.pbx_client import (
+        PbxDownloadError,
+        PbxHostNotAllowedError,
+        download_recording,
+    )
 
     try:
         audio_bytes = download_recording(recording_url=job.recording_url)
@@ -142,7 +149,9 @@ async def drain_one(
     """Extrae y procesa UNA única solicitud pendiente de
     `recording:fetch:jobs`. Devuelve `True` si procesó un job, `False` si la
     cola estaba vacía."""
-    job = await dequeue_recording_fetch_job(redis_client, timeout_seconds=timeout_seconds)
+    job = await dequeue_recording_fetch_job(
+        redis_client, timeout_seconds=timeout_seconds
+    )
     if job is None:
         return False
     process_job(job, redis_client=redis_client)
@@ -183,9 +192,12 @@ def main():
     """
     try:
         from app.core.config import get_settings
+
         settings = get_settings()
     except Exception as e:
-        _stdlib_logger.error(f"[Recording Fetch Worker] Error al cargar configuración: {e}")
+        _stdlib_logger.error(
+            f"[Recording Fetch Worker] Error al cargar configuración: {e}"
+        )
         sys.exit(1)
 
     _stdlib_logger.info(
@@ -218,7 +230,9 @@ def main():
     try:
         _run_forever_with_signal_handling()
     except KeyboardInterrupt:
-        _stdlib_logger.info("[Recording Fetch Worker] Interrupción recibida. Cerrando...")
+        _stdlib_logger.info(
+            "[Recording Fetch Worker] Interrupción recibida. Cerrando..."
+        )
         sys.exit(0)
 
 

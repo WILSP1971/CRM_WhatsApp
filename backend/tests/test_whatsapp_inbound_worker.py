@@ -686,7 +686,9 @@ async def test_process_job_dispatches_sentiment_job_on_inbound_message(
     # ... is bound to a different event loop` (confirmado contra Postgres
     # real).
     fake_server = fakeredis.FakeServer()
-    redis_client = fakeredis.aioredis.FakeRedis(server=fake_server, decode_responses=True)
+    redis_client = fakeredis.aioredis.FakeRedis(
+        server=fake_server, decode_responses=True
+    )
     job = _inbound_job(phone_number_id=phone_number_id, wamid=wamid, texto="Hola")
 
     process_job(
@@ -748,7 +750,9 @@ def test_process_job_sentiment_enqueue_failure_does_not_block_ingestion(
 # (g) se genera/persiste el borrador RAG en estado propuesto, con ≥3 citas
 
 
-def test_process_job_creates_proposed_rag_draft_with_citations(postgres_engine, app_engine):
+def test_process_job_creates_proposed_rag_draft_with_citations(
+    postgres_engine, app_engine
+):
     tenant_id = _crear_tenant(postgres_engine, "TenantWaDraft")
     phone_number_id = f"pni-draft-{uuid.uuid4().hex[:10]}"
     wamid = f"wamid.{uuid.uuid4().hex}"
@@ -1495,9 +1499,7 @@ def test_process_job_audio_message_creates_message_and_downloads(
 
         return real_download(db, message, media_id=media_id, client=media_client)
 
-    monkeypatch.setattr(
-        worker_module, "download_and_store_voice_note", _fake_download
-    )
+    monkeypatch.setattr(worker_module, "download_and_store_voice_note", _fake_download)
 
     redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     job = _audio_inbound_job(phone_number_id=phone_number_id, wamid=wamid)
@@ -1539,9 +1541,7 @@ def test_process_job_audio_within_limit_enqueues_stt_job_with_message_destino(
 
         return real_download(db, message, media_id=media_id, client=media_client)
 
-    monkeypatch.setattr(
-        worker_module, "download_and_store_voice_note", _fake_download
-    )
+    monkeypatch.setattr(worker_module, "download_and_store_voice_note", _fake_download)
 
     # `FakeServer` compartido + un cliente por invocación de `asyncio.run()`
     # (ver docstring en `tests/test_rag_api.py::fake_redis`): cada
@@ -1551,11 +1551,11 @@ def test_process_job_audio_within_limit_enqueues_stt_job_with_message_destino(
     # revienta con `RuntimeError: ... is bound to a different event loop`
     # (confirmado contra Postgres real).
     fake_server = fakeredis.FakeServer()
-    redis_client = fakeredis.aioredis.FakeRedis(server=fake_server, decode_responses=True)
-    # Duración conocida (30s) DENTRO del límite (default 600s).
-    job = _audio_inbound_job(
-        phone_number_id=phone_number_id, wamid=wamid, duration=30
+    redis_client = fakeredis.aioredis.FakeRedis(
+        server=fake_server, decode_responses=True
     )
+    # Duración conocida (30s) DENTRO del límite (default 600s).
+    job = _audio_inbound_job(phone_number_id=phone_number_id, wamid=wamid, duration=30)
 
     process_job(
         job,
@@ -1602,9 +1602,7 @@ def test_process_job_audio_exceeds_limit_discards_with_auto_reply(
 
         return real_download(db, message, media_id=media_id, client=media_client)
 
-    monkeypatch.setattr(
-        worker_module, "download_and_store_voice_note", _fake_download
-    )
+    monkeypatch.setattr(worker_module, "download_and_store_voice_note", _fake_download)
 
     sent_messages: list[dict] = []
     graph_client = _build_graph_api_client_capturing_sends(sent_messages)
@@ -1625,9 +1623,7 @@ def test_process_job_audio_exceeds_limit_discards_with_auto_reply(
 
     redis_client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     # Duración (900s = 15 min) EXCEDE el límite default (600s = 10 min).
-    job = _audio_inbound_job(
-        phone_number_id=phone_number_id, wamid=wamid, duration=900
-    )
+    job = _audio_inbound_job(phone_number_id=phone_number_id, wamid=wamid, duration=900)
 
     process_job(
         job,
@@ -1726,9 +1722,7 @@ def test_process_job_audio_duplicate_wamid_does_not_duplicate_message_or_job(
 
         return real_download(db, message, media_id=media_id, client=media_client)
 
-    monkeypatch.setattr(
-        worker_module, "download_and_store_voice_note", _fake_download
-    )
+    monkeypatch.setattr(worker_module, "download_and_store_voice_note", _fake_download)
 
     # `FakeServer` compartido + un cliente por invocación de `asyncio.run()`
     # (ver docstring en `tests/test_rag_api.py::fake_redis`): cada
@@ -1737,16 +1731,20 @@ def test_process_job_audio_duplicate_wamid_does_not_duplicate_message_or_job(
     # `RuntimeError: ... is bound to a different event loop` (confirmado
     # contra Postgres real).
     fake_server = fakeredis.FakeServer()
-    redis_client = fakeredis.aioredis.FakeRedis(server=fake_server, decode_responses=True)
-    job = _audio_inbound_job(
-        phone_number_id=phone_number_id, wamid=wamid, duration=20
+    redis_client = fakeredis.aioredis.FakeRedis(
+        server=fake_server, decode_responses=True
     )
+    job = _audio_inbound_job(phone_number_id=phone_number_id, wamid=wamid, duration=20)
 
     process_job(
-        job, session_factory=_session_factory(postgres_engine), redis_client=redis_client
+        job,
+        session_factory=_session_factory(postgres_engine),
+        redis_client=redis_client,
     )
     process_job(
-        job, session_factory=_session_factory(postgres_engine), redis_client=redis_client
+        job,
+        session_factory=_session_factory(postgres_engine),
+        redis_client=redis_client,
     )
 
     with postgres_engine.connect() as conn:
@@ -1796,9 +1794,7 @@ def test_process_job_audio_configurable_limit_via_env_triggers_discard(
 
         return real_download(db, message, media_id=media_id, client=media_client)
 
-    monkeypatch.setattr(
-        worker_module, "download_and_store_voice_note", _fake_download
-    )
+    monkeypatch.setattr(worker_module, "download_and_store_voice_note", _fake_download)
 
     sent_messages: list[dict] = []
     graph_client = _build_graph_api_client_capturing_sends(sent_messages)
@@ -1838,9 +1834,9 @@ def test_process_job_audio_configurable_limit_via_env_triggers_discard(
 
     row = _get_audio_message_row(postgres_engine, wamid)
     assert row is not None
-    assert row.transcripcion_estado == "descartada_por_duracion", (
-        "Con el límite reducido a 10s, una nota de 30s debe descartarse"
-    )
+    assert (
+        row.transcripcion_estado == "descartada_por_duracion"
+    ), "Con el límite reducido a 10s, una nota de 30s debe descartarse"
     assert len(sent_messages) == 1
 
 
@@ -1899,9 +1895,7 @@ def test_process_job_audio_creates_zero_call_or_call_transcript_rows(
 
         return real_download(db, message, media_id=media_id, client=media_client)
 
-    monkeypatch.setattr(
-        worker_module, "download_and_store_voice_note", _fake_download
-    )
+    monkeypatch.setattr(worker_module, "download_and_store_voice_note", _fake_download)
 
     with postgres_engine.begin() as conn:
         calls_antes = conn.execute(sa.text("SELECT count(*) FROM calls")).scalar_one()
@@ -1919,9 +1913,7 @@ def test_process_job_audio_creates_zero_call_or_call_transcript_rows(
     )
 
     with postgres_engine.begin() as conn:
-        calls_despues = conn.execute(
-            sa.text("SELECT count(*) FROM calls")
-        ).scalar_one()
+        calls_despues = conn.execute(sa.text("SELECT count(*) FROM calls")).scalar_one()
         transcripts_despues = conn.execute(
             sa.text("SELECT count(*) FROM call_transcripts")
         ).scalar_one()

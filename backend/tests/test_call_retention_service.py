@@ -239,7 +239,10 @@ def test_recent_call_with_audio_is_never_a_purge_candidate(
     recent_date = datetime.now(timezone.utc) - timedelta(days=1)
     audio_ref = build_audio_ref(tenant_id=tenant_id, call_id="recent")
     call_id = _insert_call(
-        postgres_engine, tenant_id=tenant_id, created_at=recent_date, audio_ref=audio_ref
+        postgres_engine,
+        tenant_id=tenant_id,
+        created_at=recent_date,
+        audio_ref=audio_ref,
     )
 
     with _session_with_tenant(app_engine, tenant_id) as session:
@@ -321,7 +324,10 @@ def test_dry_run_does_not_purge_audio_nor_write(
 
     with Session(app_engine) as session:
         result = run_call_retention_job(
-            session, audio_retention_days=30, transcript_retention_days=90, enabled=False
+            session,
+            audio_retention_days=30,
+            transcript_retention_days=90,
+            enabled=False,
         )
 
     assert result.dry_run is True
@@ -334,7 +340,9 @@ def test_dry_run_does_not_purge_audio_nor_write(
 
     with postgres_engine.connect() as conn:
         row = conn.execute(
-            sa.text("SELECT audio_ref, audio_purged_at, activo FROM calls WHERE id = :id"),
+            sa.text(
+                "SELECT audio_ref, audio_purged_at, activo FROM calls WHERE id = :id"
+            ),
             {"id": call_id},
         ).fetchone()
         assert row.audio_ref == audio_ref
@@ -423,7 +431,10 @@ def test_old_transcript_is_anonymized_without_physical_delete(
         postgres_engine, tenant_id=tenant_id, created_at=old_date, audio_ref=None
     )
     transcript_id = _insert_transcript(
-        postgres_engine, tenant_id=tenant_id, call_row_id=call_row_id, created_at=old_date
+        postgres_engine,
+        tenant_id=tenant_id,
+        call_row_id=call_row_id,
+        created_at=old_date,
     )
 
     with _session_with_tenant(app_engine, tenant_id) as session:
@@ -447,8 +458,10 @@ def test_old_transcript_is_anonymized_without_physical_delete(
         ).fetchone()
         assert row is not None, "La transcripción fue borrada FÍSICAMENTE (viola C2)"
         assert row.anonymized_at is not None
-        segmentos = row.segmentos if isinstance(row.segmentos, list) else json.loads(
+        segmentos = (
             row.segmentos
+            if isinstance(row.segmentos, list)
+            else json.loads(row.segmentos)
         )
         assert segmentos[0]["texto"] != "Hola"
 

@@ -42,6 +42,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
 
 from app.core.config import Settings, get_settings
+from app.core.rate_limit_general import whatsapp_webhook_rate_limiter
 from app.core.redis_client import get_redis_client
 from app.core.whatsapp_queue import enqueue_inbound_webhook_event
 
@@ -110,9 +111,20 @@ async def receive_webhook_event(
     request: Request,
     settings: Settings = Depends(get_settings),
     redis_client: redis_asyncio.Redis = Depends(get_redis_client),
+    _rate_limit: None = Depends(whatsapp_webhook_rate_limiter),
 ) -> Response:
     """RF-02/RF-03 (SPEC-026): valida firma sobre el RAW body y hace ACK
     rápido.
+
+    CHECKPOINT (SPEC-081, R-105): rate-limit GENERAL por IP con umbral
+    HOLGADO (`whatsapp_webhook_rate_limiter`, ver
+    `app/core/rate_limit_general.py` para el razonamiento completo) ANTES de
+    validar la firma — una petición que excede el umbral recibe 429 sin
+    tocar el cuerpo del endpoint; una petición dentro del umbral (que cubre
+    cualquier ráfaga legítima esperada de Meta) llega intacta a la
+    validación HMAC/ACK rápido de abajo, sin ningún cambio de comportamiento.
+    Aplicado vía `Depends()` (no el decorador `@limiter.limit(...)` de
+    `slowapi`, ver docstring de `rate_limit_general.py`).
 
     Lee `request.body()` (bytes EXACTOS recibidos) ANTES de cualquier parseo
     JSON, porque la firma de Meta se calcula sobre esos bytes tal cual — una

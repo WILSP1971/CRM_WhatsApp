@@ -108,7 +108,9 @@ def test_borrador_incluye_al_menos_3_citas_trazables(app_engine, postgres_engine
         assert uuid.UUID(citation.document_id) == document_id
 
 
-def test_borrador_falla_explicito_si_no_hay_suficiente_contexto(app_engine, postgres_engine):
+def test_borrador_falla_explicito_si_no_hay_suficiente_contexto(
+    app_engine, postgres_engine
+):
     """Si el tenant no tiene al menos MIN_CITATIONS chunks recuperables, se
     rechaza explícitamente (nunca se fabrican citas de relleno)."""
     tenant_id = uuid.uuid4()
@@ -132,7 +134,9 @@ def test_borrador_falla_explicito_si_no_hay_suficiente_contexto(app_engine, post
                 generate_rag_draft(db, ai_client, query="¿algo?", top_k=5)
 
 
-def test_borrador_propaga_modo_degradado_si_ia_no_disponible(app_engine, postgres_engine):
+def test_borrador_propaga_modo_degradado_si_ia_no_disponible(
+    app_engine, postgres_engine
+):
     """R-21: si el LLM local no responde tras recuperar contexto suficiente,
     se propaga el error de servicio (el endpoint lo traduce a 503) en vez de
     devolver un borrador fabricado."""

@@ -198,7 +198,10 @@ def test_resolve_media_metadata_rejects_malicious_temp_url():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            json={"url": "https://evil.attacker.net/steal-audio", "mime_type": "audio/ogg"},
+            json={
+                "url": "https://evil.attacker.net/steal-audio",
+                "mime_type": "audio/ogg",
+            },
         )
 
     client = _client_with_handler(handler)
@@ -244,7 +247,9 @@ def test_download_and_store_voice_note_reraises_host_error_as_incident():
     with pytest.raises(GraphApiHostError):
         download_and_store_voice_note(db, message, media_id=_MEDIA_ID, client=client)
 
-    assert message.transcripcion_estado == "pendiente"  # sin tocar, no auditado como error normal
+    assert (
+        message.transcripcion_estado == "pendiente"
+    )  # sin tocar, no auditado como error normal
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +396,10 @@ def test_token_never_appears_in_logs_after_retries_exhausted(caplog):
 
 def test_media_metadata_is_frozen_dataclass():
     metadata = MediaMetadata(
-        url="https://graph.facebook.com/x", mime_type="audio/ogg", sha256=None, file_size=None
+        url="https://graph.facebook.com/x",
+        mime_type="audio/ogg",
+        sha256=None,
+        file_size=None,
     )
     with pytest.raises(AttributeError):
         metadata.url = "https://other.example.com"  # type: ignore[misc]

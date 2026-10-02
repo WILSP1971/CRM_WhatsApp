@@ -11,6 +11,7 @@ por guion. Esto es la medicion representativa del techo <=5-10s (Q4-b).
 Requiere: piper-tts en backend/.venv, ffmpeg (estatico, descargado en
 tests/perf/tts_viability/tools/) para la transcodificacion a OGG/Opus.
 """
+
 import json
 import subprocess
 import time
@@ -39,12 +40,24 @@ N_REPS = 5
 
 
 def transcode_ogg(in_wav: Path, out_ogg: Path) -> float:
-    cmd = [FFMPEG, "-y", "-i", str(in_wav), "-c:a", "libopus", "-b:a", "32k", str(out_ogg)]
+    cmd = [
+        FFMPEG,
+        "-y",
+        "-i",
+        str(in_wav),
+        "-c:a",
+        "libopus",
+        "-b:a",
+        "32k",
+        str(out_ogg),
+    ]
     t0 = time.perf_counter()
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     t1 = time.perf_counter()
     if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg fallo: {proc.stderr.decode('utf-8','ignore')[-500:]}")
+        raise RuntimeError(
+            f"ffmpeg fallo: {proc.stderr.decode('utf-8','ignore')[-500:]}"
+        )
     return t1 - t0
 
 
@@ -61,8 +74,13 @@ def main():
     guiones = json.loads(GUIONES_PATH.read_text())["guiones"]
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    resultados = {"motor": "piper", "modo": "warm (modelo cargado 1 vez por voz)",
-                  "n_reps": N_REPS, "ffmpeg_usado": FFMPEG, "voces": {}}
+    resultados = {
+        "motor": "piper",
+        "modo": "warm (modelo cargado 1 vez por voz)",
+        "n_reps": N_REPS,
+        "ffmpeg_usado": FFMPEG,
+        "voces": {},
+    }
 
     for voz in VOCES:
         model_path = VOICES_DIR / f"{voz}.onnx"
@@ -73,7 +91,9 @@ def main():
 
         print(f"\n=== Cargando voz {voz} (warm) ===", flush=True)
         t_load0 = time.perf_counter()
-        voice = PiperVoice.load(str(model_path), config_path=str(config_path), use_cuda=False)
+        voice = PiperVoice.load(
+            str(model_path), config_path=str(config_path), use_cuda=False
+        )
         t_load1 = time.perf_counter()
         print(f"  tiempo de carga del modelo: {t_load1 - t_load0:.3f}s", flush=True)
 
@@ -117,10 +137,13 @@ def main():
                 "wav_bytes": wav_size,
                 "ogg_bytes": ogg_size,
             }
-            print(f"  {gid:12s} ({categoria:6s}, {len(texto):3d} chars): "
-                  f"synth media={statistics.mean(synth_times):.3f}s mediana={statistics.median(synth_times):.3f}s | "
-                  f"transcode={transcode_times[0]:.3f}s | "
-                  f"e2e media={statistics.mean(e2e):.3f}s p95={p95(e2e):.3f}s", flush=True)
+            print(
+                f"  {gid:12s} ({categoria:6s}, {len(texto):3d} chars): "
+                f"synth media={statistics.mean(synth_times):.3f}s mediana={statistics.median(synth_times):.3f}s | "
+                f"transcode={transcode_times[0]:.3f}s | "
+                f"e2e media={statistics.mean(e2e):.3f}s p95={p95(e2e):.3f}s",
+                flush=True,
+            )
 
     RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     RESULTS_PATH.write_text(json.dumps(resultados, indent=2, ensure_ascii=False))

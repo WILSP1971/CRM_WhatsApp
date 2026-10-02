@@ -293,8 +293,7 @@ def _explain_analyze_queries(owner_engine, tenant_id, desde, hasta) -> None:
 
     with owner_engine.begin() as conn:
         set_tenant_session(conn, str(tenant_id))
-        sql = sa.text(
-            """
+        sql = sa.text("""
             EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
             WITH conv AS (
                 SELECT id FROM conversations
@@ -329,14 +328,14 @@ def _explain_analyze_queries(owner_engine, tenant_id, desde, hasta) -> None:
             JOIN LATERAL (
                 SELECT extract(epoch FROM saliente.saliente_ts - entrante.entrante_ts) AS delta_seg
             ) delta ON true
-            """
-        )
+            """)
         result = conn.execute(
             sql,
             {
                 "tenant_id": tenant_id,
                 "desde": datetime.combine(desde, datetime.min.time()),
-                "hasta": datetime.combine(hasta, datetime.min.time()) + timedelta(days=1),
+                "hasta": datetime.combine(hasta, datetime.min.time())
+                + timedelta(days=1),
             },
         )
         plan_lines = [row[0] for row in result]
@@ -419,7 +418,10 @@ def main() -> None:
         app.dependency_overrides[deps.get_tenant_db] = fake_get_tenant_db
 
         client = TestClient(app)
-        params = {"desde": seed["desde"].isoformat(), "hasta": seed["hasta"].isoformat()}
+        params = {
+            "desde": seed["desde"].isoformat(),
+            "hasta": seed["hasta"].isoformat(),
+        }
 
         for _ in range(N_WARMUP):
             r = client.get("/api/v1/analytics/business", params=params)
@@ -441,13 +443,19 @@ def main() -> None:
         p95 = _percentile(latencias_ms, 0.95)
         p99 = _percentile(latencias_ms, 0.99)
 
-        print("\n[latencia] GET /api/v1/analytics/business "
-              f"(rango {N_DIAS}d, sin filtro canal, N={N_MEDICIONES}):")
-        print(f"  min={min(latencias_ms):.1f}ms  mean={statistics.mean(latencias_ms):.1f}ms  "
-              f"max={max(latencias_ms):.1f}ms")
+        print(
+            "\n[latencia] GET /api/v1/analytics/business "
+            f"(rango {N_DIAS}d, sin filtro canal, N={N_MEDICIONES}):"
+        )
+        print(
+            f"  min={min(latencias_ms):.1f}ms  mean={statistics.mean(latencias_ms):.1f}ms  "
+            f"max={max(latencias_ms):.1f}ms"
+        )
         print(f"  p50={p50:.1f}ms  p95={p95:.1f}ms  p99={p99:.1f}ms")
-        print(f"  objetivo p95 THOR = {OBJETIVO_P95_MS:.0f}ms -> "
-              f"{'CUMPLE' if p95 <= OBJETIVO_P95_MS else 'NO CUMPLE'}")
+        print(
+            f"  objetivo p95 THOR = {OBJETIVO_P95_MS:.0f}ms -> "
+            f"{'CUMPLE' if p95 <= OBJETIVO_P95_MS else 'NO CUMPLE'}"
+        )
 
     finally:
         _cleanup(owner_engine, tenant_id)

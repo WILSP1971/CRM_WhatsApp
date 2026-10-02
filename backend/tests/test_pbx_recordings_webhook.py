@@ -55,7 +55,9 @@ def fake_redis():
 
 
 def _sign(audio_bytes: bytes, webhook_secret: str) -> str:
-    digest = hmac.new(webhook_secret.encode("utf-8"), audio_bytes, hashlib.sha256).hexdigest()
+    digest = hmac.new(
+        webhook_secret.encode("utf-8"), audio_bytes, hashlib.sha256
+    ).hexdigest()
     return f"sha256={digest}"
 
 
@@ -151,7 +153,9 @@ def test_post_signature_is_computed_over_exact_audio_bytes(client, fake_redis):
     settings = get_settings()
     audio_bytes = b"audio-real"
     different_audio_bytes = b"audio-distinto"
-    signature_for_different_audio = _sign(different_audio_bytes, settings.webhook_secret)
+    signature_for_different_audio = _sign(
+        different_audio_bytes, settings.webhook_secret
+    )
 
     response = _post_recording(
         client, audio_bytes=audio_bytes, signature=signature_for_different_audio

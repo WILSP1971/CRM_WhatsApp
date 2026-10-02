@@ -128,9 +128,7 @@ def test_message_audio_with_null_contenido_inserts_without_violating_constraint(
         conversation_id = _insert_conversation(
             conn, data["tenant_a_id"], data["contact_a_id"]
         )
-        message_id = _insert_audio_message(
-            conn, data["tenant_a_id"], conversation_id
-        )
+        message_id = _insert_audio_message(conn, data["tenant_a_id"], conversation_id)
 
     with postgres_engine.connect() as conn:
         row = conn.execute(
@@ -188,9 +186,7 @@ def test_message_texto_sigue_poblando_contenido_sin_regresion(
 
     with postgres_engine.connect() as conn:
         row = conn.execute(
-            sa.text(
-                "SELECT contenido, tipo, audio_ref FROM messages WHERE id = :id"
-            ),
+            sa.text("SELECT contenido, tipo, audio_ref FROM messages WHERE id = :id"),
             {"id": message_id},
         ).fetchone()
 
@@ -278,15 +274,13 @@ def test_messages_audio_cross_tenant_isolation(
         with conn.begin():
             set_tenant_session(conn, str(data["tenant_a_id"]))
             rows = conn.execute(
-                sa.text(
-                    "SELECT audio_ref FROM messages WHERE tipo = 'audio'"
-                )
+                sa.text("SELECT audio_ref FROM messages WHERE tipo = 'audio'")
             ).fetchall()
             visible_refs = {r.audio_ref for r in rows}
 
-    assert "tenant-a/audio-secreto.enc" in visible_refs, (
-        "El tenant A debe ver su propia nota de voz"
-    )
+    assert (
+        "tenant-a/audio-secreto.enc" in visible_refs
+    ), "El tenant A debe ver su propia nota de voz"
     assert "tenant-b/audio-secreto.enc" not in visible_refs, (
         "FUGA CROSS-TENANT: el tenant A puede leer el audio_ref de la nota "
         "de voz del tenant B"
@@ -305,9 +299,7 @@ def test_messages_audio_cross_tenant_direct_select_by_id_returns_zero_rows(
         conversation_b = _insert_conversation(
             conn, data["tenant_b_id"], data["contact_b_id"]
         )
-        message_b_id = _insert_audio_message(
-            conn, data["tenant_b_id"], conversation_b
-        )
+        message_b_id = _insert_audio_message(conn, data["tenant_b_id"], conversation_b)
 
     with app_engine.connect() as conn:
         with conn.begin():
@@ -342,9 +334,9 @@ def test_messages_session_without_tenant_sees_zero_audio_rows(
             rows = conn.execute(
                 sa.text("SELECT id FROM messages WHERE tipo = 'audio'")
             ).fetchall()
-            assert rows == [], (
-                "Sesión sin tenant fijado no debe ver ningún Message de audio"
-            )
+            assert (
+                rows == []
+            ), "Sesión sin tenant fijado no debe ver ningún Message de audio"
 
 
 def test_messages_is_tenant_scoped_table():
@@ -370,9 +362,7 @@ def test_message_audio_soft_delete_no_physical_delete(
         conversation_id = _insert_conversation(
             conn, data["tenant_a_id"], data["contact_a_id"]
         )
-        message_id = _insert_audio_message(
-            conn, data["tenant_a_id"], conversation_id
-        )
+        message_id = _insert_audio_message(conn, data["tenant_a_id"], conversation_id)
         conn.execute(
             sa.text("UPDATE messages SET activo = false WHERE id = :id"),
             {"id": message_id},
@@ -384,9 +374,7 @@ def test_message_audio_soft_delete_no_physical_delete(
             {"id": message_id},
         ).fetchone()
         vigentes = conn.execute(
-            sa.text(
-                "SELECT id FROM messages WHERE id = :id AND activo = true"
-            ),
+            sa.text("SELECT id FROM messages WHERE id = :id AND activo = true"),
             {"id": message_id},
         ).fetchall()
 
@@ -410,9 +398,7 @@ def test_no_se_crean_ni_tocan_tablas_call_por_nota_de_voz_whatsapp(
     data = two_tenants_with_data
 
     with postgres_engine.begin() as conn:
-        calls_antes = conn.execute(
-            sa.text("SELECT count(*) FROM calls")
-        ).scalar_one()
+        calls_antes = conn.execute(sa.text("SELECT count(*) FROM calls")).scalar_one()
         transcripts_antes = conn.execute(
             sa.text("SELECT count(*) FROM call_transcripts")
         ).scalar_one()
@@ -422,9 +408,7 @@ def test_no_se_crean_ni_tocan_tablas_call_por_nota_de_voz_whatsapp(
         )
         _insert_audio_message(conn, data["tenant_a_id"], conversation_id)
 
-        calls_despues = conn.execute(
-            sa.text("SELECT count(*) FROM calls")
-        ).scalar_one()
+        calls_despues = conn.execute(sa.text("SELECT count(*) FROM calls")).scalar_one()
         transcripts_despues = conn.execute(
             sa.text("SELECT count(*) FROM call_transcripts")
         ).scalar_one()
@@ -438,9 +422,7 @@ def test_no_se_crean_ni_tocan_tablas_call_por_nota_de_voz_whatsapp(
 # ---------------------------------------------------------------------------
 
 
-def test_message_audio_wamid_unique_constraint(
-    postgres_engine, two_tenants_with_data
-):
+def test_message_audio_wamid_unique_constraint(postgres_engine, two_tenants_with_data):
     """La nota de voz usa el mismo mecanismo de idempotencia por `wamid`
     (ADR-013 punto 3, sin `call_id` nuevo): una reentrega del mismo `wamid`
     no crea un segundo `Message` de audio."""
@@ -451,9 +433,7 @@ def test_message_audio_wamid_unique_constraint(
         conversation_id = _insert_conversation(
             conn, data["tenant_a_id"], data["contact_a_id"]
         )
-        _insert_audio_message(
-            conn, data["tenant_a_id"], conversation_id, wamid=wamid
-        )
+        _insert_audio_message(conn, data["tenant_a_id"], conversation_id, wamid=wamid)
 
     with pytest.raises(IntegrityError):
         with postgres_engine.begin() as conn:

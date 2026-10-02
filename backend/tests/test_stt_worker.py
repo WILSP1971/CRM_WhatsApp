@@ -52,7 +52,9 @@ def _crear_tenant(engine, nombre: str) -> uuid.UUID:
     tenant_id = uuid.uuid4()
     with engine.begin() as conn:
         conn.execute(
-            sa.text("INSERT INTO tenants (id, nombre, slug) VALUES (:id, :nombre, :slug)"),
+            sa.text(
+                "INSERT INTO tenants (id, nombre, slug) VALUES (:id, :nombre, :slug)"
+            ),
             {
                 "id": tenant_id,
                 "nombre": nombre,
@@ -63,7 +65,12 @@ def _crear_tenant(engine, nombre: str) -> uuid.UUID:
 
 
 def _crear_call(
-    engine, *, tenant_id: uuid.UUID, call_id: str, audio_ref: str, estado: str = "finalizada"
+    engine,
+    *,
+    tenant_id: uuid.UUID,
+    call_id: str,
+    audio_ref: str,
+    estado: str = "finalizada",
 ) -> uuid.UUID:
     row_id = uuid.uuid4()
     with engine.begin() as conn:
@@ -125,7 +132,9 @@ def _fake_segment(start: float, end: float, text: str) -> MagicMock:
     return seg
 
 
-def _fake_transcription_info(*, language: str = "es", duration: float = 12.0) -> MagicMock:
+def _fake_transcription_info(
+    *, language: str = "es", duration: float = 12.0
+) -> MagicMock:
     info = MagicMock()
     info.language = language
     info.duration = duration
@@ -177,7 +186,9 @@ def test_process_job_persists_segments_and_updates_call_estado(
     info = _fake_transcription_info(language="es", duration=5.0)
     fake_model = _mock_whisper_model(segments, info)
 
-    job = SttTranscriptionJob(call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id))
+    job = SttTranscriptionJob(
+        call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id)
+    )
 
     with patch(
         "app.services.telefonia.stt_engine._construir_whisper_model",
@@ -238,7 +249,9 @@ def test_process_job_diarization_enabled_labels_alternating_turns(
     info = _fake_transcription_info()
     fake_model = _mock_whisper_model(segments, info)
 
-    job = SttTranscriptionJob(call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id))
+    job = SttTranscriptionJob(
+        call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id)
+    )
 
     with patch(
         "app.services.telefonia.stt_engine._construir_whisper_model",
@@ -254,7 +267,9 @@ def test_process_job_diarization_enabled_labels_alternating_turns(
 
     hablantes = [s["hablante"] for s in row.segmentos]
     assert hablantes[0] == hablantes[1], "Gap corto: mismo turno (misma frase)"
-    assert hablantes[1] != hablantes[2], "Gap largo: cambia el turno (heurística de silencio)"
+    assert (
+        hablantes[1] != hablantes[2]
+    ), "Gap largo: cambia el turno (heurística de silencio)"
     assert set(hablantes) == {"agente", "cliente"}
 
 
@@ -275,7 +290,9 @@ def test_process_job_diarization_disabled_leaves_hablante_none(
     info = _fake_transcription_info()
     fake_model = _mock_whisper_model(segments, info)
 
-    job = SttTranscriptionJob(call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id))
+    job = SttTranscriptionJob(
+        call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id)
+    )
 
     with patch(
         "app.services.telefonia.stt_engine._construir_whisper_model",
@@ -312,7 +329,9 @@ def test_process_job_duplicate_call_id_does_not_duplicate_transcript(
     info = _fake_transcription_info()
     fake_model = _mock_whisper_model(segments, info)
 
-    job = SttTranscriptionJob(call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id))
+    job = SttTranscriptionJob(
+        call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id)
+    )
 
     with patch(
         "app.services.telefonia.stt_engine._construir_whisper_model",
@@ -328,7 +347,9 @@ def test_process_job_duplicate_call_id_does_not_duplicate_transcript(
             {"call_id": call_row_id},
         ).scalar_one()
 
-    assert count == 1, "Reprocesar el mismo call_id NO debe duplicar la transcripción (RF-03)"
+    assert (
+        count == 1
+    ), "Reprocesar el mismo call_id NO debe duplicar la transcripción (RF-03)"
 
 
 def test_process_job_race_condition_integrity_error_is_handled(
@@ -362,7 +383,9 @@ def test_process_job_race_condition_integrity_error_is_handled(
     info = _fake_transcription_info()
     fake_model = _mock_whisper_model(segments, info)
 
-    job = SttTranscriptionJob(call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id))
+    job = SttTranscriptionJob(
+        call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id)
+    )
 
     with patch(
         "app.services.telefonia.stt_engine._construir_whisper_model",
@@ -408,8 +431,12 @@ def test_stt_worker_module_does_not_import_forbidden_modules():
             imported_names.add(node.module)
 
     assert not any("pbx_client" in name for name in imported_names)
-    assert not any(name == "httpx" or name.startswith("httpx.") for name in imported_names)
-    assert not any(name == "requests" or name.startswith("requests.") for name in imported_names)
+    assert not any(
+        name == "httpx" or name.startswith("httpx.") for name in imported_names
+    )
+    assert not any(
+        name == "requests" or name.startswith("requests.") for name in imported_names
+    )
 
 
 def test_stt_engine_module_does_not_import_forbidden_modules():
@@ -428,7 +455,9 @@ def test_stt_engine_module_does_not_import_forbidden_modules():
             imported_names.add(node.module)
 
     assert not any("pbx_client" in name for name in imported_names)
-    assert not any(name == "httpx" or name.startswith("httpx.") for name in imported_names)
+    assert not any(
+        name == "httpx" or name.startswith("httpx.") for name in imported_names
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -451,14 +480,14 @@ def test_process_job_observes_rtf_and_increments_ok_counter(
     info = _fake_transcription_info(duration=4.0)
     fake_model = _mock_whisper_model(segments, info)
 
-    job = SttTranscriptionJob(call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id))
+    job = SttTranscriptionJob(
+        call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id)
+    )
 
     with patch(
         "app.services.telefonia.stt_engine._construir_whisper_model",
         return_value=fake_model,
-    ), patch(
-        "app.workers.stt_worker.observe_stt_rtf"
-    ) as mock_rtf, patch(
+    ), patch("app.workers.stt_worker.observe_stt_rtf") as mock_rtf, patch(
         "app.workers.stt_worker.increment_stt_jobs"
     ) as mock_counter, patch(
         "app.workers.stt_worker.observe_stt_queue_latency"
@@ -513,9 +542,7 @@ def test_process_job_uses_real_job_enqueued_timestamp_in_production_path(
     with patch(
         "app.services.telefonia.stt_engine._construir_whisper_model",
         return_value=fake_model,
-    ), patch(
-        "app.workers.stt_worker.observe_stt_queue_latency"
-    ) as mock_latency:
+    ), patch("app.workers.stt_worker.observe_stt_queue_latency") as mock_latency:
         # SIN pasar enqueued_at_epoch_seconds -- exactamente como lo invoca
         # drain_one() en el camino real de producción.
         process_job(job, session_factory=_session_factory(postgres_engine))
@@ -542,7 +569,9 @@ def test_process_job_duplicate_increments_duplicado_counter(
     segments = [_fake_segment(0.0, 1.0, "Hola.")]
     info = _fake_transcription_info()
     fake_model = _mock_whisper_model(segments, info)
-    job = SttTranscriptionJob(call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id))
+    job = SttTranscriptionJob(
+        call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id)
+    )
 
     with patch(
         "app.services.telefonia.stt_engine._construir_whisper_model",
@@ -570,7 +599,9 @@ def test_process_job_transcription_error_increments_error_counter(
         postgres_engine, tenant_id=tenant_id, call_id=call_id, audio_ref=audio_ref
     )
 
-    job = SttTranscriptionJob(call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id))
+    job = SttTranscriptionJob(
+        call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id)
+    )
 
     with patch(
         "app.services.telefonia.stt_engine._construir_whisper_model",
@@ -618,7 +649,9 @@ def test_process_job_inference_failure_is_translated_and_handled_cleanly(
         segments=None, info=None, transcribe_side_effect=_transcribe_side_effect
     )
 
-    job = SttTranscriptionJob(call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id))
+    job = SttTranscriptionJob(
+        call_id=str(call_row_id), audio_ref=audio_ref, tenant_id=str(tenant_id)
+    )
 
     with patch(
         "app.services.telefonia.stt_engine._construir_whisper_model",
@@ -652,8 +685,12 @@ def test_process_job_inference_failure_is_translated_and_handled_cleanly(
             sa.text("SELECT estado FROM calls WHERE id = :id"), {"id": call_row_id}
         ).fetchone()
 
-    assert count == 0, "Un fallo DURANTE la inferencia NO debe persistir ningún transcript"
-    assert call_row.estado == "finalizada", "calls.estado no debe mutar ante un fallo de inferencia"
+    assert (
+        count == 0
+    ), "Un fallo DURANTE la inferencia NO debe persistir ningún transcript"
+    assert (
+        call_row.estado == "finalizada"
+    ), "calls.estado no debe mutar ante un fallo de inferencia"
 
 
 # ---------------------------------------------------------------------------
@@ -661,7 +698,9 @@ def test_process_job_inference_failure_is_translated_and_handled_cleanly(
 # ---------------------------------------------------------------------------
 
 
-def test_load_model_falls_back_to_cpu_when_primary_device_load_fails(stt_settings_defaults):
+def test_load_model_falls_back_to_cpu_when_primary_device_load_fails(
+    stt_settings_defaults,
+):
     settings = stt_settings_defaults
     settings.stt_device = "cuda"
     settings.stt_model = "large-v3"
@@ -720,7 +759,9 @@ def test_load_model_raises_when_both_primary_and_fallback_fail(stt_settings_defa
             stt_engine.load_model()
 
 
-def test_transcribe_audio_bytes_reports_fallback_and_degraded_rtf(stt_settings_defaults):
+def test_transcribe_audio_bytes_reports_fallback_and_degraded_rtf(
+    stt_settings_defaults,
+):
     """El fallback CPU/medium produce una transcripción válida; el RTF puede
     estar degradado (más lento que tiempo real) y debe quedar documentado en
     el resultado (`fallback_aplicado=True`), sin bloquear el pipeline."""
@@ -793,7 +834,9 @@ import fakeredis.aioredis as _fakeredis_aioredis  # noqa: E402
 from sqlalchemy.orm import Session as _Session  # noqa: E402
 
 from app.db.session import set_tenant_session as _set_tenant_session  # noqa: E402
-from app.services.rag.ingest_service import ingest_document as _ingest_document  # noqa: E402
+from app.services.rag.ingest_service import (
+    ingest_document as _ingest_document,
+)  # noqa: E402
 from tests.rag_ai_client_fake import FakeAIClient  # noqa: E402
 
 
@@ -858,7 +901,9 @@ def test_process_job_dispatches_sentiment_job_on_transcript(
     # de más abajo, revienta con `RuntimeError: ... is bound to a different
     # event loop` (confirmado contra Postgres real).
     fake_server = _fakeredis.FakeServer()
-    redis_client = _fakeredis_aioredis.FakeRedis(server=fake_server, decode_responses=True)
+    redis_client = _fakeredis_aioredis.FakeRedis(
+        server=fake_server, decode_responses=True
+    )
 
     with patch(
         "app.services.telefonia.stt_engine._construir_whisper_model",
@@ -879,7 +924,9 @@ def test_process_job_dispatches_sentiment_job_on_transcript(
             ),
             {"tenant_id": tenant_id},
         ).one_or_none()
-    assert message_row is not None, "Debe materializarse un Message con el texto transcrito"
+    assert (
+        message_row is not None
+    ), "Debe materializarse un Message con el texto transcrito"
 
     import asyncio
 
@@ -1189,7 +1236,9 @@ def test_process_job_uses_injected_ai_client_never_opens_real_network(
         "Política de reembolsos: 30 días calendario desde la compra. "
         "Canal de soporte prioritario: WhatsApp Business verificado. "
     ) * 5
-    _, ai_client = _indexar_documento_tenant_stt(postgres_engine, tenant_id, texto=texto)
+    _, ai_client = _indexar_documento_tenant_stt(
+        postgres_engine, tenant_id, texto=texto
+    )
 
     segments = [_fake_segment(0.0, 2.0, "horario de atención")]
     info = _fake_transcription_info()
@@ -1211,8 +1260,12 @@ def test_process_job_uses_injected_ai_client_never_opens_real_network(
             ai_client=ai_client,
         )
 
-    assert ai_client.chat_calls, "El resumen/borrador debieron usar el ai_client inyectado"
-    assert ai_client.embed_calls, "La recuperación RAG debió usar el ai_client inyectado"
+    assert (
+        ai_client.chat_calls
+    ), "El resumen/borrador debieron usar el ai_client inyectado"
+    assert (
+        ai_client.embed_calls
+    ), "La recuperación RAG debió usar el ai_client inyectado"
 
 
 # ---------------------------------------------------------------------------
@@ -1347,10 +1400,14 @@ def test_process_job_call_sink_with_explicit_destino_no_regression(
             {"tenant_id": tenant_id},
         ).one_or_none()
 
-    assert transcript_row is not None, "Debe persistirse un call_transcript (cero regresión)"
+    assert (
+        transcript_row is not None
+    ), "Debe persistirse un call_transcript (cero regresión)"
     assert transcript_row.idioma == "es"
     assert call_row.estado == "transcrita"
-    assert message_row is not None, "Debe materializarse el Message de voz (cero regresión)"
+    assert (
+        message_row is not None
+    ), "Debe materializarse el Message de voz (cero regresión)"
 
 
 def test_process_job_legacy_json_without_destino_behaves_as_call_sink(
@@ -1384,9 +1441,9 @@ def test_process_job_legacy_json_without_destino_behaves_as_call_sink(
         }
     )
     job = SttTranscriptionJob.from_json(legacy_raw)
-    assert job.destino == f"call:{call_row_id}", (
-        "El default calculado por __post_init__ debe ser call:{call_id}"
-    )
+    assert (
+        job.destino == f"call:{call_row_id}"
+    ), "El default calculado por __post_init__ debe ser call:{call_id}"
 
     with patch(
         "app.services.telefonia.stt_engine._construir_whisper_model",
@@ -1403,7 +1460,9 @@ def test_process_job_legacy_json_without_destino_behaves_as_call_sink(
             sa.text("SELECT estado FROM calls WHERE id = :id"), {"id": call_row_id}
         ).fetchone()
 
-    assert transcript_row is not None, "Job legacy sin destino debe procesarse como sink call"
+    assert (
+        transcript_row is not None
+    ), "Job legacy sin destino debe procesarse como sink call"
     assert call_row.estado == "transcrita"
 
 
@@ -1416,7 +1475,9 @@ def test_process_job_message_sink_updates_existing_message_without_call_artifact
     (ADR-013, conteos de filas antes/después)."""
     tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageSink")
     conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
-    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    audio_ref = build_audio_ref(
+        tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}"
+    )
     store_audio(audio_ref=audio_ref, audio_bytes=b"audio-nota-de-voz-whatsapp")
     message_id = _crear_message_audio_pendiente(
         postgres_engine,
@@ -1486,12 +1547,12 @@ def test_process_job_message_sink_updates_existing_message_without_call_artifact
     assert message_row.transcripcion_estado == "ok"
     assert message_row.tipo == "audio"
 
-    assert count_calls_despues == count_calls_antes == 0, (
-        "El sink message NUNCA debe crear una fila calls (ADR-013)"
-    )
-    assert count_transcripts_despues == count_transcripts_antes == 0, (
-        "El sink message NUNCA debe crear un CallTranscript (ADR-013)"
-    )
+    assert (
+        count_calls_despues == count_calls_antes == 0
+    ), "El sink message NUNCA debe crear una fila calls (ADR-013)"
+    assert (
+        count_transcripts_despues == count_transcripts_antes == 0
+    ), "El sink message NUNCA debe crear un CallTranscript (ADR-013)"
     assert count_messages_despues == count_messages_antes == 1, (
         "El sink message NUNCA debe crear un Message nuevo — solo ACTUALIZA "
         "el existente (ADR-013)"
@@ -1506,7 +1567,9 @@ def test_process_job_message_sink_reprocessing_already_ok_is_noop(
     STT no se vuelve a invocar) y no re-escribe `contenido`."""
     tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageSinkIdempotente")
     conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
-    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    audio_ref = build_audio_ref(
+        tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}"
+    )
     store_audio(audio_ref=audio_ref, audio_bytes=b"audio-nota-de-voz-idempotente")
     message_id = _crear_message_audio_pendiente(
         postgres_engine,
@@ -1545,13 +1608,15 @@ def test_process_job_message_sink_reprocessing_already_ok_is_noop(
     mock_counter.assert_called_once_with(resultado="duplicado")
     # `.transcribe()` del modelo mockeado se invocó UNA sola vez en total (la
     # primera pasada) — el reproceso NO debe volver a invocar la inferencia.
-    assert fake_model.transcribe.call_count == 1, (
-        "Reprocesar un job message ya 'ok' NO debe re-invocar la inferencia STT"
-    )
+    assert (
+        fake_model.transcribe.call_count == 1
+    ), "Reprocesar un job message ya 'ok' NO debe re-invocar la inferencia STT"
 
     with postgres_engine.connect() as conn:
         message_row = conn.execute(
-            sa.text("SELECT contenido, transcripcion_estado FROM messages WHERE id = :id"),
+            sa.text(
+                "SELECT contenido, transcripcion_estado FROM messages WHERE id = :id"
+            ),
             {"id": message_id},
         ).fetchone()
         count_messages = conn.execute(
@@ -1571,7 +1636,9 @@ def test_process_job_message_sink_missing_message_row_handled_cleanly(
     no debería ocurrir en producción real) se maneja limpiamente: se audita
     como error y NO propaga la excepción."""
     tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageSinkFaltante")
-    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    audio_ref = build_audio_ref(
+        tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}"
+    )
     store_audio(audio_ref=audio_ref, audio_bytes=b"audio-message-inexistente")
     message_id_inexistente = uuid.uuid4()
 
@@ -1634,7 +1701,9 @@ def test_process_job_message_sink_inference_failure_handled_cleanly(
     mutado a "ok") e incrementar `stt_jobs_total{resultado="error"}`."""
     tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageInferError")
     conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
-    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    audio_ref = build_audio_ref(
+        tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}"
+    )
     store_audio(audio_ref=audio_ref, audio_bytes=b"audio-inferencia-corrupta-voz")
     message_id = _crear_message_audio_pendiente(
         postgres_engine,
@@ -1688,7 +1757,9 @@ def test_process_job_message_sink_post_transcription_race_is_handled(
     incrementa `stt_jobs_total{resultado="duplicado"}`."""
     tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageRacePostTx")
     conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
-    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    audio_ref = build_audio_ref(
+        tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}"
+    )
     store_audio(audio_ref=audio_ref, audio_bytes=b"audio-race-post-transcripcion")
     message_id = _crear_message_audio_pendiente(
         postgres_engine,
@@ -1734,7 +1805,9 @@ def test_process_job_message_sink_post_transcription_race_is_handled(
     ), patch(
         "app.workers.stt_worker.transcribe_audio_bytes",
         side_effect=_marcar_ganador_de_la_carrera,
-    ), patch("app.workers.stt_worker.increment_stt_jobs") as mock_counter:
+    ), patch(
+        "app.workers.stt_worker.increment_stt_jobs"
+    ) as mock_counter:
         process_job(job, session_factory=_session_factory(postgres_engine))
 
     mock_counter.assert_called_once_with(resultado="duplicado")
@@ -1763,7 +1836,9 @@ def test_process_job_message_sink_dispatches_sentiment_job_on_transcript(
 
     tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageSentiment")
     conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
-    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    audio_ref = build_audio_ref(
+        tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}"
+    )
     store_audio(audio_ref=audio_ref, audio_bytes=b"audio-message-sentimiento")
     message_id = _crear_message_audio_pendiente(
         postgres_engine,
@@ -1786,7 +1861,9 @@ def test_process_job_message_sink_dispatches_sentiment_job_on_transcript(
     # `test_process_job_dispatches_sentiment_job_on_transcript`): `process_job`
     # toca este redis DENTRO de su propio `asyncio.run()` interno.
     fake_server = _fakeredis.FakeServer()
-    redis_client = _fakeredis_aioredis.FakeRedis(server=fake_server, decode_responses=True)
+    redis_client = _fakeredis_aioredis.FakeRedis(
+        server=fake_server, decode_responses=True
+    )
 
     with patch(
         "app.services.telefonia.stt_engine._construir_whisper_model",
@@ -1828,7 +1905,9 @@ def test_process_job_message_sink_creates_proposed_rag_draft_with_citations(
     equivalentes del sink `call`)."""
     tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageDraft")
     conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
-    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    audio_ref = build_audio_ref(
+        tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}"
+    )
     store_audio(audio_ref=audio_ref, audio_bytes=b"audio-message-draft")
     message_id = _crear_message_audio_pendiente(
         postgres_engine,
@@ -1904,7 +1983,9 @@ def test_process_job_message_sink_rag_draft_never_auto_sent(
     WhatsApp de texto (SPEC-019)."""
     tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageDraftNoAutoSend")
     conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
-    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    audio_ref = build_audio_ref(
+        tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}"
+    )
     store_audio(audio_ref=audio_ref, audio_bytes=b"audio-message-no-autosend")
     message_id = _crear_message_audio_pendiente(
         postgres_engine,
@@ -1972,7 +2053,9 @@ def test_process_job_message_sink_reprocessing_ok_does_not_redispatch_ai_pipelin
 
     tenant_id = _crear_tenant(postgres_engine, "TenantSttMessageNoRedispatch")
     conversation_id = _crear_conversation_whatsapp(postgres_engine, tenant_id=tenant_id)
-    audio_ref = build_audio_ref(tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}")
+    audio_ref = build_audio_ref(
+        tenant_id=tenant_id, call_id=f"voz-{uuid.uuid4().hex[:10]}"
+    )
     store_audio(audio_ref=audio_ref, audio_bytes=b"audio-message-no-redispatch")
     message_id = _crear_message_audio_pendiente(
         postgres_engine,
@@ -1992,7 +2075,9 @@ def test_process_job_message_sink_reprocessing_ok_does_not_redispatch_ai_pipelin
         destino=f"message:{message_id}",
     )
     fake_server = _fakeredis.FakeServer()
-    redis_client = _fakeredis_aioredis.FakeRedis(server=fake_server, decode_responses=True)
+    redis_client = _fakeredis_aioredis.FakeRedis(
+        server=fake_server, decode_responses=True
+    )
 
     with patch(
         "app.services.telefonia.stt_engine._construir_whisper_model",
@@ -2016,9 +2101,9 @@ def test_process_job_message_sink_reprocessing_ok_does_not_redispatch_ai_pipelin
                 dequeue_redis_client, tenant_id=tenant_id, timeout_seconds=0
             )
         )
-        assert primer_sentiment_job is not None, (
-            "La primera pasada SÍ debe encolar sentimiento (camino ok)"
-        )
+        assert (
+            primer_sentiment_job is not None
+        ), "La primera pasada SÍ debe encolar sentimiento (camino ok)"
 
         # Reproceso del MISMO job (mensaje ya `transcripcion_estado="ok"`,
         # RF-05 SPEC-056): no debe re-disparar el pipeline IA.
@@ -2037,9 +2122,9 @@ def test_process_job_message_sink_reprocessing_ok_does_not_redispatch_ai_pipelin
             dequeue_redis_client_2, tenant_id=tenant_id, timeout_seconds=0
         )
     )
-    assert segundo_sentiment_job is None, (
-        "El reproceso idempotente NO debe volver a encolar sentimiento"
-    )
+    assert (
+        segundo_sentiment_job is None
+    ), "El reproceso idempotente NO debe volver a encolar sentimiento"
 
     with postgres_engine.connect() as conn:
         draft_count = conn.execute(

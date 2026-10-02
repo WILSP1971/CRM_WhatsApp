@@ -155,12 +155,12 @@ def get_business_analytics(
         ),
         example="2026-09-27",
     ),
-    canal: str
-    | None = Query(
+    canal: str | None = Query(
         default=None,
         description=(
             "Filtro opcional de canal (nulleable). Válidos: "
-            + str(sorted(CANALES_VALIDOS)) + ". "
+            + str(sorted(CANALES_VALIDOS))
+            + ". "
             "Si se proporciona, todos los desgloses se acotan a ese canal. "
             "Si está ausente (None), se devuelven todas los canales."
         ),

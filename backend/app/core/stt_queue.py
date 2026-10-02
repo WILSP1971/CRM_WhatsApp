@@ -99,9 +99,7 @@ class SttTranscriptionJob:
         if self.destino is None:
             # `object.__setattr__` porque el dataclass es `frozen=True`
             # (mismo patrón que el resto de campos con `default_factory`).
-            object.__setattr__(
-                self, "destino", f"{_DESTINO_CALL_PREFIX}{self.call_id}"
-            )
+            object.__setattr__(self, "destino", f"{_DESTINO_CALL_PREFIX}{self.call_id}")
 
     def to_json(self) -> str:
         return json.dumps(

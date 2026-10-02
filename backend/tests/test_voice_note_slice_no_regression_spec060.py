@@ -256,9 +256,9 @@ def test_ce65_call_sink_regression_tests_still_exist_and_are_named_explicitly():
     `call` (creados por SPEC-056 precisamente para este propósito) siguen
     presentes en el archivo de tests — si alguno se renombra/elimina sin
     querer, este test lo detecta."""
-    content = (
-        _BACKEND_ROOT / "tests" / "test_stt_worker.py"
-    ).read_text(encoding="utf-8")
+    content = (_BACKEND_ROOT / "tests" / "test_stt_worker.py").read_text(
+        encoding="utf-8"
+    )
     required_tests = (
         "def test_process_job_call_sink_with_explicit_destino_no_regression",
         "def test_process_job_legacy_json_without_destino_behaves_as_call_sink",
@@ -315,7 +315,9 @@ def test_ce65_git_history_of_stt_worker_tests_has_no_removed_call_sink_assert():
     except (FileNotFoundError, subprocess.TimeoutExpired):
         import pytest
 
-        pytest.skip("git no disponible en este entorno — verificación manual ya documentada")
+        pytest.skip(
+            "git no disponible en este entorno — verificación manual ya documentada"
+        )
         return
 
     if diff.returncode != 0:

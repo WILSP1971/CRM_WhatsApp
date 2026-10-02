@@ -14,6 +14,7 @@ IMPORTANTE (pinning de entorno, ver notas_instalacion.md):
     torch==2.14.0+cpu, torchaudio==2.11.0+cpu, transformers==4.57.1 (yanked
     pero funcional), coqui-tts==0.27.5 (con extra [codec] -> torchcodec).
 """
+
 import json
 import os
 import subprocess
@@ -37,12 +38,24 @@ N_REPS = 5
 
 
 def transcode_ogg(in_wav: Path, out_ogg: Path) -> float:
-    cmd = [FFMPEG, "-y", "-i", str(in_wav), "-c:a", "libopus", "-b:a", "32k", str(out_ogg)]
+    cmd = [
+        FFMPEG,
+        "-y",
+        "-i",
+        str(in_wav),
+        "-c:a",
+        "libopus",
+        "-b:a",
+        "32k",
+        str(out_ogg),
+    ]
     t0 = time.perf_counter()
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     t1 = time.perf_counter()
     if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg fallo: {proc.stderr.decode('utf-8','ignore')[-500:]}")
+        raise RuntimeError(
+            f"ffmpeg fallo: {proc.stderr.decode('utf-8','ignore')[-500:]}"
+        )
     return t1 - t0
 
 
@@ -68,9 +81,13 @@ def main():
     print(f"  tiempo de carga del modelo: {t_load1 - t_load0:.3f}s", flush=True)
 
     resultados = {
-        "motor": "coqui-tts", "version_paquete": "0.27.5", "modelo": MODEL_NAME,
-        "modo": "warm (modelo cargado 1 vez)", "n_reps": N_REPS,
-        "carga_modelo_s": t_load1 - t_load0, "guiones": {},
+        "motor": "coqui-tts",
+        "version_paquete": "0.27.5",
+        "modelo": MODEL_NAME,
+        "modo": "warm (modelo cargado 1 vez)",
+        "n_reps": N_REPS,
+        "carga_modelo_s": t_load1 - t_load0,
+        "guiones": {},
     }
 
     for g in guiones:
@@ -90,7 +107,11 @@ def main():
                     transcode_times.append(transcode_ogg(out_wav, out_ogg))
         except Exception as e:
             print(f"  {gid}: ERROR {e}", flush=True)
-            resultados["guiones"][gid] = {"categoria": categoria, "chars": len(texto), "error": str(e)}
+            resultados["guiones"][gid] = {
+                "categoria": categoria,
+                "chars": len(texto),
+                "error": str(e),
+            }
             continue
 
         e2e = [s + transcode_times[0] for s in synth_times]
@@ -98,18 +119,26 @@ def main():
         ogg_size = out_ogg.stat().st_size if out_ogg.exists() else 0
 
         resultados["guiones"][gid] = {
-            "categoria": categoria, "chars": len(texto),
-            "synth_s": synth_times, "synth_media": statistics.mean(synth_times),
-            "synth_mediana": statistics.median(synth_times), "synth_p95": p95(synth_times),
+            "categoria": categoria,
+            "chars": len(texto),
+            "synth_s": synth_times,
+            "synth_media": statistics.mean(synth_times),
+            "synth_mediana": statistics.median(synth_times),
+            "synth_p95": p95(synth_times),
             "transcode_s": transcode_times[0],
-            "e2e_s": e2e, "e2e_media": statistics.mean(e2e),
-            "e2e_mediana": statistics.median(e2e), "e2e_p95": p95(e2e),
-            "wav_bytes": wav_size, "ogg_bytes": ogg_size,
+            "e2e_s": e2e,
+            "e2e_media": statistics.mean(e2e),
+            "e2e_mediana": statistics.median(e2e),
+            "e2e_p95": p95(e2e),
+            "wav_bytes": wav_size,
+            "ogg_bytes": ogg_size,
         }
-        print(f"  {gid:12s} ({categoria:6s}, {len(texto):3d} chars): "
-              f"synth media={statistics.mean(synth_times):.3f}s mediana={statistics.median(synth_times):.3f}s | "
-              f"transcode={transcode_times[0]:.3f}s | e2e media={statistics.mean(e2e):.3f}s p95={p95(e2e):.3f}s",
-              flush=True)
+        print(
+            f"  {gid:12s} ({categoria:6s}, {len(texto):3d} chars): "
+            f"synth media={statistics.mean(synth_times):.3f}s mediana={statistics.median(synth_times):.3f}s | "
+            f"transcode={transcode_times[0]:.3f}s | e2e media={statistics.mean(e2e):.3f}s p95={p95(e2e):.3f}s",
+            flush=True,
+        )
 
     RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     RESULTS_PATH.write_text(json.dumps(resultados, indent=2, ensure_ascii=False))

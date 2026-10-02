@@ -108,6 +108,33 @@ class Settings:
         # --- Redis (usado por el rate-limit de login; SPEC-011 ya lo define) ---
         self.redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379")
 
+        # --- Rate-limiting GENERAL de API por IP/endpoint (SPEC-081, PLAN-011
+        # F1, CAPA 2 — complementa, NUNCA sustituye, al `LoginRateLimiter` de
+        # arriba) ---
+        # `GENERAL_RATE_LIMIT_DEFAULT`: límite por defecto aplicado a
+        # cualquier endpoint REST que no declare uno propio (RF-01/RF-05).
+        self.general_rate_limit_default: str = os.getenv(
+            "GENERAL_RATE_LIMIT_DEFAULT", "60/minute"
+        )
+        # `GENERAL_RATE_LIMIT_RAG_DRAFT`: límite específico de `/rag/draft`
+        # (RF-01) — más bajo que el default porque invoca el LLM local en el
+        # camino síncrono de la petición (protege la cola de inferencia
+        # compartida, R-103).
+        self.general_rate_limit_rag_draft: str = os.getenv(
+            "GENERAL_RATE_LIMIT_RAG_DRAFT", "20/minute"
+        )
+        # `GENERAL_RATE_LIMIT_WEBHOOK`: umbral HOLGADO específico para los
+        # webhooks públicos de WhatsApp/PBX (RF-03, R-105 — el riesgo TOP de
+        # esta SPEC): ambos SOLO validan firma HMAC + encolan (coste
+        # bajísimo por petición), y pueden recibir ráfagas legítimas (lotes/
+        # reintentos de Meta, varias grabaciones casi simultáneas del PBX en
+        # hora pico). 300/minuto (5/s sostenido) por IP queda muy por encima
+        # de cualquier ráfaga legítima razonable sin dejar el endpoint sin
+        # protección frente a abuso real.
+        self.general_rate_limit_webhook: str = os.getenv(
+            "GENERAL_RATE_LIMIT_WEBHOOK", "300/minute"
+        )
+
         # --- IA local self-hosted (Ollama) — SPEC-016, SENSIBLE (.no-externo) ---
         # CHECKPOINT C3/RNF-01: el host del modelo se configura SOLO por env y
         # DEBE apuntar al servicio interno de la red `ia_internal` (SPEC-011,

@@ -29,7 +29,6 @@ from app.security.jwt import (
 from app.security.passwords import hash_password, needs_rehash, verify_password
 from app.security.rate_limit import LoginRateLimitExceeded, LoginRateLimiter
 
-
 # ---------------------------------------------------------------------------
 # Hashing de contraseñas (RNF-01, criterio de aceptación #1)
 # ---------------------------------------------------------------------------

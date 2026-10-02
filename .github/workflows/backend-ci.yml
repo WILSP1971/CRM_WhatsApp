@@ -58,8 +58,16 @@ jobs:
 
       - name: Lint with flake8
         run: |
-          flake8 backend/app --max-line-length=120 --ignore=E501,W503
-          flake8 backend/tests --max-line-length=120 --ignore=E501,W503
+          # E203 (whitespace before ':') se ignora por el conflicto conocido
+          # y documentado entre `black` (desde la línea base de esta
+          # actualización, SPEC-082 bump de dependencias) y pycodestyle: a
+          # partir de black >=24 el formateador inserta un espacio antes de
+          # `:` en slicing (`x[a : b]`, estilo recomendado por PEP8 para
+          # slices con expresiones), lo que flake8/E203 reporta como error.
+          # Black recomienda explícitamente ignorar E203 cuando se usa junto
+          # a flake8 (https://black.readthedocs.io/en/stable/guides/using_black_with_other_tools.html).
+          flake8 backend/app --max-line-length=120 --ignore=E501,W503,E203
+          flake8 backend/tests --max-line-length=120 --ignore=E501,W503,E203
           echo "✓ Flake8 linting passed"
 
       - name: Type checking with mypy
@@ -91,8 +99,16 @@ jobs:
 
           # Run pip-audit with ignore flags (if any exceptions are present)
           # Exit code 1 indicates vulnerabilities found; 0 means clean or all ignored
+          # (BLACK WIDOW, M-1, SPEC-082): `set +e` es necesario porque los `run:` de
+          # GitHub Actions usan `bash -eo pipefail` por defecto — sin esto, un exit
+          # no-cero de pip-audit abortaría el step AQUÍ MISMO (antes de `AUDIT_EXIT=$?`,
+          # el `cat` del reporte y el mensaje `::error::`), dejando esa lógica muerta
+          # (el gate "bloquearía por accidente" del propio `set -e`, no por esta
+          # comprobación explícita). `set -e` se restaura inmediatamente después.
+          set +e
           eval "pip-audit --desc --skip-editable $IGNORE_FLAGS" > pip-audit-report.txt 2>&1
           AUDIT_EXIT=$?
+          set -e
 
           cat pip-audit-report.txt
 
@@ -110,8 +126,13 @@ jobs:
           # Run bandit with severity/confidence filters
           # -ll = confidence HIGH, -ll severity HIGH (bandit counts from MEDIUM/HIGH/CRITICAL)
           # Format: text output for readability in CI logs
+          # (BLACK WIDOW, M-1, SPEC-082): `set +e` por el mismo motivo que en el paso de
+          # pip-audit — con `pipefail` + `-e` activos por defecto, un bandit con exit 1
+          # dentro de un pipeline (`| tee ...`) abortaría el step antes de `BANDIT_EXIT=$?`.
+          set +e
           bandit -r backend/app -ll -f txt 2>&1 | tee bandit-report.txt
           BANDIT_EXIT=$?
+          set -e
 
           # bandit exit code: 0 if clean, 1 if issues found at the requested severity/confidence
           # With -ll (severity high, confidence high), exit 1 means HIGH/HIGH issues exist

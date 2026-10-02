@@ -524,7 +524,9 @@ def _process_message_event(
     fake_message = SimpleNamespace(
         id=message_id, tenant_id=tenant_id, remitente=_REMITENTE_CONTACTO
     )
-    _schedule_sentiment_best_effort(redis_client or get_redis_client(), message=fake_message)
+    _schedule_sentiment_best_effort(
+        redis_client or get_redis_client(), message=fake_message
+    )
     _generate_rag_draft_best_effort(
         db,
         ai_client or AIClient(),

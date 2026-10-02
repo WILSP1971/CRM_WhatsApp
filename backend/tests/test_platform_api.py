@@ -137,9 +137,9 @@ def test_create_tenant_with_valid_platform_admin_returns_201(api_client, monkeyp
     monkeypatch.setattr(
         platform_router_module, "provision_tenant", fake_provision_tenant
     )
-    app.dependency_overrides[
-        platform_deps_module.require_platform_admin
-    ] = fake_require_platform_admin
+    app.dependency_overrides[platform_deps_module.require_platform_admin] = (
+        fake_require_platform_admin
+    )
     try:
         response = api_client.post(
             "/api/v1/platform/tenants",
@@ -197,9 +197,9 @@ def test_create_tenant_maps_domain_exceptions_to_expected_status(
     monkeypatch.setattr(
         platform_router_module, "provision_tenant", fake_provision_tenant_que_falla
     )
-    app.dependency_overrides[
-        platform_deps_module.require_platform_admin
-    ] = fake_require_platform_admin
+    app.dependency_overrides[platform_deps_module.require_platform_admin] = (
+        fake_require_platform_admin
+    )
     try:
         response = api_client.post(
             "/api/v1/platform/tenants",
@@ -250,9 +250,9 @@ def test_create_tenant_with_valid_credentials_and_malformed_payload_returns_422(
 
     import app.api.platform_deps as platform_deps_module
 
-    app.dependency_overrides[
-        platform_deps_module.require_platform_admin
-    ] = lambda: SimpleNamespace(id=uuid.uuid4(), activo=True)
+    app.dependency_overrides[platform_deps_module.require_platform_admin] = (
+        lambda: SimpleNamespace(id=uuid.uuid4(), activo=True)
+    )
     try:
         response = api_client.post(
             "/api/v1/platform/tenants",

@@ -236,9 +236,7 @@ def test_conversation_metrics_total_por_canal_por_estado_y_serie_diaria(
     )
 
     with _session_with_tenant(app_engine, tenant_id) as session:
-        metrics = get_conversation_metrics(
-            session, desde=hace_3_dias, hasta=hoy
-        )
+        metrics = get_conversation_metrics(session, desde=hace_3_dias, hasta=hoy)
         session.rollback()
 
     assert metrics.total == 3
@@ -760,7 +758,8 @@ def test_rls_sesion_sin_tenant_fijado_ve_cero_filas(
     """Fail-closed (ADR-004/ADR-008): una sesión de `app_engine` (rol
     `omnicore_app`) SIN `set_tenant_session` ve 0 filas, aunque existan
     conversaciones reales en BD — mismo patrón de test que
-    `test_call_retention_service.py::test_session_without_tenant_fixed_finds_zero_candidates`."""
+    `test_call_retention_service.py::test_session_without_tenant_fixed_finds_zero_candidates`.
+    """
     tenant_id = two_tenants_with_data["tenant_a_id"]
     contact_id = two_tenants_with_data["contact_a_id"]
     hoy = date.today()

@@ -56,7 +56,10 @@ def set_tenant_session(db, tenant_id: str) -> None:
     """
     db.execute(
         text("SELECT set_config(:tenant_session_var, :tenant_id, true)"),
-        {"tenant_session_var": settings.tenant_session_var, "tenant_id": str(tenant_id)},
+        {
+            "tenant_session_var": settings.tenant_session_var,
+            "tenant_id": str(tenant_id),
+        },
     )
 
 

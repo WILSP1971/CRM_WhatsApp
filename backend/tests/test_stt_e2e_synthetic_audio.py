@@ -52,7 +52,9 @@ def _crear_tenant(engine, nombre: str) -> uuid.UUID:
     tenant_id = uuid.uuid4()
     with engine.begin() as conn:
         conn.execute(
-            sa.text("INSERT INTO tenants (id, nombre, slug) VALUES (:id, :nombre, :slug)"),
+            sa.text(
+                "INSERT INTO tenants (id, nombre, slug) VALUES (:id, :nombre, :slug)"
+            ),
             {
                 "id": tenant_id,
                 "nombre": nombre,
@@ -63,7 +65,12 @@ def _crear_tenant(engine, nombre: str) -> uuid.UUID:
 
 
 def _crear_call(
-    engine, *, tenant_id: uuid.UUID, call_id: str, audio_ref: str, estado: str = "finalizada"
+    engine,
+    *,
+    tenant_id: uuid.UUID,
+    call_id: str,
+    audio_ref: str,
+    estado: str = "finalizada",
 ) -> uuid.UUID:
     row_id = uuid.uuid4()
     with engine.begin() as conn:
@@ -102,7 +109,9 @@ def _fake_segment(start: float, end: float, text: str) -> MagicMock:
     return seg
 
 
-def _fake_transcription_info(*, language: str = "es", duration: float = 12.0) -> MagicMock:
+def _fake_transcription_info(
+    *, language: str = "es", duration: float = 12.0
+) -> MagicMock:
     info = MagicMock()
     info.language = language
     info.duration = duration
@@ -142,10 +151,12 @@ def test_all_synthetic_fixtures_are_valid_wav_audio():
     fixtures = build_synthetic_call_fixtures()
     assert 2 <= len(fixtures) <= 5, "SPEC-042 pide un set de 2-5 ficheros"
     for fixture in fixtures:
-        assert is_valid_wav(fixture.audio_bytes), (
-            f"El fixture '{fixture.nombre}' no es un WAV válido"
-        )
-        assert len(fixture.audio_bytes) > 44, "Debe tener frames más allá de la cabecera RIFF"
+        assert is_valid_wav(
+            fixture.audio_bytes
+        ), f"El fixture '{fixture.nombre}' no es un WAV válido"
+        assert (
+            len(fixture.audio_bytes) > 44
+        ), "Debe tener frames más allá de la cabecera RIFF"
 
 
 def test_synthetic_fixtures_have_realistic_es_co_call_metadata():
@@ -165,9 +176,7 @@ def test_synthetic_fixtures_have_realistic_es_co_call_metadata():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "fixture_index", range(len(build_synthetic_call_fixtures()))
-)
+@pytest.mark.parametrize("fixture_index", range(len(build_synthetic_call_fixtures())))
 def test_stt_e2e_with_synthetic_wav_fixture_persists_segments_and_timestamps(
     postgres_engine, audio_store_tmp, fixture_index
 ):
@@ -233,13 +242,17 @@ def test_stt_e2e_with_synthetic_wav_fixture_persists_segments_and_timestamps(
             sa.text("SELECT estado FROM calls WHERE id = :id"), {"id": call_row_id}
         ).fetchone()
 
-    assert row is not None, f"Debe persistirse call_transcript para '{fixture.nombre}' (CE-41)"
+    assert (
+        row is not None
+    ), f"Debe persistirse call_transcript para '{fixture.nombre}' (CE-41)"
     assert row.idioma == "es"
     assert row.modelo_stt.startswith("faster-whisper/")
     assert len(row.segmentos) == 2
     for segmento in row.segmentos:
         assert {"inicio", "fin", "texto", "hablante"} <= set(segmento.keys())
-        assert segmento["fin"] > segmento["inicio"], "Cada segmento debe traer timestamps válidos"
+        assert (
+            segmento["fin"] > segmento["inicio"]
+        ), "Cada segmento debe traer timestamps válidos"
     assert call_row.estado == "transcrita"
 
 

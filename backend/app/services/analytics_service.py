@@ -446,8 +446,7 @@ def get_response_time_metrics(
             Message.created_at.label("created_at"),
             Message.remitente.label("remitente"),
             lag_remitente.label("remitente_anterior"),
-        )
-        .where(
+        ).where(
             Message.activo.is_(True),
             Message.conversation_id == conversaciones_ids_subq.c.id,
         )
@@ -622,7 +621,9 @@ def conversion_rate_from_metrics(metrics: ConversationMetrics) -> ConversionMetr
         tasa = None
     else:
         tasa = metrics.cerradas / metrics.total
-    return ConversionMetrics(tasa=tasa, cerradas=metrics.cerradas, totales=metrics.total)
+    return ConversionMetrics(
+        tasa=tasa, cerradas=metrics.cerradas, totales=metrics.total
+    )
 
 
 # ---------------------------------------------------------------------------

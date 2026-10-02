@@ -18,7 +18,6 @@ import importlib
 
 import pytest
 
-
 ENV_KEYS = (
     "ENVIRONMENT",
     "JWT_SECRET_KEY",

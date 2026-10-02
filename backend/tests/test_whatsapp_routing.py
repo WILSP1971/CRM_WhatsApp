@@ -26,7 +26,6 @@ from sqlalchemy.exc import IntegrityError
 from app.db.rls import TENANT_SCOPED_TABLES
 from app.db.session import set_tenant_session
 
-
 # ---------------------------------------------------------------------------
 # RF-01: routing phone_number_id -> tenant_id + unicidad
 # ---------------------------------------------------------------------------

@@ -41,10 +41,18 @@ def test_recording_inbound_job_round_trip_json_preserves_fields():
 
 def test_recording_inbound_job_generates_unique_event_id():
     job_a = build_recording_inbound_job(
-        call_id="a", numero="1", numero_destino="d", direccion="entrante", audio_bytes=b"x"
+        call_id="a",
+        numero="1",
+        numero_destino="d",
+        direccion="entrante",
+        audio_bytes=b"x",
     )
     job_b = build_recording_inbound_job(
-        call_id="b", numero="1", numero_destino="d", direccion="entrante", audio_bytes=b"x"
+        call_id="b",
+        numero="1",
+        numero_destino="d",
+        direccion="entrante",
+        audio_bytes=b"x",
     )
 
     assert job_a.event_id != job_b.event_id
@@ -85,13 +93,21 @@ async def test_fifo_order_preserved_across_multiple_events():
     await enqueue_recording_inbound_event(
         redis_client,
         job=build_recording_inbound_job(
-            call_id="primero", numero="1", numero_destino="d", direccion="entrante", audio_bytes=b"1"
+            call_id="primero",
+            numero="1",
+            numero_destino="d",
+            direccion="entrante",
+            audio_bytes=b"1",
         ),
     )
     await enqueue_recording_inbound_event(
         redis_client,
         job=build_recording_inbound_job(
-            call_id="segundo", numero="1", numero_destino="d", direccion="entrante", audio_bytes=b"2"
+            call_id="segundo",
+            numero="1",
+            numero_destino="d",
+            direccion="entrante",
+            audio_bytes=b"2",
         ),
     )
 

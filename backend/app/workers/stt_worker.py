@@ -315,7 +315,9 @@ def _materialize_transcript_message(
     return message_id, conversation_id
 
 
-def _schedule_sentiment_best_effort(redis_client: redis_asyncio.Redis, *, message) -> None:
+def _schedule_sentiment_best_effort(
+    redis_client: redis_asyncio.Redis, *, message
+) -> None:
     """Wrapper sync -> async para disparar sentimiento (SPEC-018) desde este
     worker síncrono — MISMO patrón que
     `whatsapp_inbound_worker._schedule_sentiment_best_effort`.
@@ -852,7 +854,7 @@ def process_job(
         es_sink_message = destino.startswith(_DESTINO_MESSAGE_PREFIX)
 
         if es_sink_message:
-            target_id_raw = destino[len(_DESTINO_MESSAGE_PREFIX):]
+            target_id_raw = destino[len(_DESTINO_MESSAGE_PREFIX) :]
             try:
                 message_id = uuid.UUID(target_id_raw)
             except ValueError:
@@ -993,7 +995,9 @@ async def run_worker_loop(
         await drain_one(redis_client, timeout_seconds=block_timeout_seconds)
 
     logger.info("stt_worker_started", queue=STT_JOBS_QUEUE_KEY)
-    await resilient_worker_loop(_iteration, stop_event=stop_event, worker_name="stt_worker")
+    await resilient_worker_loop(
+        _iteration, stop_event=stop_event, worker_name="stt_worker"
+    )
     logger.info("stt_worker_stopped")
 
 

@@ -42,7 +42,9 @@ def test_download_rejected_when_pbx_external_disabled():
 
 def test_download_rejected_for_host_outside_allowlist(pbx_external_enabled):
     with pytest.raises(PbxHostNotAllowedError):
-        download_recording(recording_url="https://otro-host-no-permitido.test/rec/1.wav")
+        download_recording(
+            recording_url="https://otro-host-no-permitido.test/rec/1.wav"
+        )
 
 
 def test_download_rejected_for_http_scheme_even_with_allowed_host(pbx_external_enabled):
@@ -104,7 +106,9 @@ def test_download_raises_pbx_download_error_on_http_failure(pbx_external_enabled
 
     with patch("httpx.Client", return_value=fake_client):
         with pytest.raises(PbxDownloadError):
-            download_recording(recording_url="https://pbx.proveedor-demo.test/rec/1.wav")
+            download_recording(
+                recording_url="https://pbx.proveedor-demo.test/rec/1.wav"
+            )
 
 
 def test_download_sends_bearer_auth_token_when_configured(pbx_external_enabled):
@@ -122,7 +126,9 @@ def test_download_sends_bearer_auth_token_when_configured(pbx_external_enabled):
 
     try:
         with patch("httpx.Client", return_value=fake_client):
-            download_recording(recording_url="https://pbx.proveedor-demo.test/rec/1.wav")
+            download_recording(
+                recording_url="https://pbx.proveedor-demo.test/rec/1.wav"
+            )
     finally:
         settings.pbx_external_auth_token = original_token
 

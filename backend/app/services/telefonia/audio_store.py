@@ -59,9 +59,7 @@ def _resolve_path(audio_ref: str) -> Path:
     base = Path(settings.audio_storage_path).resolve()
     candidate = (base / audio_ref).resolve()
     if base not in candidate.parents and candidate != base:
-        raise AudioStoreError(
-            f"audio_ref fuera del almacén permitido: {audio_ref!r}"
-        )
+        raise AudioStoreError(f"audio_ref fuera del almacén permitido: {audio_ref!r}")
     return candidate
 
 
@@ -114,9 +112,7 @@ def purge_audio(*, audio_ref: str) -> bool:
     except FileNotFoundError:
         return False
     except OSError as exc:
-        raise AudioStoreError(
-            f"No se pudo purgar el audio cifrado: {exc}"
-        ) from exc
+        raise AudioStoreError(f"No se pudo purgar el audio cifrado: {exc}") from exc
 
 
 def load_audio(*, audio_ref: str) -> bytes:

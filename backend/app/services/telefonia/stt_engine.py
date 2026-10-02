@@ -248,9 +248,14 @@ def _diarizar_segmentos(
     previo_fin: float | None = None
 
     for segmento in segmentos:
-        if previo_fin is not None and (segmento.inicio - previo_fin) > silence_gap_seconds:
+        if (
+            previo_fin is not None
+            and (segmento.inicio - previo_fin) > silence_gap_seconds
+        ):
             hablante_actual = (
-                HABLANTE_CLIENTE if hablante_actual == HABLANTE_AGENTE else HABLANTE_AGENTE
+                HABLANTE_CLIENTE
+                if hablante_actual == HABLANTE_AGENTE
+                else HABLANTE_AGENTE
             )
         resultado.append(
             TranscriptionSegment(
@@ -285,7 +290,9 @@ def transcribe_audio_bytes(
     """
     settings = get_settings()
     diarizar = (
-        settings.stt_diarization_enabled if diarization_enabled is None else diarization_enabled
+        settings.stt_diarization_enabled
+        if diarization_enabled is None
+        else diarization_enabled
     )
 
     loaded = load_model()
@@ -310,7 +317,9 @@ def transcribe_audio_bytes(
             )
             for seg in segments_iter
         ]
-    except Exception as exc:  # noqa: BLE001 — cualquier fallo de inferencia -> SttEngineError
+    except (
+        Exception
+    ) as exc:  # noqa: BLE001 — cualquier fallo de inferencia -> SttEngineError
         raise SttEngineError(
             f"Fallo durante la inferencia STT ({loaded.model_name}/{loaded.device}): {exc}"
         ) from exc

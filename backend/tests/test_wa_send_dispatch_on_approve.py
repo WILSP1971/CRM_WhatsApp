@@ -73,7 +73,9 @@ def fake_redis():
 def _redis_client_for_current_loop(fake_redis) -> fakeredis.aioredis.FakeRedis:
     """Cliente `FakeRedis` independiente (propia conexión) sobre el MISMO
     `FakeServer` que usa la app — ver docstring de la fixture `fake_redis`."""
-    return fakeredis.aioredis.FakeRedis(server=fake_redis.fake_server, decode_responses=True)
+    return fakeredis.aioredis.FakeRedis(
+        server=fake_redis.fake_server, decode_responses=True
+    )
 
 
 @pytest.fixture

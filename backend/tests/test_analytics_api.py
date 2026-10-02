@@ -187,9 +187,7 @@ def test_get_business_analytics_200_matches_deterministic_fixtures(
     )
 
     with api_as_tenant(tenant_id):
-        response = client.get(
-            ENDPOINT, params={"desde": str(ayer), "hasta": str(hoy)}
-        )
+        response = client.get(ENDPOINT, params={"desde": str(ayer), "hasta": str(hoy)})
 
     assert response.status_code == 200
     body = response.json()
@@ -313,7 +311,9 @@ def test_get_business_analytics_422_when_range_exceeds_max_days(
     desde = hasta - timedelta(days=max_days)
 
     with api_as_tenant(data["tenant_a_id"]):
-        response = client.get(ENDPOINT, params={"desde": str(desde), "hasta": str(hasta)})
+        response = client.get(
+            ENDPOINT, params={"desde": str(desde), "hasta": str(hasta)}
+        )
 
     assert response.status_code == 422
     assert "máximo permitido" in response.json()["detail"]
@@ -330,7 +330,9 @@ def test_get_business_analytics_200_when_range_equals_max_days(
     desde = hasta - timedelta(days=max_days - 1)
 
     with api_as_tenant(data["tenant_a_id"]):
-        response = client.get(ENDPOINT, params={"desde": str(desde), "hasta": str(hasta)})
+        response = client.get(
+            ENDPOINT, params={"desde": str(desde), "hasta": str(hasta)}
+        )
 
     assert response.status_code == 200
 
@@ -368,9 +370,7 @@ def test_get_business_analytics_200_with_zeros_when_no_data_in_range(
     assert body["conversaciones"]["abiertas"] == 0
     assert body["conversaciones"]["cerradas"] == 0
     assert body["conversaciones"]["por_canal"] == []
-    assert body["conversaciones"]["serie_diaria"] == [
-        {"fecha": str(lejos), "total": 0}
-    ]
+    assert body["conversaciones"]["serie_diaria"] == [{"fecha": str(lejos), "total": 0}]
     assert body["tiempos_respuesta"]["primera_respuesta_promedio_seg"] is None
     assert body["tiempos_respuesta"]["respuesta_promedio_seg"] is None
     assert body["tiempos_respuesta"]["conversaciones_con_respuesta"] == 0

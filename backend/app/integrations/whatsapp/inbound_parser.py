@@ -181,9 +181,8 @@ def parse_inbound_message_events(raw_body: str) -> list[InboundMessageEvent]:
                     # envía duración en el payload real hoy; se extrae de
                     # forma defensiva por si un valor futuro apareciera bajo
                     # alguna de estas claves, sin asumir su presencia.
-                    duracion_raw = (
-                        audio_payload.get("duration")
-                        or audio_payload.get("seconds")
+                    duracion_raw = audio_payload.get("duration") or audio_payload.get(
+                        "seconds"
                     )
                     if duracion_raw is not None:
                         try:

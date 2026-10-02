@@ -29,6 +29,7 @@ from app.api.ws_chat import router as ws_chat_router
 from app.integrations.whatsapp.webhook import router as whatsapp_webhook_router
 from app.integrations.pbx.webhook import router as pbx_webhook_router
 from app.core.metrics import observe_http_request, render_latest
+from app.core.rate_limit_general import setup_general_rate_limiting
 from app.core.redis_client import close_redis_client
 from app.core.request_id import RequestIDMiddleware
 from app.core.security_headers import SecurityHeadersMiddleware
@@ -121,6 +122,17 @@ app.add_middleware(
 # CORS para que se apliquen a TODAS las respuestas, incluidas las de error.
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestIDMiddleware)
+
+# Rate-limiting GENERAL de API por IP/endpoint (SPEC-081, PLAN-011 F1, CAPA 2
+# — coexiste con, NUNCA sustituye, el `LoginRateLimiter` de SPEC-013, que
+# vive dentro de `app/api/auth.py` y no se toca aquí). Se añade EL ÚLTIMO
+# (el más exterior, LIFO) para que actúe como primera puerta de entrada:
+# una petición que excede el límite recibe 429 antes de que el resto del
+# pipeline (routers, dependencias, IA/DB) haga ningún trabajo, y la propia
+# respuesta 429 sigue pasando por `SecurityHeadersMiddleware`/CORS igual que
+# cualquier otra respuesta (cabeceras de seguridad y CORS coherentes también
+# en el camino de rechazo).
+setup_general_rate_limiting(app)
 
 
 @app.middleware("http")

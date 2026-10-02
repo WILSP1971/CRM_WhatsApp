@@ -157,7 +157,9 @@ def test_load_audio_missing_file_raises_audio_store_error(audio_store_tmp):
         load_audio(audio_ref="tenant-x/no-existe.enc")
 
 
-def test_load_audio_with_wrong_key_raises_audio_store_error(audio_store_tmp, monkeypatch):
+def test_load_audio_with_wrong_key_raises_audio_store_error(
+    audio_store_tmp, monkeypatch
+):
     tenant_id = uuid.uuid4()
     ref = build_audio_ref(tenant_id=tenant_id, call_id="call-wrong-key")
     store_audio(audio_ref=ref, audio_bytes=b"audio-cifrado-con-clave-original")

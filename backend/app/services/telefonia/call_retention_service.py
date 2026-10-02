@@ -410,7 +410,9 @@ def run_call_retention_job(
         if transcript_retention_days is not None
         else settings.call_transcript_retention_days
     )
-    is_enabled = enabled if enabled is not None else settings.enable_call_retention_purge
+    is_enabled = (
+        enabled if enabled is not None else settings.enable_call_retention_purge
+    )
 
     purged_audio_ids: list[str] = []
     anonymized_transcript_ids: list[str] = []

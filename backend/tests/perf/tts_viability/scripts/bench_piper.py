@@ -13,6 +13,7 @@ Uso:
 Requiere: piper-tts instalado en backend/.venv, voces .onnx descargadas en
 tests/perf/tts_viability/voices/piper/.
 """
+
 import json
 import subprocess
 import time
@@ -36,18 +37,25 @@ VOCES = [
 FFMPEG = shutil.which("ffmpeg")
 
 
-def synth_piper(piper_bin: Path, model_path: Path, config_path: Path, texto: str, out_wav: Path) -> float:
+def synth_piper(
+    piper_bin: Path, model_path: Path, config_path: Path, texto: str, out_wav: Path
+) -> float:
     """Ejecuta piper CLI, retorna tiempo de sintesis en segundos."""
     cmd = [
         str(piper_bin),
-        "-m", str(model_path),
-        "-c", str(config_path),
-        "-f", str(out_wav),
+        "-m",
+        str(model_path),
+        "-c",
+        str(config_path),
+        "-f",
+        str(out_wav),
     ]
     t0 = time.perf_counter()
     proc = subprocess.run(
-        cmd, input=texto.encode("utf-8"),
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        cmd,
+        input=texto.encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     t1 = time.perf_counter()
     if proc.returncode != 0:
@@ -59,7 +67,17 @@ def transcode_ogg(in_wav: Path, out_ogg: Path) -> float:
     """Transcodifica a OGG/Opus con ffmpeg, retorna tiempo en segundos. -1 si ffmpeg no disponible."""
     if not FFMPEG:
         return -1.0
-    cmd = [FFMPEG, "-y", "-i", str(in_wav), "-c:a", "libopus", "-b:a", "32k", str(out_ogg)]
+    cmd = [
+        FFMPEG,
+        "-y",
+        "-i",
+        str(in_wav),
+        "-c:a",
+        "libopus",
+        "-b:a",
+        "32k",
+        str(out_ogg),
+    ]
     t0 = time.perf_counter()
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     t1 = time.perf_counter()
@@ -101,7 +119,9 @@ def main():
             synth_times = []
             transcode_times = []
             for rep in range(3):
-                t_synth = synth_piper(piper_bin, model_path, config_path, texto, out_wav)
+                t_synth = synth_piper(
+                    piper_bin, model_path, config_path, texto, out_wav
+                )
                 synth_times.append(t_synth)
                 if rep == 0:
                     t_transc = transcode_ogg(out_wav, out_ogg)
@@ -111,7 +131,9 @@ def main():
             wav_size = out_wav.stat().st_size if out_wav.exists() else 0
             ogg_size = out_ogg.stat().st_size if out_ogg.exists() else 0
 
-            total_e2e = [s + (transcode_times[0] if transcode_times else 0) for s in synth_times]
+            total_e2e = [
+                s + (transcode_times[0] if transcode_times else 0) for s in synth_times
+            ]
 
             resultados["voces"][voz]["guiones"][gid] = {
                 "categoria": categoria,
@@ -125,9 +147,11 @@ def main():
                 "wav_bytes": wav_size,
                 "ogg_bytes": ogg_size,
             }
-            print(f"  {gid:12s} ({categoria:6s}, {len(texto):3d} chars): "
-                  f"synth media={statistics.mean(synth_times):.3f}s  "
-                  f"e2e media={statistics.mean(total_e2e):.3f}s")
+            print(
+                f"  {gid:12s} ({categoria:6s}, {len(texto):3d} chars): "
+                f"synth media={statistics.mean(synth_times):.3f}s  "
+                f"e2e media={statistics.mean(total_e2e):.3f}s"
+            )
 
     RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     RESULTS_PATH.write_text(json.dumps(resultados, indent=2, ensure_ascii=False))

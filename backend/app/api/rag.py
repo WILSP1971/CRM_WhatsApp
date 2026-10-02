@@ -79,6 +79,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_tenant_db
 from app.core.rag_queue import enqueue_ingest_job
+from app.core.rate_limit_general import rag_draft_rate_limiter
 from app.core.redis_client import channel_name, get_redis_client
 from app.models.conversation import Conversation
 from app.models.document import Document
@@ -232,11 +233,22 @@ def generate_draft_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_tenant_db),
     ai_client: AIClient = Depends(get_ai_client),
+    _rate_limit: None = Depends(rag_draft_rate_limiter),
 ) -> RagDraftOut:
     """Genera un borrador RAG con ≥3 citas trazables para el tenant autenticado.
 
     No envía nada al contacto (human-in-the-loop es SPEC-019): solo produce
     el borrador para que un agente humano lo revise/edite/apruebe después.
+
+    CHECKPOINT (SPEC-081, RF-01): rate-limit GENERAL por IP
+    (`rag_draft_rate_limiter`, más bajo que el default de la API porque
+    invoca el LLM local en el camino síncrono — ver
+    `app/core/rate_limit_general.py` para el razonamiento completo). Se
+    aplica vía `Depends()` (dependencia de FastAPI), NO vía el decorador
+    `@limiter.limit(...)` de `slowapi`: ese decorador rompe la resolución de
+    forward refs de `RagDraftRequest` en este módulo (usa
+    `from __future__ import annotations`) — ver docstring de
+    `rate_limit_general.py` para el detalle verificado del incidente.
     """
     try:
         result = generate_rag_draft(

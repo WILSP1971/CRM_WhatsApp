@@ -62,7 +62,13 @@ def _crear_documento(
 
 
 def _ingest(
-    app_engine, tenant_id, document_id, text, ai_client, chunk_size=120, chunk_overlap=15
+    app_engine,
+    tenant_id,
+    document_id,
+    text,
+    ai_client,
+    chunk_size=120,
+    chunk_overlap=15,
 ):
     """CORRECCIÓN (ADR-008): `ingest_document`/`retrieve_top_k` NO filtran
     manualmente por `tenant_id` — dependen enteramente de RLS (ver docstring
@@ -84,7 +90,9 @@ def _ingest(
             )
 
 
-def test_recuperacion_devuelve_chunks_ordenados_por_similitud(app_engine, postgres_engine):
+def test_recuperacion_devuelve_chunks_ordenados_por_similitud(
+    app_engine, postgres_engine
+):
     tenant_id = _crear_tenant(postgres_engine, "TenantOrden")
     document_id = _crear_documento(postgres_engine, tenant_id, "faq.txt")
     ai_client = FakeAIClient()
@@ -122,7 +130,9 @@ def test_recuperacion_devuelve_chunks_ordenados_por_similitud(app_engine, postgr
     assert "A" in retrieved[0].excerpt
 
 
-def test_recuperacion_solo_devuelve_chunks_del_tenant_autenticado(app_engine, postgres_engine):
+def test_recuperacion_solo_devuelve_chunks_del_tenant_autenticado(
+    app_engine, postgres_engine
+):
     tenant_a = _crear_tenant(postgres_engine, "TenantAisladoA")
     tenant_b = _crear_tenant(postgres_engine, "TenantAisladoB")
     doc_a = _crear_documento(postgres_engine, tenant_a, "politica-a.txt")
@@ -150,7 +160,9 @@ def test_recuperacion_solo_devuelve_chunks_del_tenant_autenticado(app_engine, po
     assert fuentes == {"politica-a.txt"}
 
 
-def test_recuperacion_excluye_documentos_inactivos_borrado_logico(app_engine, postgres_engine):
+def test_recuperacion_excluye_documentos_inactivos_borrado_logico(
+    app_engine, postgres_engine
+):
     tenant_id = _crear_tenant(postgres_engine, "TenantBorradoLogico")
     document_id = _crear_documento(postgres_engine, tenant_id, "obsoleto.txt")
     ai_client = FakeAIClient()

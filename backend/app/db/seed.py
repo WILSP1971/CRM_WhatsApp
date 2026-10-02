@@ -126,7 +126,9 @@ def run_seed() -> None:
     )
 
 
-def _seed_call_ficticia(conn: sa.Connection, tenant_id: uuid.UUID, contact_id: uuid.UUID) -> None:
+def _seed_call_ficticia(
+    conn: sa.Connection, tenant_id: uuid.UUID, contact_id: uuid.UUID
+) -> None:
     """Inserta una llamada ficticia + su transcripción de ejemplo (SPEC-036).
 
     Sin audio real (`audio_ref` es un placeholder de referencia, no un

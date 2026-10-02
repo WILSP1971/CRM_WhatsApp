@@ -155,9 +155,7 @@ def test_metrics_endpoint_exposes_whatsapp_voice_note_metrics_without_tenant_lab
 
 def test_increment_whatsapp_media_downloads_counts_by_resultado():
     before_ok = (
-        REGISTRY.get_sample_value(
-            "whatsapp_media_downloads_total", {"resultado": "ok"}
-        )
+        REGISTRY.get_sample_value("whatsapp_media_downloads_total", {"resultado": "ok"})
         or 0.0
     )
     before_error = (

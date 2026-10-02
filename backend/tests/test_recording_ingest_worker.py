@@ -254,9 +254,9 @@ def test_process_job_duplicate_call_id_is_idempotent(
         server=fake_redis.fake_server, decode_responses=True
     )
     stt_queue_length = asyncio.run(dequeue_redis_client.llen(STT_JOBS_QUEUE_KEY))
-    assert stt_queue_length == 1, (
-        "Un reenvío con el mismo call_id NO debe encolar un segundo trabajo STT"
-    )
+    assert (
+        stt_queue_length == 1
+    ), "Un reenvío con el mismo call_id NO debe encolar un segundo trabajo STT"
 
     # Solo un fichero de audio en el almacén (la segunda entrega NO reescribe).
     found_files = list(audio_store_tmp.rglob("*.enc"))

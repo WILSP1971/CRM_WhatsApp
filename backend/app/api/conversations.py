@@ -88,8 +88,9 @@ def _validar_contact_id_del_tenant(db: Session, contact_id: uuid.UUID) -> None:
 def list_conversations(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    contact_id: uuid.UUID
-    | None = Query(default=None, description="Filtro por contacto"),
+    contact_id: uuid.UUID | None = Query(
+        default=None, description="Filtro por contacto"
+    ),
     estado: str | None = Query(default=None, description="Filtro por estado"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_tenant_db),

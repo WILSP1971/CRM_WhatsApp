@@ -55,9 +55,7 @@ SEGMENTO_CLAVES_REQUERIDAS = {"inicio", "fin", "texto", "hablante"}
 
 class CallTranscript(Base, TimestampMixin, TenantMixin, SoftDeleteMixin):
     __tablename__ = "call_transcripts"
-    __table_args__ = (
-        UniqueConstraint("call_id", name="uq_call_transcripts_call_id"),
-    )
+    __table_args__ = (UniqueConstraint("call_id", name="uq_call_transcripts_call_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default="gen_random_uuid()"

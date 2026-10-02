@@ -48,8 +48,9 @@ def list_contacts(
     request: Request,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    nombre: str
-    | None = Query(default=None, description="Filtro por nombre (contiene)"),
+    nombre: str | None = Query(
+        default=None, description="Filtro por nombre (contiene)"
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_tenant_db),
 ) -> Page[ContactOut]:

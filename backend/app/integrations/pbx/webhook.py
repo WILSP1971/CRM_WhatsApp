@@ -47,10 +47,20 @@ import hmac
 
 import redis.asyncio as redis_asyncio
 import structlog
-from fastapi import APIRouter, Depends, Form, Query, Request, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Form,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.responses import PlainTextResponse
 
 from app.core.config import Settings, get_settings
+from app.core.rate_limit_general import pbx_webhook_rate_limiter
 from app.core.recording_queue import (
     build_recording_inbound_job,
     enqueue_recording_inbound_event,
@@ -127,9 +137,20 @@ async def receive_recording_webhook(
     duracion: int | None = Form(default=None),
     settings: Settings = Depends(get_settings),
     redis_client: redis_asyncio.Redis = Depends(get_redis_client),
+    _rate_limit: None = Depends(pbx_webhook_rate_limiter),
 ) -> Response:
     """RF-01 (SPEC-037): recibe fichero + metadatos, valida firma sobre el
     audio crudo y hace ACK rápido (202 Accepted).
+
+    CHECKPOINT (SPEC-081, R-105): rate-limit GENERAL por IP con umbral
+    HOLGADO (`pbx_webhook_rate_limiter`, ver
+    `app/core/rate_limit_general.py`) ANTES de validar la firma — igual
+    criterio que el webhook de WhatsApp: una ráfaga legítima de grabaciones
+    del PBX (varias llamadas colgando casi a la vez) queda dentro del
+    umbral y llega intacta a la validación HMAC/ACK rápido de abajo.
+    Aplicado vía `Depends()` (no el decorador `@limiter.limit(...)` de
+    `slowapi`, que en este endpoint concreto rompería la resolución de
+    tipos de `UploadFile` — ver docstring de `rate_limit_general.py`).
 
     Lee `file` (bytes EXACTOS del fichero) porque la firma HMAC se calcula
     sobre esos bytes tal cual — igual criterio que el webhook de WhatsApp

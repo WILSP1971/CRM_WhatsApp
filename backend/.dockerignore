@@ -1,0 +1,54 @@
+# SPEC-080 (PLAN-011 F0): excluye del build context de Docker lo que la
+# imagen de PRODUCCIÓN (stage `production` del Dockerfile) nunca debe
+# empaquetar: tests, secretos, control de versiones, cachés, entornos
+# virtuales locales y artefactos de cobertura/herramientas.
+#
+# Nota: el stage `production` además copia SELECTIVAMENTE (`app/`,
+# `alembic/`, `alembic.ini`, `requirements.txt`) en vez de `COPY . .`, como
+# segunda barrera independiente de este `.dockerignore` (defensa en
+# profundidad, RF-01). El stage `development` sigue usando `COPY . .` sobre
+# este MISMO build context ya filtrado — por eso aquí NO se excluye nada que
+# el entorno de desarrollo necesite (tests/`scripts/` siguen disponibles
+# dentro del contenedor de desarrollo vía el bind-mount `./backend:/app`, que
+# monta el árbol real del host y no el build context).
+
+# Secretos y configuración local (NUNCA en la imagen, C3)
+.env
+.env.*
+!.env.example
+
+# Control de versiones
+.git
+.gitignore
+
+# Tests (fuera de la imagen de producción, RF-01; siguen corriendo en CI/local)
+tests/
+
+# Entornos virtuales y cachés de Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Herramientas de desarrollo/CI que no son runtime de producción
+scripts/
+loadtest/
+requirements-loadtest.txt
+
+# Documentación local (no es runtime)
+README.md
+TEST_EGRESS_BLOCKED.md
+
+# Artefactos de IDE/OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

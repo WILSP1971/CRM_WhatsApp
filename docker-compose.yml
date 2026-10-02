@@ -39,6 +39,30 @@ services:
     networks:
       - ia_internal
     restart: unless-stopped
+    # SPEC-080 (PLAN-011 F0, RF-02): servicio de datos con huella moderada
+    # pero NO trivial (pgvector + índices + WAL); techo HOLGADO, no ajuste
+    # fino (sin informe de THOR para `db`, que no es STT/IA — se le aplica el
+    # mismo criterio conservador que a los servicios ligeros). Máquina de
+    # referencia: 7.8 GiB RAM / 4 vCPU compartidas con IA/STT.
+    mem_limit: 2g
+    cpus: 2.0
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    # cap_drop ALL: Postgres no necesita NET_ADMIN/SYS_ADMIN/SYS_PTRACE ni
+    # ninguna capability fuera de las que el kernel concede por defecto a un
+    # proceso normal (bind a puerto >1024, abrir archivos propios). Verificado
+    # por análisis estático (sin Docker real disponible): el entrypoint
+    # oficial de la imagen `pgvector/pgvector:pg16` no invoca `setcap`/mknod/
+    # montajes privilegiados.
+    cap_drop:
+      - ALL
+    # SIN read_only: Postgres escribe constantemente a su PGDATA (WAL,
+    # checkpoints, archivos temporales de ordenamiento/vacuum) en
+    # `/var/lib/postgresql/data` (volumen `db_data`, ya `rw`) y puede
+    # necesitar escribir en `/tmp`/`/var/run/postgresql` (socket Unix) dentro
+    # del propio contenedor — un filesystem raíz read-only rompería el
+    # arranque. R-104: esta es una escritura legítima que se preserva.
 
   # Redis para colas de indexado/ingesta y pub/sub WebChat
   # (SPEC-024: en red `ia_internal internal:true` sin egress a internet. Accesible desde
@@ -60,6 +84,27 @@ services:
     networks:
       - ia_internal
     restart: unless-stopped
+    # SPEC-080 (PLAN-011 F0, RF-02): servicio LIGERO, techo holgado (Redis
+    # con `appendonly` sobre colas moderadas típicamente usa decenas/pocos
+    # cientos de MB en este stack; se deja amplio margen).
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    # cap_drop ALL: redis-server no requiere ninguna capability especial
+    # (sin bind a puertos <1024 con root, sin ptrace, sin montajes). Análisis
+    # estático del entrypoint oficial `redis:7-alpine` (sin Docker real).
+    cap_drop:
+      - ALL
+    # read_only: la ÚNICA escritura legítima de Redis es `/data` (volumen
+    # `redis_data`, ya `rw`, por el `appendonly yes`); el resto del
+    # filesystem (binarios, libs) no necesita escritura en runtime. `tmpfs`
+    # para `/tmp` como red de seguridad adicional (no crítica: `BGSAVE`/
+    # `BGREWRITEAOF` escriben dentro de `/data`, ya `rw`).
+    read_only: true
+    tmpfs:
+      - /tmp
 
   # Contenedor de IA (Ollama) en RED INTERNA SIN EGRESS
   ia:
@@ -83,12 +128,43 @@ services:
       - ia_internal
     restart: unless-stopped
     # Nota: sin ports expuesto globalmente, solo en red ia_internal
+    #
+    # PUERTA DURA DE THOR (SPEC-080 RF-03/CE-104, R-103, BLOQUEANTE): este
+    # servicio hace inferencia LLM/embeddings (Ollama, p95 RAG vs RNF-04) en
+    # la máquina CPU-only compartida. NO se fija `mem_limit`/`cpus` en esta
+    # SPEC — queda SIN límite de recursos, deliberadamente, hasta que THOR
+    # entregue un informe explícito que documente que un límite propuesto NO
+    # degrada la latencia RAG p95. Pendiente de un informe de THOR
+    # (coordinado por separado por el orquestador). El resto del hardening
+    # (no-new-privileges/cap_drop/pids_limit) SÍ se aplica: la puerta dura es
+    # SOLO sobre mem_limit/cpus.
+    pids_limit: 2048
+    security_opt:
+      - no-new-privileges:true
+    # cap_drop ALL: Ollama no necesita NET_ADMIN/SYS_ADMIN/SYS_PTRACE; sirve
+    # HTTP e invoca el runtime de inferencia (CPU) sin privilegios de kernel
+    # especiales. Análisis estático del entrypoint oficial (sin Docker real).
+    cap_drop:
+      - ALL
+    # SIN read_only: Ollama escribe al cache de modelos/manifiestos bajo
+    # `/root/.ollama` (volumen `ollama_models`, ya `rw`) y puede requerir
+    # escritura en `/tmp` durante la carga del modelo; un root FS read-only
+    # no está validado por THOR/HAWKEYE en esta SPEC — se deja `rw` para no
+    # arriesgar una regresión de servicio de IA sin evidencia (R-104).
 
   # API FastAPI (stateless)
   api:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      # SPEC-080 (PLAN-011 F0): Dockerfile ahora es multi-stage (`development`
+      # vs `production`); el compose de desarrollo local FIJA `target:
+      # development` explícitamente para conservar el comportamiento actual
+      # (root, `--reload`, `COPY . .` + bind-mount abajo) sin depender de cuál
+      # stage quede último en el Dockerfile. El stage `production` (no-root,
+      # sin `--reload`, sin tests/`.env`, sin bind-mount) se usa en
+      # `docker-compose.prod.yml` (ver ese archivo), nunca aquí.
+      target: development
     container_name: crm_api
     environment:
       # Base de datos — RUNTIME (ADR-008): rol de aplicación NO-superusuario
@@ -135,6 +211,16 @@ services:
       LOGIN_RATE_LIMIT_MAX_ATTEMPTS: ${LOGIN_RATE_LIMIT_MAX_ATTEMPTS:-5}
       LOGIN_RATE_LIMIT_WINDOW_SECONDS: ${LOGIN_RATE_LIMIT_WINDOW_SECONDS:-300}
       LOGIN_RATE_LIMIT_STRICT_REDIS: ${LOGIN_RATE_LIMIT_STRICT_REDIS:-true}
+
+      # Rate-limit GENERAL de API por IP/endpoint (SPEC-081, PLAN-011 F1,
+      # CAPA 2 — coexiste con, NUNCA sustituye, el rate-limit de login de
+      # arriba): mismo Redis (REDIS_URL ya definido más arriba en este
+      # mismo servicio), sin servicio/egress nuevo. Umbrales candidatos
+      # (RF-05), ajustables sin cambio de código; ver razonamiento completo
+      # en app/core/rate_limit_general.py.
+      GENERAL_RATE_LIMIT_DEFAULT: ${GENERAL_RATE_LIMIT_DEFAULT:-60/minute}
+      GENERAL_RATE_LIMIT_RAG_DRAFT: ${GENERAL_RATE_LIMIT_RAG_DRAFT:-20/minute}
+      GENERAL_RATE_LIMIT_WEBHOOK: ${GENERAL_RATE_LIMIT_WEBHOOK:-300/minute}
 
       # CORS: allowlist explícita (nunca "*" con credenciales, ver app/main.py)
       CORS_ORIGINS: ${CORS_ORIGINS:-}
@@ -184,6 +270,30 @@ services:
       - app
       - ia_internal
     restart: unless-stopped
+    # PUERTA DURA DE THOR (SPEC-080 RF-03/CE-104, R-103, BLOQUEANTE,
+    # instrucción explícita del Lead): aunque `api` es en principio stateless,
+    # queda EXPLÍCITAMENTE incluida (junto a `stt_worker`/`ia`) en la puerta
+    # dura de esta SPEC — NO se fija `mem_limit`/`cpus` sin informe de THOR.
+    # Pendiente de un informe de THOR (coordinado por separado por el
+    # orquestador). El resto del hardening SÍ se aplica (no es parte de la
+    # puerta dura).
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    # cap_drop ALL: uvicorn/FastAPI no requiere ninguna capability de kernel
+    # (bind a puerto 8000 >1024, sin red cruda, sin ptrace). Análisis
+    # estático del `CMD`/entrypoint de `backend/Dockerfile` (sin Docker real).
+    cap_drop:
+      - ALL
+    # SIN read_only: en DESARROLLO el bind-mount `./backend:/app` requiere
+    # escritura (hot-reload de `--reload`, `__pycache__`); además este
+    # servicio de desarrollo corre con `target: development` (root, como hoy).
+    # El stage `production` (sin bind-mount, usuario no-root) es candidato
+    # natural a `read_only: true` + `tmpfs: [/tmp]` en un futuro overlay de
+    # `docker-compose.prod.yml` dedicado, pero NO se fija aquí porque
+    # `api`/`stt_worker`/`ia` quedan fuera del ajuste fino de esta SPEC hasta
+    # el informe de THOR (R-103) y porque alteraría el comportamiento del
+    # servicio de desarrollo que esta SPEC debe conservar intacto.
 
   # Worker de ingesta RAG (SPEC-017 RNF-06/R-28): consume la cola Redis
   # persistente (`rag:ingest:*`, `app.core.rag_queue`) fuera del proceso de
@@ -198,6 +308,14 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      # SPEC-080 (PLAN-011 F0): Dockerfile ahora es multi-stage (`development`
+      # vs `production`); el compose de desarrollo local FIJA `target:
+      # development` explícitamente para conservar el comportamiento actual
+      # (root, `--reload`, `COPY . .` + bind-mount abajo) sin depender de cuál
+      # stage quede último en el Dockerfile. El stage `production` (no-root,
+      # sin `--reload`, sin tests/`.env`, sin bind-mount) se usa en
+      # `docker-compose.prod.yml` (ver ese archivo), nunca aquí.
+      target: development
     container_name: crm_rag_worker
     command: ["python", "-m", "app.workers.rag_ingest_worker"]
     environment:
@@ -243,6 +361,20 @@ services:
     networks:
       - ia_internal
     restart: unless-stopped
+    # SPEC-080 (PLAN-011 F0, RF-02): worker Python I/O-bound (espera en cola
+    # Redis, delega el cómputo pesado a `ia`/Ollama por red; NO carga ningún
+    # modelo localmente) — NO forma parte de la puerta dura de THOR (solo
+    # `api`/`stt_worker`/`ia` la tienen). Techo HOLGADO, no ajuste fino.
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # SIN read_only: en desarrollo usa el mismo bind-mount `./backend:/app`
+    # que `api` (hot-reload del código); no se fuerza FS read-only sobre el
+    # servicio de desarrollo.
 
   # Worker de análisis de sentimiento (SPEC-018 RF: "no bloquea la recepción
   # del mensaje"): consume la cola Redis `sentiment:analyze:*`
@@ -256,6 +388,14 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      # SPEC-080 (PLAN-011 F0): Dockerfile ahora es multi-stage (`development`
+      # vs `production`); el compose de desarrollo local FIJA `target:
+      # development` explícitamente para conservar el comportamiento actual
+      # (root, `--reload`, `COPY . .` + bind-mount abajo) sin depender de cuál
+      # stage quede último en el Dockerfile. El stage `production` (no-root,
+      # sin `--reload`, sin tests/`.env`, sin bind-mount) se usa en
+      # `docker-compose.prod.yml` (ver ese archivo), nunca aquí.
+      target: development
     container_name: crm_sentiment_worker
     command: ["python", "-m", "app.workers.sentiment_worker"]
     environment:
@@ -301,6 +441,20 @@ services:
     networks:
       - ia_internal
     restart: unless-stopped
+    # SPEC-080 (PLAN-011 F0, RF-02): worker Python I/O-bound (espera en cola
+    # Redis, delega el cómputo pesado a `ia`/Ollama por red; NO carga ningún
+    # modelo localmente) — NO forma parte de la puerta dura de THOR (solo
+    # `api`/`stt_worker`/`ia` la tienen). Techo HOLGADO, no ajuste fino.
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # SIN read_only: en desarrollo usa el mismo bind-mount `./backend:/app`
+    # que `api` (hot-reload del código); no se fuerza FS read-only sobre el
+    # servicio de desarrollo.
 
   # Worker de ingesta de WhatsApp (SPEC-027, ADR-007/008): consume la cola
   # Redis persistente `wa:inbound` (`app.core.whatsapp_queue`) fuera del
@@ -325,6 +479,14 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      # SPEC-080 (PLAN-011 F0): Dockerfile ahora es multi-stage (`development`
+      # vs `production`); el compose de desarrollo local FIJA `target:
+      # development` explícitamente para conservar el comportamiento actual
+      # (root, `--reload`, `COPY . .` + bind-mount abajo) sin depender de cuál
+      # stage quede último en el Dockerfile. El stage `production` (no-root,
+      # sin `--reload`, sin tests/`.env`, sin bind-mount) se usa en
+      # `docker-compose.prod.yml` (ver ese archivo), nunca aquí.
+      target: development
     container_name: crm_whatsapp_inbound_worker
     command: ["python", "-m", "app.workers.whatsapp_inbound_worker"]
     environment:
@@ -388,6 +550,19 @@ services:
       - app
       - ia_internal
     restart: unless-stopped
+    # SPEC-080 (PLAN-011 F0, RF-02): worker Python I/O-bound (descarga media
+    # de WhatsApp vía HTTP + persiste en `audio_store`; NO carga ningún
+    # modelo de IA/STT localmente) — NO forma parte de la puerta dura de
+    # THOR. Techo HOLGADO, no ajuste fino.
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # SIN read_only: escribe el audio cifrado de notas de voz entrantes en
+    # `audio_store` (volumen ya `rw`, R-104) y usa bind-mount de desarrollo.
 
   # Worker de ingesta de grabaciones (SPEC-037, ADR-007/ADR-010): consume
   # `pbx:recordings:inbound` (encolado por el webhook expuesto vía Caddy,
@@ -403,6 +578,14 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      # SPEC-080 (PLAN-011 F0): Dockerfile ahora es multi-stage (`development`
+      # vs `production`); el compose de desarrollo local FIJA `target:
+      # development` explícitamente para conservar el comportamiento actual
+      # (root, `--reload`, `COPY . .` + bind-mount abajo) sin depender de cuál
+      # stage quede último en el Dockerfile. El stage `production` (no-root,
+      # sin `--reload`, sin tests/`.env`, sin bind-mount) se usa en
+      # `docker-compose.prod.yml` (ver ese archivo), nunca aquí.
+      target: development
     container_name: crm_recording_ingest_worker
     entrypoint: ["/app/app/workers/init_audio_store.sh"]
     command: ["python", "-m", "app.workers.recording_ingest_worker"]
@@ -461,6 +644,19 @@ services:
       - ia_internal
     restart: unless-stopped
     # Nota: SIN red `app`, NUNCA egress (ni siquiera al PBX)
+    # SPEC-080 (PLAN-011 F0, RF-02/RF-05): worker Python I/O-bound (escribe
+    # audio cifrado, resuelve tenant, encola STT; NO ejecuta inferencia
+    # localmente) — NO forma parte de la puerta dura de THOR. Techo HOLGADO.
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # SIN read_only: escribe audio cifrado en `audio_store` (volumen ya
+    # `rw`, R-104) vía `init_audio_store.sh` (entrypoint, RF-05) y usa
+    # bind-mount de desarrollo.
 
   # Worker de STT local (SPEC-035, SPEC-038, ADR-009): transcripción de audio
   # 100% local con `faster-whisper` (large-v3, fallback medium).
@@ -475,6 +671,14 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      # SPEC-080 (PLAN-011 F0): Dockerfile ahora es multi-stage (`development`
+      # vs `production`); el compose de desarrollo local FIJA `target:
+      # development` explícitamente para conservar el comportamiento actual
+      # (root, `--reload`, `COPY . .` + bind-mount abajo) sin depender de cuál
+      # stage quede último en el Dockerfile. El stage `production` (no-root,
+      # sin `--reload`, sin tests/`.env`, sin bind-mount) se usa en
+      # `docker-compose.prod.yml` (ver ese archivo), nunca aquí.
+      target: development
     container_name: crm_stt_worker
     entrypoint: ["/app/app/workers/init_audio_store.sh"]
     command: ["python", "-m", "app.workers.stt_worker"]
@@ -539,6 +743,26 @@ services:
       - ia_internal
     restart: unless-stopped
     # Nota: SIN red `app`, NUNCA salida a internet
+    #
+    # PUERTA DURA DE THOR (SPEC-080 RF-03/CE-104, R-103, BLOQUEANTE): este
+    # servicio ejecuta STT local con `faster-whisper` (RTF vs RNF-42) en la
+    # máquina CPU-only compartida. NO se fija `mem_limit`/`cpus` en esta SPEC
+    # — queda SIN límite de recursos, deliberadamente, hasta que THOR entregue
+    # un informe explícito que documente que un límite propuesto NO degrada
+    # el RTF. Pendiente de un informe de THOR (coordinado por separado por el
+    # orquestador). El resto del hardening SÍ se aplica.
+    pids_limit: 1024
+    security_opt:
+      - no-new-privileges:true
+    # cap_drop ALL: faster-whisper/CTranslate2 corre inferencia en espacio de
+    # usuario (CPU), sin necesitar NET_ADMIN/SYS_ADMIN/SYS_PTRACE. Análisis
+    # estático del `CMD`/entrypoint (sin Docker real).
+    cap_drop:
+      - ALL
+    # SIN read_only: escribe audio cifrado en `audio_store` (volumen ya
+    # `rw`) vía `init_audio_store.sh` (entrypoint, RF-05) y puede necesitar
+    # `/tmp`/cache de CTranslate2 durante la carga del modelo; no validado
+    # por THOR/HAWKEYE en esta SPEC — se deja `rw` (R-104).
 
   # Worker de TTS local (Entregable #6, SPEC-067/069, ADR-014): síntesis de
   # voz 100% local con Piper TTS 1.8.0 (`es_ES-davefx-medium`, CPU-only,
@@ -562,6 +786,14 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      # SPEC-080 (PLAN-011 F0): Dockerfile ahora es multi-stage (`development`
+      # vs `production`); el compose de desarrollo local FIJA `target:
+      # development` explícitamente para conservar el comportamiento actual
+      # (root, `--reload`, `COPY . .` + bind-mount abajo) sin depender de cuál
+      # stage quede último en el Dockerfile. El stage `production` (no-root,
+      # sin `--reload`, sin tests/`.env`, sin bind-mount) se usa en
+      # `docker-compose.prod.yml` (ver ese archivo), nunca aquí.
+      target: development
     container_name: crm_tts_worker
     entrypoint: ["/app/app/workers/init_audio_store.sh"]
     command: ["python", "-m", "app.workers.tts_worker"]
@@ -632,6 +864,32 @@ services:
     restart: unless-stopped
     # Nota: SIN red `app`, NUNCA salida a internet — la subida del clip la
     # hace EXCLUSIVAMENTE `wa_send_worker` (abajo), vía `wa:outbound`.
+    #
+    # SPEC-080 (PLAN-011 F0, RF-02/RF-05): ejecuta inferencia LOCAL real
+    # (Piper TTS, CPU-only) + `ffmpeg` para transcodificar — NO es un worker
+    # puramente I/O-bound como rag/sentiment/whatsapp_inbound. NO está en la
+    # lista explícita de la puerta dura del Lead (`api`/`stt_worker`/`ia`),
+    # pero por prudencia (RNF-NO-ASFIXIA, misma CPU compartida) se le aplica
+    # un techo MUY GENEROSO — el doble o más de lo que la concurrencia
+    # configurada (`RESPUESTA_TTS_CONCURRENCIA=1`) necesitaría para un clip
+    # corto (<=420 caracteres, RESPUESTA_TTS_MAX_CHARS) — en vez de omitirlo,
+    # documentado explícitamente como TECHO DE SEGURIDAD, no ajuste fino.
+    # Si THOR concluyera que incluso este techo generoso es insuficiente o
+    # arriesgado, deberá revisarse en un informe posterior (fuera de esta
+    # SPEC, igual que api/stt_worker/ia).
+    mem_limit: 3g
+    cpus: 3.0
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    # cap_drop ALL: Piper (ONNX/CPU) y ffmpeg no requieren capabilities de
+    # kernel. Análisis estático (sin Docker real).
+    cap_drop:
+      - ALL
+    # SIN read_only: escribe el clip TTS cifrado en `audio_store` (volumen ya
+    # `rw`) vía `init_audio_store.sh` (entrypoint, RF-05) y usa bind-mount de
+    # desarrollo; `ffmpeg` puede requerir `/tmp` para archivos intermedios de
+    # transcodificación (no validado por THOR/HAWKEYE en esta SPEC, R-104).
 
   # Worker de ENVÍO saliente por WhatsApp (SPEC-029, ADR-006): consume la
   # cola Redis persistente `wa:outbound` (`app.core.whatsapp_outbound_queue`)
@@ -652,6 +910,14 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      # SPEC-080 (PLAN-011 F0): Dockerfile ahora es multi-stage (`development`
+      # vs `production`); el compose de desarrollo local FIJA `target:
+      # development` explícitamente para conservar el comportamiento actual
+      # (root, `--reload`, `COPY . .` + bind-mount abajo) sin depender de cuál
+      # stage quede último en el Dockerfile. El stage `production` (no-root,
+      # sin `--reload`, sin tests/`.env`, sin bind-mount) se usa en
+      # `docker-compose.prod.yml` (ver ese archivo), nunca aquí.
+      target: development
     container_name: crm_wa_send_worker
     command: ["python", "-m", "app.workers.wa_send_worker"]
     environment:
@@ -714,6 +980,19 @@ services:
       - app
       - ia_internal
     restart: unless-stopped
+    # SPEC-080 (PLAN-011 F0, RF-02): worker Python I/O-bound (lee clip TTS ya
+    # generado, hace HTTP egress acotado a `graph.facebook.com`; NO ejecuta
+    # inferencia localmente) — NO forma parte de la puerta dura de THOR.
+    # Techo HOLGADO, no ajuste fino.
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # SIN read_only: lee/purga el clip TTS de `audio_store` (volumen ya
+    # `rw`, R-104) y usa bind-mount de desarrollo.
 
   # Reverse proxy TLS (SPEC-035, ADR-010): expone SOLO el path del webhook de
   # grabaciones (/webhooks/pbx/recordings). Nunca STT/IA ni BD.
@@ -742,6 +1021,27 @@ services:
         condition: service_healthy
     restart: unless-stopped
     # Nota: Caddy accede solo a `api` (red `app`), nunca a `ia_internal`
+    # SPEC-080 (PLAN-011 F0, RF-02): servicio LIGERO (reverse proxy TLS),
+    # techo holgado.
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    # cap_drop ALL salvo NET_BIND_SERVICE: la imagen oficial `caddy:2-alpine`
+    # corre como root y necesita bindear los puertos privilegiados 80/443
+    # (`CADDY_HTTP_PORT`/`CADDY_HTTPS_PORT`, por defecto 80/443). Sin esta
+    # capability explícita, `cap_drop: ALL` rompería el bind incluso siendo
+    # root dentro del contenedor (análisis estático del entrypoint oficial,
+    # sin Docker real). Ninguna otra capability (NET_ADMIN/SYS_ADMIN/etc.) es
+    # necesaria.
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    # SIN read_only: Caddy gestiona certificados ACME/autofirmados en runtime
+    # bajo `/data`/`/config` (volúmenes `caddy_data`/`caddy_config`, ya `rw`)
+    # y puede necesitar `/tmp` durante la renovación/emisión de certificados.
 
   # Worker de descarga de grabaciones (SPEC-035, SPEC-037, ADR-010).
   # (ENTREGADO INERTE — solo se levanta si PBX_EXTERNAL_ENABLED=true y profiles activos)
@@ -763,6 +1063,14 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      # SPEC-080 (PLAN-011 F0): Dockerfile ahora es multi-stage (`development`
+      # vs `production`); el compose de desarrollo local FIJA `target:
+      # development` explícitamente para conservar el comportamiento actual
+      # (root, `--reload`, `COPY . .` + bind-mount abajo) sin depender de cuál
+      # stage quede último en el Dockerfile. El stage `production` (no-root,
+      # sin `--reload`, sin tests/`.env`, sin bind-mount) se usa en
+      # `docker-compose.prod.yml` (ver ese archivo), nunca aquí.
+      target: development
     container_name: crm_recording_fetch_worker
     command: ["python", "-m", "app.workers.recording_fetch_worker"]
     environment:
@@ -807,6 +1115,18 @@ services:
     profiles: ["pbx-externo"]
     restart: unless-stopped
     # Nota: accesible solo si PBX_EXTERNAL_ENABLED=true y `--profile pbx-externo` está activo
+    # SPEC-080 (PLAN-011 F0, RF-02): worker Python I/O-bound (descarga desde
+    # PBX externo vía HTTP; NO ejecuta inferencia). ENTREGADO INERTE por
+    # defecto (perfil `pbx-externo`). Techo HOLGADO, no ajuste fino.
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # SIN read_only: usa bind-mount de desarrollo (sin escritura propia a
+    # disco en runtime más allá de logs a stdout).
 
   # ========================================================================
   # VoiceBot en vivo — Entregable #5, F0 (SPEC-044, ADR-011/ADR-012)
@@ -860,6 +1180,16 @@ services:
       - ia_internal
     restart: unless-stopped
     # Nota: SIN red `app`, NUNCA egress
+    # SPEC-080 (PLAN-011 F0, RF-02): ENTREGADO INERTE (placeholder `python -c
+    # print(...)` que termina de inmediato, SPEC-047 lo implementa). Techo
+    # ligero generoso, sin fricción para el placeholder.
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   # Voice TTS en vivo (SPEC-044, SPEC-048): síntesis de voz local con Piper
   # (voces es-CO) o modo bajo-cómputo (banco de audios pregrabados).
@@ -901,6 +1231,16 @@ services:
       - ia_internal
     restart: unless-stopped
     # Nota: SIN red `app`, NUNCA egress
+    # SPEC-080 (PLAN-011 F0, RF-02): ENTREGADO INERTE (placeholder `python -c
+    # print(...)` que termina de inmediato, SPEC-048 lo implementa). Techo
+    # ligero generoso, sin fricción para el placeholder.
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   # NLU de intent (clasificador de intención contra catálogo cerrado, SPEC-045 F1)
   # Red: `ia_internal internal:true` sin egress. Entrega clasificación al
@@ -956,6 +1296,16 @@ services:
       - ia_internal
     restart: unless-stopped
     # Nota: en `app` para egress potencial; `ia_internal` para hablar con voz/NLU
+    # SPEC-080 (PLAN-011 F0, RF-02): ENTREGADO INERTE (placeholder `python -c
+    # print(...)` que termina de inmediato, SPEC-046 lo implementa). Techo
+    # ligero generoso, sin fricción para el placeholder.
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   # ========================================================================
   # Observabilidad — Prometheus + Grafana + Alertmanager (SPEC-077, PLAN-010 F0)
@@ -999,6 +1349,23 @@ services:
     restart: unless-stopped
     # Nota: SIN red `app`, SIN `ports:` publicado — solo accesible dentro de
     # `ia_internal` (RNF-NO-EGRESS, R-101; CE-100 UI no expuesto sin protección).
+    # SPEC-080 (PLAN-011 F0, RF-02): servicio LIGERO (scrape + TSDB de
+    # métricas, PLAN-010), techo holgado. Máquina de referencia: 7.8 GiB
+    # RAM / 4 vCPU compartidas con IA/STT.
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # read_only: la ÚNICA escritura legítima de Prometheus es su TSDB bajo
+    # `/prometheus` (volumen `prometheus_data`, ya `rw`); config/rules ya
+    # montadas `:ro`. `tmpfs` para `/tmp` por si alguna operación interna lo
+    # requiere (compactación, snapshots vía `--web.enable-lifecycle`).
+    read_only: true
+    tmpfs:
+      - /tmp
 
   # Alertmanager: SOLO el servicio BASE en esta SPEC (config mínima sin
   # receivers externos, `observability/alertmanager/alertmanager.yml`).
@@ -1023,6 +1390,21 @@ services:
     restart: unless-stopped
     # Nota: SIN red `app`, SIN `ports:` publicado, SIN receivers externos
     # (Q1-sub PLAN-010: alertas visibles solo en Grafana/Alertmanager).
+    # SPEC-080 (PLAN-011 F0, RF-02): servicio LIGERO (estado de silencios/
+    # notificaciones, PLAN-010), techo holgado.
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # read_only: la ÚNICA escritura legítima es `/alertmanager` (volumen
+    # `alertmanager_data`, ya `rw`); config ya montada `:ro`. `tmpfs` para
+    # `/tmp` como red de seguridad adicional.
+    read_only: true
+    tmpfs:
+      - /tmp
 
   # Grafana: ÚNICO UI de este bloque con auth obligatoria (RF-04, C3) vía la
   # env var OFICIAL de la imagen (`GF_SECURITY_ADMIN_PASSWORD`/
@@ -1059,6 +1441,23 @@ services:
     # Nota: SIN red `app`, SIN `ports:` publicado al host en esta SPEC — el
     # acceso al UI (RF-04) se resuelve vía proxy/túnel interno existente
     # (Caddy/SSH) o `docker compose exec`, no por exposición directa pública.
+    # SPEC-080 (PLAN-011 F0, RF-02): servicio LIGERO (UI + sqlite de sesiones,
+    # PLAN-010), techo holgado.
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # SIN read_only: Grafana (a diferencia de Prometheus/Alertmanager) suele
+    # necesitar escribir, además de `/var/lib/grafana` (ya `rw`), rutas
+    # internas adicionales (plugins, cachés de sesión/CSRF) que no están
+    # inventariadas exhaustivamente sin un arranque real — aplicar
+    # `read_only` sin verificación empírica (sin Docker disponible en este
+    # entorno) arriesgaría romper el único UI con auth de este bloque (R-104).
+    # Queda como candidato a `read_only: true` + `tmpfs` cuando HAWKEYE pueda
+    # validarlo con un arranque real (fuera de esta SPEC).
 
 networks:
   # Red de TRANSPORTE (SPEC-024 F0, SPEC-029 F4): SOLO `api` (y `wa_send_worker` en SPEC-029)

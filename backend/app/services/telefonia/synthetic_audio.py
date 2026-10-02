@@ -33,7 +33,9 @@ SAMPLE_WIDTH_BYTES = 2  # PCM 16-bit
 CHANNELS = 1  # mono
 
 
-def tone_samples(*, duration_seconds: float, frequency_hz: float, amplitude: float = 0.2) -> bytes:
+def tone_samples(
+    *, duration_seconds: float, frequency_hz: float, amplitude: float = 0.2
+) -> bytes:
     """Genera `duration_seconds` de una onda senoidal pura a `frequency_hz`,
     codificada como PCM 16-bit little-endian — sin `numpy` (no disponible en
     este sandbox), solo `math`/`struct` de la librería estándar."""
@@ -41,7 +43,9 @@ def tone_samples(*, duration_seconds: float, frequency_hz: float, amplitude: flo
     max_amplitude = int(32767 * amplitude)
     frames = bytearray()
     for i in range(n_samples):
-        value = int(max_amplitude * math.sin(2 * math.pi * frequency_hz * i / SAMPLE_RATE_HZ))
+        value = int(
+            max_amplitude * math.sin(2 * math.pi * frequency_hz * i / SAMPLE_RATE_HZ)
+        )
         frames += struct.pack("<h", value)
     return bytes(frames)
 
@@ -69,6 +73,9 @@ def is_valid_wav(audio_bytes: bytes) -> bool:
     parseable) con el sample rate/canales esperados."""
     try:
         with wave.open(io.BytesIO(audio_bytes), "rb") as wav_file:
-            return wav_file.getnchannels() == CHANNELS and wav_file.getframerate() == SAMPLE_RATE_HZ
+            return (
+                wav_file.getnchannels() == CHANNELS
+                and wav_file.getframerate() == SAMPLE_RATE_HZ
+            )
     except (wave.Error, EOFError):
         return False

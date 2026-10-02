@@ -257,9 +257,7 @@ def test_calls_links_optionally_to_conversation_and_contact(
 
     with postgres_engine.connect() as conn:
         row = conn.execute(
-            sa.text(
-                "SELECT conversation_id, contact_id FROM calls WHERE id = :id"
-            ),
+            sa.text("SELECT conversation_id, contact_id FROM calls WHERE id = :id"),
             {"id": call_row_id},
         ).fetchone()
     assert row.conversation_id == conversation_id
@@ -281,9 +279,7 @@ def test_calls_conversation_and_contact_are_optional(
 
     with postgres_engine.connect() as conn:
         row = conn.execute(
-            sa.text(
-                "SELECT conversation_id, contact_id FROM calls WHERE id = :id"
-            ),
+            sa.text("SELECT conversation_id, contact_id FROM calls WHERE id = :id"),
             {"id": call_row_id},
         ).fetchone()
     assert row.conversation_id is None
@@ -422,8 +418,7 @@ def test_call_transcripts_cross_tenant_isolation(
 
     assert "secreto tenant A" in visible_texts
     assert "secreto tenant B" not in visible_texts, (
-        "FUGA CROSS-TENANT: el tenant A puede leer la transcripción del "
-        "tenant B"
+        "FUGA CROSS-TENANT: el tenant A puede leer la transcripción del " "tenant B"
     )
 
 
@@ -510,9 +505,7 @@ def test_call_transcripts_soft_delete_no_physical_delete(
             {"id": transcript_id},
         ).fetchone()
         vigentes = conn.execute(
-            sa.text(
-                "SELECT id FROM call_transcripts WHERE id = :id AND activo = true"
-            ),
+            sa.text("SELECT id FROM call_transcripts WHERE id = :id AND activo = true"),
             {"id": transcript_id},
         ).fetchall()
 

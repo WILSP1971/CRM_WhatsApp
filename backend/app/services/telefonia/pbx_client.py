@@ -81,9 +81,7 @@ def _validate_recording_url(recording_url: str) -> None:
         )
 
 
-def download_recording(
-    *, recording_url: str, timeout_seconds: float = 30.0
-) -> bytes:
+def download_recording(*, recording_url: str, timeout_seconds: float = 30.0) -> bytes:
     """Descarga el fichero de audio desde el PBX externo, EGRESS ACOTADO
     (ADR-010): valida el host exacto antes de la petición, autentica con
     `PBX_EXTERNAL_AUTH_TOKEN` (Bearer) si está configurado, y jamás sigue
@@ -97,9 +95,7 @@ def download_recording(
         headers["Authorization"] = f"Bearer {settings.pbx_external_auth_token}"
 
     try:
-        with httpx.Client(
-            timeout=timeout_seconds, follow_redirects=False
-        ) as client:
+        with httpx.Client(timeout=timeout_seconds, follow_redirects=False) as client:
             response = client.get(recording_url, headers=headers)
             response.raise_for_status()
             return response.content

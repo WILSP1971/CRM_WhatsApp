@@ -57,7 +57,11 @@ from app.core.stt_queue import enqueue_stt_job
 from app.core.worker_resilience import resilient_worker_loop
 from app.db.session import SessionLocal, set_tenant_session
 from app.models.call import Call
-from app.services.telefonia.audio_store import AudioStoreError, build_audio_ref, store_audio
+from app.services.telefonia.audio_store import (
+    AudioStoreError,
+    build_audio_ref,
+    store_audio,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -284,9 +288,7 @@ async def run_worker_loop(
     async def _iteration() -> None:
         await drain_one(redis_client, timeout_seconds=block_timeout_seconds)
 
-    logger.info(
-        "recording_ingest_worker_started", queue=RECORDING_INBOUND_QUEUE_KEY
-    )
+    logger.info("recording_ingest_worker_started", queue=RECORDING_INBOUND_QUEUE_KEY)
     await resilient_worker_loop(
         _iteration, stop_event=stop_event, worker_name="recording_ingest_worker"
     )

@@ -1,0 +1,43 @@
+# docker-compose.prod.yml — Overlay de PRODUCCIÓN (SPEC-080, PLAN-011 F0)
+#
+# Este archivo NO es un compose independiente: es un OVERLAY que se aplica
+# JUNTO a `docker-compose.yml` (nunca solo), sustituyendo únicamente lo que
+# distingue producción de desarrollo para el servicio `api`:
+#   - `target: production` (en vez de `development`): usuario no-root, sin
+#     `--reload`, sin tests/`.env`, sin `COPY . .` (ver `backend/Dockerfile`).
+#   - `volumes: []`: elimina el bind-mount de desarrollo `./backend:/app`
+#     (RF-01) — el código vive DENTRO de la imagen construida, no en el host.
+#
+# Uso (documentado, NO se ejecuta automáticamente — C6, cambio sensible):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api
+#
+# El resto de servicios (db, redis, ia, workers, caddy, observabilidad) se
+# siguen tomando de `docker-compose.yml` sin overlay en esta SPEC: aplicar el
+# mismo patrón (`target: production` + sin bind-mount) a los demás
+# `build:` de workers es extensión mecánica directa de este overlay (mismo
+# Dockerfile multi-stage) y queda disponible para cuando el Lead apruebe
+# desplegar producción real (C6) — no se amplía aquí para mantener el
+# alcance de SPEC-080 acotado y el diff de `docker-compose.yml` mínimo y
+# coordinable con SPEC-083 (que edita las mismas líneas `ports:`).
+#
+# IMPORTANTE (C6): este archivo es un ARTEFACTO VERSIONADO, no se aplica por
+# sí mismo a ningún entorno. Aplicarlo contra un host real requiere
+# aprobación explícita del Lead + notificación (CHECKPOINT C6, SPEC-080 §
+# "Notas de seguridad").
+
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    # Sin bind-mount de desarrollo (RF-01): el código de producción es el que
+    # quedó COPIADO (selectivamente) dentro de la imagen en el stage
+    # `production` del Dockerfile, no el árbol del host. NOTA: Compose
+    # fusiona (concatena) listas por defecto entre archivos `-f`, así que un
+    # simple `volumes: []` NO elimina el bind-mount heredado de
+    # `docker-compose.yml` (verificado con `docker compose config`, sin
+    # Docker real) — se requiere el tag `!reset` (Compose Specification,
+    # soportado por Docker Compose v2.24+) para forzar el reemplazo en vez
+    # de la fusión.
+    volumes: !reset []
