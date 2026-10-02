@@ -1,0 +1,29 @@
+# CVE Exception List for pip-audit (SPEC-082, RF-05)
+# ===================================================
+# Format: CVE-ID | Package | Reason | Decision Date | Review Date
+#
+# POLICY (SPEC-082, RFC-05):
+# - Exceptions are NEVER automatic or global ("ignore all HIGH/CRITICAL")
+# - Each exception requires: CVE ID, package name, justification, and decision date
+# - Decision to add an exception is made by the LEAD, never the agent
+# - Exceptions are auditable and tracked in version control
+# - Each exception must include a review date (when it should be re-evaluated)
+# - NO CONFIDENTIAL DATA in this file (only CVE IDs, package names, and generic reasons)
+#
+# HOW TO ADD AN EXCEPTION (requires LEAD approval):
+#   1. Identify the CVE ID (e.g., PYSEC-2024-48 for black 23.12.1)
+#   2. Verify it's in the pip-audit report: `pip-audit --desc --skip-editable`
+#   3. Document package name, business justification, decision date, and review date
+#   4. Uncomment/add the line below (following format exactly)
+#   5. The CI workflow will parse this file and pass --ignore-vuln flags to pip-audit
+#   6. Create a commit with message: "chore(security): exception CVE-XXXX (reason, review YYYY-MM-DD)"
+#
+# CURRENT EXCEPTIONS:
+# (none — list is empty by design; any future exception requires LEAD approval)
+#
+# EXAMPLES (DO NOT UNCOMMENT — for reference only):
+# PYSEC-2024-48 | black | No exposure: dev-only linting dependency, CI use only | 2026-10-02 | 2026-11-02
+# PYSEC-2026-2132 | click | Patched in 8.3.3, upgrade scheduled for SPEC-088 | 2026-10-02 | 2026-10-15
+#
+# Format validation: pipe-separated fields (5 total), no extra pipes
+# Fields: CVE_ID | PACKAGE | REASON | DECISION_DATE | REVIEW_DATE

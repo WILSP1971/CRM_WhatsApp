@@ -73,6 +73,54 @@ jobs:
           bash backend/check-externos-backend.sh backend/
           echo "✓ External API check passed (CE-21, cero inferencia externa)"
 
+      - name: Security audit with pip-audit (SPEC-082, RF-01 — gate BLOQUEANTE en HIGH/CRITICAL)
+        run: |
+          pip install --quiet pip-audit
+          # Build ignore flags from .pip-audit-ignore file (SPEC-082, RF-05)
+          IGNORE_FLAGS=""
+          if [ -f .pip-audit-ignore ]; then
+            while IFS='|' read -r cve package reason date review; do
+              # Skip comments and empty lines
+              [[ "$cve" =~ ^# ]] && continue
+              [[ -z "$cve" ]] && continue
+              # Trim whitespace
+              cve=$(echo "$cve" | xargs)
+              IGNORE_FLAGS="$IGNORE_FLAGS --ignore-vuln $cve"
+            done < .pip-audit-ignore
+          fi
+
+          # Run pip-audit with ignore flags (if any exceptions are present)
+          # Exit code 1 indicates vulnerabilities found; 0 means clean or all ignored
+          eval "pip-audit --desc --skip-editable $IGNORE_FLAGS" > pip-audit-report.txt 2>&1
+          AUDIT_EXIT=$?
+
+          cat pip-audit-report.txt
+
+          # Gate logic: pip-audit exits with 1 if unignored vulnerabilities found
+          # The --ignore-vuln flags are applied, so only truly unignored vulns cause exit 1
+          if [ $AUDIT_EXIT -ne 0 ]; then
+            echo "::error::pip-audit found unignored vulnerabilities (SPEC-082, RF-01, RFC-05)"
+            exit 1
+          fi
+          echo "✓ pip-audit passed (no unignored vulnerabilities found in dependencies)"
+
+      - name: Security scanning with bandit (SAST Python, SPEC-082, RF-01 — gate BLOQUEANTE en HIGH)
+        run: |
+          pip install --quiet bandit
+          # Run bandit with severity/confidence filters
+          # -ll = confidence HIGH, -ll severity HIGH (bandit counts from MEDIUM/HIGH/CRITICAL)
+          # Format: text output for readability in CI logs
+          bandit -r backend/app -ll -f txt 2>&1 | tee bandit-report.txt
+          BANDIT_EXIT=$?
+
+          # bandit exit code: 0 if clean, 1 if issues found at the requested severity/confidence
+          # With -ll (severity high, confidence high), exit 1 means HIGH/HIGH issues exist
+          if [ $BANDIT_EXIT -ne 0 ]; then
+            echo "::error::bandit found HIGH severity security issues (SPEC-082, RF-01)"
+            exit 1
+          fi
+          echo "✓ bandit security scan passed (no HIGH severity issues found)"
+
       - name: Validate docker-compose.yml syntax
         run: |
           docker compose -f docker-compose.yml config > /dev/null

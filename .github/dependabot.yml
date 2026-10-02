@@ -1,0 +1,75 @@
+version: 2
+updates:
+  # Backend Python dependencies (SPEC-082, RFC-03)
+  # Check for updates to backend/requirements.txt weekly
+  # Opens PRs automatically for each vulnerable/outdated package
+  - package-ecosystem: 'pip'
+    directory: '/backend'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+      time: '03:00'
+      timezone: 'UTC'
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: 'chore(deps): '
+      include: 'scope'
+    reviewers:
+      - 'ingenierodesarrollador@clinicacampbell.com.co'
+    labels:
+      - 'dependencies'
+      - 'backend'
+    pull-request-branch-name:
+      separator: '/'
+    allow:
+      - dependency-type: 'all'
+    ignore: []
+    # Note (SPEC-082, RF-05): No exceptions hardcoded here. CVE exceptions
+    # (if needed) go in the .pip-audit-ignore file with justification + date.
+    # Dependabot PRs must pass the gate (pip-audit/bandit BLOQUEANTE en CI).
+
+  # Frontend npm dependencies (SPEC-082, RFC-03)
+  # Check for updates to package.json weekly
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+      time: '03:00'
+      timezone: 'UTC'
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: 'chore(deps): '
+      include: 'scope'
+    reviewers:
+      - 'ingenierodesarrollador@clinicacampbell.com.co'
+    labels:
+      - 'dependencies'
+      - 'frontend'
+    pull-request-branch-name:
+      separator: '/'
+    allow:
+      - dependency-type: 'all'
+    ignore: []
+    # Note (SPEC-082, RF-05): CVE exceptions (if needed) are managed via
+    # npm audit's native override mechanism or a .npmauditignore file.
+    # Dependabot PRs must pass the gate (npm audit BLOQUEANTE en CI).
+
+  # GitHub Actions (optional but recommended, SPEC-082 RF-03)
+  # Keep Actions up to date for security and performance
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+      time: '03:00'
+      timezone: 'UTC'
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'ci(actions): '
+      include: 'scope'
+    labels:
+      - 'ci'
+      - 'github-actions'
+    pull-request-branch-name:
+      separator: '/'
