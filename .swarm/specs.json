@@ -1,21 +1,21 @@
 {
   "proyecto": "CRM_WhatsApp — OmniCore AI",
   "clasificacion": "SENSIBLE",
-  "actualizado": "2026-10-01T00:00:00-05:00",
+  "actualizado": "2026-10-02T00:00:00-05:00",
   "contadores": {
-    "next_plan": 10,
-    "next_spec": 77,
+    "next_plan": 11,
+    "next_spec": 80,
     "next_adr": 16,
-    "total_specs": 76,
+    "total_specs": 79,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 1,
+      "APROBADA": 3,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 34,
+      "CERRADA": 35,
       "ARCHIVADA": 8
     },
-    "actualizado": "2026-10-01"
+    "actualizado": "2026-10-02"
   },
   "planes": [
     {
@@ -207,6 +207,21 @@
         "ADR-015"
       ],
       "nota": "Caso de uso confirmado: grupo de clinicas multi-sede (NO SaaS externo). Decisiones vinculantes del Lead: alta administrativa interna (no autoregistro publico), tenant se crea SIN canal WhatsApp (se conecta despues), activacion inmediata (sin verificacion email), binario sin planes/billing. Decision arquitectonica de DOCTOR STRANGE (ADR-015): admin de plataforma = tabla platform_admins separada, FUERA del modelo tenant-scoped (no en TENANT_SCOPED_TABLES), en vez de un rol especial dentro de users (que forzaria bypass/ampliacion de RLS). Fila raiz tenants con privilegio elevado acotado (patron seed); primer user admin creado bajo RLS con app.tenant_id fijado, nunca bypass owner. Atomicidad tenant+admin en una sola transaccion. UI en la SPA queda OUT por defecto (endpoint+CLI bastan). Riesgo top: R-92 superficie de abuso del endpoint (quien puede invocarlo)."
+    },
+    {
+      "id": "PLAN-010",
+      "titulo": "Observabilidad real (Prometheus+Grafana+Alertmanager as-code, sin egress nuevo) sobre /metrics ya existente; backups automatizados quedan DIFERIDOS a fase posterior (decisiones Q2/Q3 del Lead ya registradas en PLAN-010 S13 para retomar sin reabrir)",
+      "archivo": ".swarm/PLAN-010.md",
+      "estado": "APROBADO",
+      "origen": "prompt-lab/prompts/PROMPT-010-OBSERVABILIDAD-BACKUPS.md",
+      "sensible": true,
+      "specs_propuestas": [
+        "SPEC-077",
+        "SPEC-078",
+        "SPEC-079"
+      ],
+      "adrs_recomendados": [],
+      "nota": "Fase B de 4 (tras PLAN-009 onboarding multi-tenant). Decisiones vinculantes del Lead: stack Prometheus+Grafana+Alertmanager (sin Loki), alertas solo visibles en Grafana/Alertmanager sin push externo (no se reusa el bridge de Telegram). Invariante intocable: ninguna metrica de /metrics lleva tenant_id como label (fijado en metrics.py, SPEC-022) - ninguna SPEC de esta fase puede relajarla. Sin ADR nuevo: el stack vive en red ia_internal (internal:true), sin egress a internet. Backups automatizados (Postgres+audio_store cifrado, destino LAN/NAS interna, Q2/Q3 ya respondidas) quedan DIFERIDOS por instruccion directa del Lead (2026-10-02, posterior a la aprobacion de las 4 decisiones vinculantes) - documentados en PLAN-010 S13 para retomar como fase separada (futuro PLAN-011) sin volver a preguntar."
     }
   ],
   "specs": [
@@ -1795,6 +1810,65 @@
         "SPEC-073",
         "SPEC-074",
         "SPEC-075"
+      ]
+    },
+    {
+      "id": "SPEC-077",
+      "titulo": "Stack de observabilidad as-code (Prometheus+Grafana+Alertmanager) en ia_internal sin egress, scrape de /metrics, dashboards-as-code",
+      "archivo": ".swarm/specs/SPEC-077.md",
+      "estado": "CERRADA",
+      "fase": "F0",
+      "plan": "PLAN-010",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "QUICKSILVER",
+        "THOR",
+        "BLACK WIDOW",
+        "HAWKEYE"
+      ],
+      "depende_de": []
+    },
+    {
+      "id": "SPEC-078",
+      "titulo": "Reglas de alerta-as-code + Alertmanager sin receiver externo, al menos una alerta que dispara en prueba controlada",
+      "archivo": ".swarm/specs/SPEC-078.md",
+      "estado": "APROBADA",
+      "fase": "F1",
+      "plan": "PLAN-010",
+      "sensible": true,
+      "responsable": "CAPTAIN AMERICA",
+      "revisan": [
+        "BLACK PANTHER",
+        "THOR",
+        "HAWKEYE",
+        "QUICKSILVER",
+        "BLACK WIDOW"
+      ],
+      "depende_de": [
+        "SPEC-077"
+      ]
+    },
+    {
+      "id": "SPEC-079",
+      "titulo": "Pruebas+seguridad+no-regresion+docs del stack de observabilidad (cierra PLAN-010): auditoria cero tenant_id/PII, egress verde, secretos, cero regresion, runbook",
+      "archivo": ".swarm/specs/SPEC-079.md",
+      "estado": "APROBADA",
+      "fase": "F2",
+      "plan": "PLAN-010",
+      "sensible": true,
+      "responsable": "HAWKEYE",
+      "revisan": [
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "QUICKSILVER",
+        "BLACK PANTHER",
+        "THOR"
+      ],
+      "depende_de": [
+        "SPEC-077",
+        "SPEC-078"
       ]
     }
   ],

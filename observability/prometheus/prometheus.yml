@@ -1,0 +1,56 @@
+# Prometheus — scrape config versionado (SPEC-077, PLAN-010 F0)
+#
+# Montado READ-ONLY en el servicio `prometheus` de docker-compose.yml, dentro
+# de la red `ia_internal` (internal: true, sin egress a internet). El único
+# target es `api:8000/metrics` (backend/app/main.py:265 ->
+# backend/app/core/metrics.py, SPEC-022), consultado por red interna.
+#
+# INVARIANTE DURA (PLAN-010 §3.3, RNF-AISLAMIENTO-METRICAS, R-98): ninguna
+# serie/label de este scrape config lleva `tenant_id` ni PII. No se añade
+# `relabel_configs`/`metric_relabel_configs` que inyecten labels nuevos — se
+# consume `/metrics` tal cual lo expone `metrics.py` (que YA garantiza esa
+# invariante en origen). Prohibido añadir aquí cualquier relabeling que
+# reintroduzca `tenant_id`.
+#
+# Alcance de esta SPEC (077): solo scrape + target UP. Las reglas de alerta
+# (`rule_files`) y el enrutado a Alertmanager se definen en SPEC-078 (F1) —
+# aquí se deja Alertmanager referenciado como sink de alerting pero SIN
+# reglas cargadas todavía.
+
+global:
+  # Intervalo conservador para un stack de un solo backend monolítico (api).
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Alertmanager: el servicio ya vive en `ia_internal` (SPEC-077). Las reglas
+# de alerta-as-code (rule_files) y el enrutado/receivers son SPEC-078 — esta
+# SPEC solo registra el sink, sin reglas que evaluar todavía.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+# rule_files: intencionalmente vacío en esta SPEC (SPEC-078 añade las reglas
+# de alerta-as-code sobre las métricas/healthchecks ya existentes).
+rule_files: []
+
+scrape_configs:
+  # Prometheus se scrapea a sí mismo (patrón estándar, no expone PII/tenant).
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090
+
+  # Backend FastAPI — único target de negocio de esta SPEC (CE-95).
+  # Serie HOY expuestas (verificado en backend/app/core/metrics.py, SIN
+  # `tenant_id` como label en ninguna): http_requests_total,
+  # http_request_duration_seconds, ai_request_duration_seconds,
+  # ai_request_errors_total, stt_rtf, stt_queue_latency_seconds,
+  # stt_jobs_total, whatsapp_media_downloads_total,
+  # whatsapp_audio_discarded_by_duration_total.
+  - job_name: api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - api:8000

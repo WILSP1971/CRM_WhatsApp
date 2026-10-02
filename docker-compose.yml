@@ -957,6 +957,108 @@ services:
     restart: unless-stopped
     # Nota: en `app` para egress potencial; `ia_internal` para hablar con voz/NLU
 
+  # ========================================================================
+  # Observabilidad — Prometheus + Grafana + Alertmanager (SPEC-077, PLAN-010 F0)
+  # ========================================================================
+  #
+  # Stack self-hosted as-code que scrapea/visualiza el `/metrics` que `api`
+  # YA expone (backend/app/core/metrics.py, SPEC-022). Los tres servicios
+  # viven EXCLUSIVAMENTE en `ia_internal` (internal: true, SIN egress nuevo):
+  # pueden hablar con `api` y entre sí, jamás con internet. Imágenes
+  # OFICIALES con tag de versión fijo (nunca `latest`), config/dashboards
+  # montados READ-ONLY desde `observability/` (provisioning as-code,
+  # RNF-REPRODUCIBLE). INVARIANTE DURA (§3.3 PLAN-010, R-98): ninguna config
+  # de este bloque añade `tenant_id`/PII como label — se consume `/metrics`
+  # tal cual. Reglas de alerta/enrutado de Alertmanager = SPEC-078 (F1, fuera
+  # de esta SPEC).
+
+  # Prometheus: scrapea `api:8000/metrics` (CE-95). TSDB con volumen de
+  # persistencia dedicado (RNF-PERSISTENCIA); retención configurable por env
+  # (RF-07, `--storage.tsdb.retention.time`). UI NO expuesto a `app`
+  # (RF-04/CE-100): sin `ports:` publicado al host, accesible solo dentro de
+  # `ia_internal` (p.ej. vía `docker compose exec` o un futuro proxy/auth).
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: crm_prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-15d}"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ia_internal
+    restart: unless-stopped
+    # Nota: SIN red `app`, SIN `ports:` publicado — solo accesible dentro de
+    # `ia_internal` (RNF-NO-EGRESS, R-101; CE-100 UI no expuesto sin protección).
+
+  # Alertmanager: SOLO el servicio BASE en esta SPEC (config mínima sin
+  # receivers externos, `observability/alertmanager/alertmanager.yml`).
+  # Reglas de alerta-as-code + enrutado real = SPEC-078. Volumen de
+  # persistencia dedicado para el estado de silencios/notificaciones.
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: crm_alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    volumes:
+      - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9093/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ia_internal
+    restart: unless-stopped
+    # Nota: SIN red `app`, SIN `ports:` publicado, SIN receivers externos
+    # (Q1-sub PLAN-010: alertas visibles solo en Grafana/Alertmanager).
+
+  # Grafana: ÚNICO UI de este bloque con auth obligatoria (RF-04, C3) vía la
+  # env var OFICIAL de la imagen (`GF_SECURITY_ADMIN_PASSWORD`/
+  # `GF_SECURITY_ADMIN_USER`, ver conf/defaults.ini del proyecto Grafana,
+  # sección [security] -> admin_user/admin_password). CHECKPOINT C3: el
+  # agente implementador NUNCA fija un valor real — se lee de `.env` (ver
+  # `.env.example`, sin valor real documentado ahí). Datasource +
+  # dashboard(s) provisionados desde el repo (RNF-REPRODUCIBLE, CE-96), NUNCA
+  # creados a mano en la UI (`allowUiUpdates: false`).
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: crm_grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:?GF_SECURITY_ADMIN_PASSWORD requerido (C3, admin de Grafana por env)}
+      # Sin registro de usuarios ni org nueva por invitación anónima (RF-04).
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks:
+      - ia_internal
+    restart: unless-stopped
+    # Nota: SIN red `app`, SIN `ports:` publicado al host en esta SPEC — el
+    # acceso al UI (RF-04) se resuelve vía proxy/túnel interno existente
+    # (Caddy/SSH) o `docker compose exec`, no por exposición directa pública.
+
 networks:
   # Red de TRANSPORTE (SPEC-024 F0, SPEC-029 F4): SOLO `api` (y `wa_send_worker` en SPEC-029)
   # CON egress a internet (permitido SOLO a graph.facebook.com via firewall host / proxy allowlist)
@@ -1023,4 +1125,18 @@ volumes:
   # Montado por volumen (sin descarga en runtime, ADR-009/012). Descarga
   # manual pre-deployment (`python -m piper.download_voices` o equivalente).
   respuesta_tts_piper_voices:
+    driver: local
+  # Observabilidad (SPEC-077, PLAN-010 F0): volúmenes de persistencia
+  # dedicados, uno por servicio (RNF-PERSISTENCIA, CE-99) — sobreviven a un
+  # reinicio del stack (series/dashboards/estado de alertas persisten).
+  # TSDB de Prometheus (series de métricas, retención configurable por env
+  # vía PROMETHEUS_RETENTION_TIME — RF-07). Sin tensión HABEAS DATA: son
+  # series de métricas sin tenant_id/PII, no datos de negocio (§3.3).
+  prometheus_data:
+    driver: local
+  # Estado de Grafana (sqlite de sesiones/usuarios, dashboards cacheados).
+  grafana_data:
+    driver: local
+  # Estado de Alertmanager (silencios, notificaciones ya enviadas/dedup).
+  alertmanager_data:
     driver: local

@@ -1,0 +1,22 @@
+# Grafana — provisioning de dashboards (SPEC-077, PLAN-010 F0)
+#
+# Apunta Grafana al directorio de dashboards JSON versionados en el repo
+# (RNF-REPRODUCIBLE): el provider carga los `.json` de
+# `observability/grafana/dashboards/` (montado en el contenedor en
+# `/var/lib/grafana/dashboards`, ver docker-compose.yml). Nada se crea a
+# mano en la UI; `allowUiUpdates: false` evita que una edición manual en la
+# UI diverja silenciosamente de lo versionado en el repo.
+
+apiVersion: 1
+
+providers:
+  - name: observability-as-code
+    orgId: 1
+    folder: "CRM WhatsApp"
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
