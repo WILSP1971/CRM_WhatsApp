@@ -1,30 +1,45 @@
-# Alertmanager — configuración BASE (SPEC-077, PLAN-010 F0)
+# Alertmanager — configuración (base SPEC-077, reglas/enrutado SPEC-078)
 #
-# Alcance de esta SPEC (077): solo levantar el servicio Alertmanager en
-# `ia_internal` con config mínima válida. Las reglas de alerta-as-code, el
-# enrutado (`route`) y los `receivers` concretos son SPEC-078 (F1) — fuera de
-# alcance aquí (ver SPEC-077.md, sección OUT).
+# SPEC-077 (F0) levantó el servicio Alertmanager en `ia_internal` con config
+# mínima válida. SPEC-078 (F1) añade aquí el enrutado real de las reglas de
+# alerta-as-code de `observability/prometheus/rules/alerts.yml` — SIEMPRE
+# sin ningún receiver de notificación externa (ver invariante abajo).
 #
 # INVARIANTE (Q1-sub, PLAN-010 §1 — vinculante, NO se reabre en esta SPEC):
 # alertas visibles SOLO en Grafana/Alertmanager, CERO notificación push
-# externa (Telegram/Slack/email/PagerDuty). El receiver "null" de abajo es el
-# único definido en esta SPEC: no envía nada a ningún destino externo, solo
-# satisface el requisito de Alertmanager de tener al menos una ruta/receiver
-# válidos para arrancar. SPEC-078 añadirá receivers adicionales (igualmente
-# sin notificación externa) cuando defina las reglas de alerta.
+# externa (Telegram/Slack/email/PagerDuty/webhook/SMTP). Los dos receivers
+# definidos abajo ("null" y "null-por-severidad") son INERTES: ninguno habla
+# con un destino externo, solo agrupan/etiquetan para que el estado sea
+# consultable en el UI de Alertmanager/Grafana (RNF-SIN-PUSH-EXTERNO,
+# RNF-NO-EGRESS, R-101). No se añade aquí ningún `webhook_configs`/
+# `email_configs`/`slack_configs`/`pagerduty_configs` ni equivalente.
 
 global:
   resolve_timeout: 5m
 
 route:
   receiver: "null"
-  group_by: ["alertname"]
+  group_by: ["alertname", "severity"]
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
+  routes:
+    # Subruta puramente organizativa (agrupa por severidad en el propio
+    # Alertmanager/Grafana) — sigue resolviendo al receiver inerte, cero
+    # notificación externa. No es obligatoria para RF-03/RF-04, se añade
+    # para facilitar la lectura del estado de alertas en la prueba
+    # controlada de disparo (RF-05, HAWKEYE/SPEC-079).
+    - match:
+        severity: critical
+      receiver: "null-por-severidad"
+      continue: false
 
 receivers:
   - name: "null"
-    # Receiver inerte (sin webhook/email/etc.) — cero integración externa,
-    # cero egress nuevo (RNF-NO-EGRESS, R-101). SPEC-078 define receivers
-    # reales de enrutado (siempre sin push externo, Q1-sub).
+    # Receiver inerte por defecto (sin webhook/email/etc.) — cero
+    # integración externa, cero egress nuevo (RNF-NO-EGRESS, R-101).
+  - name: "null-por-severidad"
+    # Segundo receiver, igualmente inerte (sin notificadores configurados):
+    # existe solo para que la subruta de `severity: critical` tenga un
+    # nombre propio y sea más legible en el UI de Alertmanager; no define
+    # ningún `*_configs` de notificación -> no envía nada a ningún destino.

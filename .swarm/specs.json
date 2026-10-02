@@ -9,10 +9,10 @@
     "total_specs": 79,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 3,
+      "APROBADA": 2,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 35,
+      "CERRADA": 36,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-10-02"
@@ -1834,7 +1834,7 @@
       "id": "SPEC-078",
       "titulo": "Reglas de alerta-as-code + Alertmanager sin receiver externo, al menos una alerta que dispara en prueba controlada",
       "archivo": ".swarm/specs/SPEC-078.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F1",
       "plan": "PLAN-010",
       "sensible": true,

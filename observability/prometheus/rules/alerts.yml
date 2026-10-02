@@ -1,0 +1,168 @@
+# Prometheus — reglas de alerta-as-code (SPEC-078, PLAN-010 F1)
+#
+# Montado READ-ONLY en el servicio `prometheus` de docker-compose.yml (ya
+# existente desde SPEC-077), referenciado por `rule_files` en
+# `observability/prometheus/prometheus.yml`. Evaluadas por Prometheus y
+# enrutadas a Alertmanager (`observability/alertmanager/alertmanager.yml`),
+# que NO tiene ningún receiver de notificación externa (Q1-sub, PLAN-010 §1
+# — decisión vinculante del Lead, NO se reabre). Las alertas son visibles
+# ÚNICAMENTE en el UI de Alertmanager y/o en Grafana (panel/estado de
+# reglas); no existe push externo (Telegram/Slack/email/PagerDuty/webhook).
+#
+# INVARIANTE DURA (PLAN-010 §3.3, RNF-AISLAMIENTO-METRICAS, R-98): ninguna
+# regla/expresión de este archivo introduce `tenant_id` ni PII como label.
+# Las expresiones operan exclusivamente sobre labels ya existentes en
+# `backend/app/core/metrics.py` (`job`, `instance`, `method`, `path`,
+# `status_code`) y sobre el `up` propio del scrape de Prometheus — ninguno
+# de los cuales lleva identificador de tenant/contacto.
+#
+# Alcance de esta SPEC (078): define las 3 reglas obligatorias de RF-01
+# (target down, 5xx > umbral, `/readyz`/salud caída) más una familia
+# opcional de umbrales de latencia IA/STT (candidatos de THOR, RNF-04/
+# RNF-42) citada en RF-02. La PRUEBA FORMAL de disparo (bajar el target /
+# inyectar 5xx) la ejecuta HAWKEYE/el orquestador con el stack realmente
+# levantado y se verifica en SPEC-079 (F2) — este archivo deja los `for:`
+# deliberadamente cortos (segundos/minutos) para que esa prueba sea
+# factible sin esperas de horas.
+
+groups:
+  # --------------------------------------------------------------------
+  # Grupo 1 — Disponibilidad (RF-01, obligatorias)
+  # --------------------------------------------------------------------
+  - name: disponibilidad-api
+    rules:
+      - alert: APITargetDown
+        # Target down: el scrape de Prometheus al job `api` (api:8000/metrics,
+        # backend/app/main.py) falla. `up` es la métrica sintética que el
+        # propio Prometheus genera por cada target (no instrumentada por el
+        # backend, no lleva tenant_id). `for: 2m` deja margen a blips
+        # transitorios de red/arranque, pero es corto a propósito para que
+        # una prueba controlada (parar el contenedor `api`) dispare en
+        # minutos, no horas.
+        expr: up{job="api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Target api (Prometheus job=api) caído"
+          description: >-
+            Prometheus no puede scrapear api:8000/metrics desde hace al
+            menos 2 minutos (up del job api == 0, instance=
+            {{ $labels.instance }}). El backend puede estar caído,
+            reiniciando o inalcanzable por red.
+
+      - alert: APIHighErrorRate5xx
+        # Tasa de error HTTP 5xx > umbral: rate() de status_code 5xx sobre el
+        # total de peticiones del job `api`, ventana de 5m. Umbral 5%
+        # CANDIDATO DE THOR (no es un valor validado por carga real; es un
+        # punto de partida conservador para un backend monolítico de bajo
+        # volumen) — revisable por el Lead/THOR en la aprobación, ajustable
+        # sin tocar la lógica de la regla. `for: 2m` (corto a propósito,
+        # ver cabecera) para que una prueba controlada (forzar 5xx) dispare
+        # en minutos.
+        expr: |
+          (
+            sum(rate(http_requests_total{job="api", status_code=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total{job="api"}[5m]))
+          ) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Tasa de error HTTP 5xx elevada en la API"
+          description: >-
+            Más del 5% (umbral candidato de THOR, configurable) de las
+            peticiones HTTP a la API respondieron 5xx en los últimos 5
+            minutos. Puede indicar una regresión de código, dependencia
+            caída (DB/Redis/IA) o sobrecarga.
+
+      - alert: APIReadyzUnhealthy
+        # `/readyz`/salud caída: NO existe un blackbox-exporter ni un scrape
+        # dedicado de `/readyz` como métrica de readiness en esta fase
+        # (SPEC-077 solo scrapea `/metrics`, no sondea `/readyz` por fuera).
+        # Esta SPEC NO instrumenta métricas nuevas (RNF-ADITIVO, R-102) ni
+        # añade un exporter nuevo (fuera de alcance IN). Por diseño honesto:
+        # se adapta esta regla a la señal SÍ disponible que mejor aproxima
+        # "salud caída" sin inventar una fuente nueva — el propio middleware
+        # HTTP (backend/app/main.py:126-143) instrumenta TODAS las rutas,
+        # incluida `/readyz`, en `http_requests_total{path="/readyz"}`. Si
+        # `/readyz` empieza a responder 5xx (p.ej. por una dependencia caída
+        # que el propio endpoint reporte en el futuro, o por el proceso
+        # fallando a medio-request), esta regla lo captura. Combinada con
+        # `APITargetDown` (que cubre el caso de proceso totalmente caído,
+        # donde ni siquiera hay series de `/readyz` que consultar), las dos
+        # reglas cubren la salud operativa disponible hoy con la
+        # instrumentación existente. `for: 2m` corto a propósito.
+        expr: |
+          sum(rate(http_requests_total{job="api", path="/readyz", status_code=~"5.."}[5m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "/readyz respondiendo con error en la API"
+          description: >-
+            El endpoint de readiness (/readyz) de la API ha respondido al
+            menos un 5xx en los últimos 5 minutos. Nota de implementación
+            (honesta): no existe en esta fase un probe/blackbox-exporter
+            dedicado que sondee /readyz de forma independiente del tráfico
+            real; esta regla observa /readyz a través del mismo
+            http_requests_total (label path) que cualquier otra ruta. Si no
+            hay tráfico reciente a /readyz, esta regla puede no tener señal
+            — en ese escenario, APITargetDown sigue cubriendo la caída
+            total del proceso.
+
+  # --------------------------------------------------------------------
+  # Grupo 2 — Rendimiento IA/STT (RF-02, opcional — candidatos de THOR)
+  # --------------------------------------------------------------------
+  - name: rendimiento-ia-stt
+    rules:
+      - alert: AIRequestLatencyP95High
+        # RNF-04: objetivo p95 RAG <= 6s en GPU. Umbral 6s CANDIDATO DE THOR
+        # (el propio RNF), evaluado sobre el histograma
+        # ai_request_duration_seconds{operation,model} (metrics.py). En
+        # hosts sin GPU (CPU-only, ver memoria del proyecto) la latencia
+        # real puede superar holgadamente este umbral de forma esperada —
+        # por eso esta alerta es OPCIONAL/informativa (severity: warning,
+        # no critical) y revisable por THOR/el Lead antes de tomarla como
+        # SLO estricto en un host concreto.
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(ai_request_duration_seconds_bucket[10m])) by (le, operation, model)
+          ) > 6
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 de latencia IA por encima de RNF-04 (candidato THOR)"
+          description: >-
+            El p95 de ai_request_duration_seconds para operation=
+            {{ $labels.operation }}, model={{ $labels.model }} supera 6s
+            (RNF-04, umbral candidato de THOR, revisable) en los últimos 10
+            minutos. Esperable en hosts sin GPU (CPU-only); revisar antes
+            de tratarlo como incidente en esos entornos.
+
+      - alert: STTRealTimeFactorHigh
+        # RNF-42: objetivo RTF <= 1.0 en GPU large-v3 (fallback CPU medium
+        # degrada RTF, puede superar varias veces 1.0 de forma esperada en
+        # este proyecto CPU-only — ver memoria). Umbral 1.0 es el propio
+        # RNF-42 como CANDIDATO DE THOR; severity warning (no critical) por
+        # la misma razón que la alerta anterior: en CPU-only puede disparar
+        # de forma esperada y no necesariamente indicar una regresión.
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(stt_rtf_bucket[15m])) by (le, model, device)
+          ) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RTF de STT por encima de RNF-42 (candidato THOR)"
+          description: >-
+            El p95 de stt_rtf para model={{ $labels.model }}, device=
+            {{ $labels.device }} supera 1.0 (RNF-42, umbral candidato de
+            THOR, revisable) en los últimos 15 minutos. Esperable en
+            fallback CPU (medium); revisar antes de tratarlo como incidente
+            si device indica CPU.

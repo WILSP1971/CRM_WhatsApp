@@ -31,9 +31,13 @@ alerting:
         - targets:
             - alertmanager:9093
 
-# rule_files: intencionalmente vacío en esta SPEC (SPEC-078 añade las reglas
-# de alerta-as-code sobre las métricas/healthchecks ya existentes).
-rule_files: []
+# rule_files: SPEC-078 (F1) añade aquí las reglas de alerta-as-code sobre las
+# métricas/healthchecks ya existentes (target down, 5xx > umbral, `/readyz`/
+# salud caída, más umbrales de rendimiento IA/STT candidatos de THOR). Ruta
+# montada read-only en el servicio `prometheus` (docker-compose.yml, mismo
+# patrón que este propio archivo).
+rule_files:
+  - /etc/prometheus/rules/alerts.yml
 
 scrape_configs:
   # Prometheus se scrapea a sí mismo (patrón estándar, no expone PII/tenant).
