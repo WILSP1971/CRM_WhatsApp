@@ -3,13 +3,13 @@
   "clasificacion": "SENSIBLE",
   "actualizado": "2026-10-03T00:00:00-05:00",
   "contadores": {
-    "next_plan": 12,
-    "next_spec": 85,
+    "next_plan": 13,
+    "next_spec": 92,
     "next_adr": 17,
-    "total_specs": 84,
+    "total_specs": 91,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 1,
+      "APROBADA": 8,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
       "CERRADA": 42,
@@ -241,6 +241,28 @@
         "ADR-016"
       ],
       "nota": "Fase C de 4 (tras PLAN-009 onboarding y PLAN-010 observabilidad). Hallazgo central de XAVIER: la seguridad de APLICACION ya esta madura (fail-fast de secretos, RLS, CORS, security headers, cifrado de audio, egress acotado) - el hueco real esta en la capa INFRA/OPERACION. Decisiones vinculantes del Lead: solo hardening tecnico (sin runbook operativo, sin CD/staging), sobre la infra docker-compose actual (sin servidor de produccion dedicado confirmado), rate-limiting general ALTA prioridad, escaneo de vulnerabilidades BLOQUEANTE en HIGH/CRITICAL sin marco de compliance formal, backups automatizados (diferidos en PLAN-010 S13) SIGUEN DIFERIDOS. DOCTOR STRANGE resolvio sin reabrir el Lead: (D-1) diverrgencia HSTS/CSP se resuelve endureciendo el codigo al nivel del checklist (HSTS 1 año, CSP estricta sin unsafe-inline, Swagger OFF en produccion), y recomienda UN ADR nuevo (candidato ADR-016) para la politica de firewall de host como contrato de seguridad estructural por encima del aislamiento de red de Docker. Riesgo top: R-103, que los limites de recursos asfixien STT/IA en la maquina CPU-only compartida - THOR es puerta dura antes de fijar cualquier limite."
+    },
+    {
+      "id": "PLAN-012",
+      "titulo": "Canal Instagram Direct Message (Fase D, la ultima de 4): segundo canal de mensajeria real via Instagram Messaging API de Meta, espejando la arquitectura del canal WhatsApp ya en produccion, reutilizando dominio/pipeline IA/infra ya construidos, con el bloqueo externo de Meta App Review como riesgo top",
+      "archivo": ".swarm/PLAN-012.md",
+      "estado": "APROBADO",
+      "origen": "prompt-lab/prompts/PROMPT-012-INSTAGRAM-DM.md",
+      "sensible": true,
+      "specs_propuestas": [
+        "SPEC-085",
+        "SPEC-086",
+        "SPEC-087",
+        "SPEC-088",
+        "SPEC-089",
+        "SPEC-090",
+        "SPEC-091"
+      ],
+      "adrs_recomendados": [
+        "ADR-006 (ampliacion)",
+        "ADR-017 (condicional)"
+      ],
+      "nota": "Fase D de 4, la ultima (tras PLAN-009/010/011 cerrados). Hallazgo central de XAVIER: el tamano real es MENOR que reconstruir el Entregable #3 completo (estimacion de PLAN-006) porque el pipeline IA local, observabilidad, rate-limiting y el patron de routing identificador-tenant con SECURITY DEFINER ya existen y se heredan casi intactos. Decisiones vinculantes del Lead: Meta App Review NO resuelto (el equipo construye/prueba con payloads simulados + cuentas de prueba, activacion con usuarios reales diferida al Lead - riesgo top R-110), alcance V1 texto+imagenes/adjuntos (sin notas de voz), human-in-the-loop identico a WhatsApp (cero autoenvio), idempotencia reutilizando messages.wamid como id generico (sin anadir columna), frontend headless/minimo (sin UI dedicada). DOCTOR STRANGE decidio ampliar ADR-006 para el envio (mismo host graph.facebook.com) y dejo como decision condicional/diferida a SPEC-088 si el CDN de media de Instagram necesita su propio ADR-017 (debe confirmarse el hostname real contra documentacion vigente de Meta antes de fijar el guardarrail de egress)."
     }
   ],
   "specs": [
@@ -1981,6 +2003,148 @@
         "SPEC-081",
         "SPEC-082",
         "SPEC-083"
+      ]
+    },
+    {
+      "id": "SPEC-085",
+      "titulo": "Datos del canal Instagram (instagram_accounts + resolve_tenant_by_instagram_account_id) + egress acotado extendido + secretos INSTAGRAM_* + ampliacion de ADR-006",
+      "archivo": ".swarm/specs/SPEC-085.md",
+      "estado": "APROBADA",
+      "fase": "F0",
+      "plan": "PLAN-012",
+      "sensible": true,
+      "responsable": "BLACK PANTHER",
+      "revisan": [
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "DOCTOR STRANGE"
+      ],
+      "depende_de": []
+    },
+    {
+      "id": "SPEC-086",
+      "titulo": "Webhook de recepcion de Instagram (challenge GET + firma HMAC sobre RAW body + ACK 200 <=500ms + encolado ig:inbound) + parser puro object:instagram/entry[].messaging[]",
+      "archivo": ".swarm/specs/SPEC-086.md",
+      "estado": "APROBADA",
+      "fase": "F1",
+      "plan": "PLAN-012",
+      "sensible": true,
+      "responsable": "BLACK PANTHER",
+      "revisan": [
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "WOLVERINE"
+      ],
+      "depende_de": [
+        "SPEC-085"
+      ]
+    },
+    {
+      "id": "SPEC-087",
+      "titulo": "Ingesta idempotente + enrutado multi-tenant + disparo del pipeline IA local (instagram_inbound_worker, cola ig:inbound) + servicio Docker endurecido",
+      "archivo": ".swarm/specs/SPEC-087.md",
+      "estado": "APROBADA",
+      "fase": "F2",
+      "plan": "PLAN-012",
+      "sensible": true,
+      "responsable": "BLACK PANTHER",
+      "revisan": [
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "WOLVERINE",
+        "THOR"
+      ],
+      "depende_de": [
+        "SPEC-086",
+        "SPEC-085"
+      ]
+    },
+    {
+      "id": "SPEC-088",
+      "titulo": "Descarga de media de Instagram (media_client.py): confirmacion BLOQUEANTE del host del CDN de Meta + allowlist de host por codigo + almacen cifrado (ADR-009) + gatillo condicional de ADR-017",
+      "archivo": ".swarm/specs/SPEC-088.md",
+      "estado": "APROBADA",
+      "fase": "F3",
+      "plan": "PLAN-012",
+      "sensible": true,
+      "responsable": "BLACK PANTHER",
+      "revisan": [
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "DOCTOR STRANGE"
+      ],
+      "depende_de": [
+        "SPEC-087",
+        "SPEC-085"
+      ]
+    },
+    {
+      "id": "SPEC-089",
+      "titulo": "Envio saliente por la Graph API de Instagram (graph_client.py + instagram_send_worker): ventana de mensajeria PROPIA de IG (message tags, NO HSM) + conciliacion de statuses -> estado_entrega",
+      "archivo": ".swarm/specs/SPEC-089.md",
+      "estado": "APROBADA",
+      "fase": "F4",
+      "plan": "PLAN-012",
+      "sensible": true,
+      "responsable": "BLACK PANTHER",
+      "revisan": [
+        "BLACK WIDOW",
+        "HAWKEYE",
+        "WOLVERINE",
+        "DOCTOR STRANGE"
+      ],
+      "depende_de": [
+        "SPEC-087",
+        "SPEC-019",
+        "SPEC-085"
+      ]
+    },
+    {
+      "id": "SPEC-090",
+      "titulo": "Seguridad del canal Instagram (auditoria BLACK WIDOW) + CERO regresion (WhatsApp y resto del backend) + badge/filtro de canal instagram MINIMO en la Bandeja",
+      "archivo": ".swarm/specs/SPEC-090.md",
+      "estado": "APROBADA",
+      "fase": "F5",
+      "plan": "PLAN-012",
+      "sensible": true,
+      "responsable": "BLACK WIDOW",
+      "revisan": [
+        "WOLVERINE",
+        "DAREDEVIL",
+        "SPIDER-MAN",
+        "BLACK PANTHER",
+        "HAWKEYE"
+      ],
+      "depende_de": [
+        "SPEC-085",
+        "SPEC-086",
+        "SPEC-087",
+        "SPEC-088",
+        "SPEC-089"
+      ]
+    },
+    {
+      "id": "SPEC-091",
+      "titulo": "Pruebas + simulador de webhook de Instagram FIRMADO + runbook del canal (con el bloqueo de Meta App Review EXPLICITO) + deploy on-prem - CIERRA PLAN-012",
+      "archivo": ".swarm/specs/SPEC-091.md",
+      "estado": "APROBADA",
+      "fase": "F6",
+      "plan": "PLAN-012",
+      "sensible": true,
+      "responsable": "HAWKEYE",
+      "revisan": [
+        "BLACK PANTHER",
+        "BLACK WIDOW",
+        "WOLVERINE",
+        "QUICKSILVER"
+      ],
+      "depende_de": [
+        "SPEC-085",
+        "SPEC-086",
+        "SPEC-087",
+        "SPEC-088",
+        "SPEC-089",
+        "SPEC-090"
       ]
     }
   ],
