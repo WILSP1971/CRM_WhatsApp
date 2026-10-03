@@ -585,6 +585,86 @@ services:
     # SIN read_only: escribe el audio cifrado de notas de voz entrantes en
     # `audio_store` (volumen ya `rw`, R-104) y usa bind-mount de desarrollo.
 
+  # Worker de ingesta de Instagram DM (SPEC-087, ADR-007/008, F2): consume la
+  # cola Redis persistente `ig:inbound` (`app.core.instagram_queue`), DISTINTA
+  # de `wa:inbound` (R-117, cero regresión de WhatsApp) — mismo patrón que
+  # `whatsapp_inbound_worker`/`sentiment_worker`: un reinicio de `api` NUNCA
+  # pierde un evento en curso (ya quedó persistido en Redis `appendonly yes`).
+  # Resuelve `instagram_account_id -> tenant_id` (función SECURITY DEFINER,
+  # ADR-008), fija RLS y persiste contacto/conversación/mensaje bajo el tenant
+  # correcto; deduplica por `mid` (persistido en `messages.wamid`, idempotencia
+  # ADR-007). Dispara sentimiento (SPEC-018)/borrador RAG (SPEC-019) YA
+  # EXISTENTES, sin crear IA nueva. Si el DM trae adjuntos, SOLO encola su
+  # descarga en `ig:media_pending` (contrato consumido por SPEC-088, F3) — NO
+  # descarga media ni abre egress a Meta (a diferencia de
+  # `whatsapp_inbound_worker`, que SÍ necesita `app` para descarga/auto-
+  # respuesta ya implementadas, SPEC-054/055). Por eso este worker vive SOLO
+  # en `ia_internal` (sin egress), mismo criterio que `sentiment_worker`/
+  # `rag_ingest_worker`: la descarga real de media es SPEC-088 y el envío
+  # saliente es SPEC-089, ninguna de las dos en alcance de esta SPEC.
+  instagram_inbound_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      # SPEC-080 (PLAN-011 F0): Dockerfile ahora es multi-stage (`development`
+      # vs `production`); el compose de desarrollo local FIJA `target:
+      # development` explícitamente para conservar el comportamiento actual
+      # (root, `--reload`, `COPY . .` + bind-mount abajo) sin depender de cuál
+      # stage quede último en el Dockerfile. El stage `production` (no-root,
+      # sin `--reload`, sin tests/`.env`, sin bind-mount) se usa en
+      # `docker-compose.prod.yml` (ver ese archivo), nunca aquí.
+      target: development
+    container_name: crm_instagram_inbound_worker
+    command: ["python", "-m", "app.workers.instagram_inbound_worker"]
+    environment:
+      # Base de datos — RUNTIME (ADR-008): rol de aplicación NO-superusuario
+      # `omnicore_app` (NOSUPERUSER NOBYPASSRLS), igual que `api`/otros
+      # workers. El worker nunca ejecuta DDL, solo DML + la función
+      # SECURITY DEFINER de resolución de tenant (GRANT EXECUTE, ADR-008).
+      DATABASE_URL: postgresql://${DB_APP_ROLE:-omnicore_app}:${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}@db:5432/${DB_NAME:-omnicore_ai}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-omnicore_ai}
+      DB_USER: ${DB_APP_ROLE:-omnicore_app}
+      DB_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}
+
+      # Redis (cola `ig:inbound`, DISTINTA de `wa:inbound` — R-117)
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+
+      # Secretos (NUNCA hardcoded; desde variables de entorno; sin default débil)
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY requerido}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    networks:
+      - ia_internal
+    restart: unless-stopped
+    # SPEC-087 (F2, RF-08): worker Python I/O-bound (espera en cola Redis,
+    # persiste bajo RLS, delega el pipeline IA a `generate_rag_draft`/
+    # `schedule_sentiment_analysis` ya existentes; NO carga ningún modelo
+    # localmente ni descarga media) — NO forma parte de la puerta dura de
+    # THOR. Techo HOLGADO, no ajuste fino (RNF-THOR: no compite de forma
+    # dañina con STT/IA en la máquina CPU-only).
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # SIN read_only: usa bind-mount de desarrollo (`./backend:/app`, hot-
+    # reload), mismo criterio que `sentiment_worker`/`whatsapp_inbound_worker`.
+
   # Worker de ingesta de grabaciones (SPEC-037, ADR-007/ADR-010): consume
   # `pbx:recordings:inbound` (encolado por el webhook expuesto vía Caddy,
   # SPEC-035), resuelve numero_destino->tenant_id (RLS, ADR-008), deduplica

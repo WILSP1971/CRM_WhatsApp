@@ -2043,7 +2043,7 @@
       "id": "SPEC-087",
       "titulo": "Ingesta idempotente + enrutado multi-tenant + disparo del pipeline IA local (instagram_inbound_worker, cola ig:inbound) + servicio Docker endurecido",
       "archivo": ".swarm/specs/SPEC-087.md",
-      "estado": "APROBADA",
+      "estado": "EN_VERIFICACION",
       "fase": "F2",
       "plan": "PLAN-012",
       "sensible": true,
