@@ -19,6 +19,7 @@ from app.models.whatsapp_account import WhatsappAccount  # noqa: F401
 from app.models.call import Call  # noqa: F401
 from app.models.call_transcript import CallTranscript  # noqa: F401
 from app.models.pbx_line import PbxLine  # noqa: F401
+from app.models.instagram_account import InstagramAccount  # noqa: F401
 
 __all__ = [
     "Tenant",
@@ -35,4 +36,5 @@ __all__ = [
     "Call",
     "CallTranscript",
     "PbxLine",
+    "InstagramAccount",
 ]

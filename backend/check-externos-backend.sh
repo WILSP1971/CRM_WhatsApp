@@ -265,10 +265,16 @@ check_ai_base_url_file "${DC_FILE:-docker-compose.yml}"
 # `graph.facebook.com` real. Esta sección verifica ACTIVAMENTE contra el código
 # real (no por vacuidad) con el MISMO estilo de allowlist por ruta con
 # grep/allowlist que las secciones 11/12 (PBX) de este script.
-echo -e "\n${YELLOW}7. Verificando allowlist por ruta de graph.facebook.com (SOLO en módulo WhatsApp, SPEC-024/054, ADR-006)...${NC}"
+echo -e "\n${YELLOW}7. Verificando allowlist por ruta de graph.facebook.com (SOLO en módulos WhatsApp/Instagram, SPEC-024/054/085, ADR-006 ampliado)...${NC}"
 
+# ADR-006 ampliado (SPEC-085): el envío/API de Instagram DM va al MISMO host
+# graph.facebook.com ya autorizado para WhatsApp — no es egress nuevo, es la
+# misma excepción acotada de transporte a Meta extendida a un segundo módulo
+# de conector (app/integrations/instagram, SPEC-086..091). La allowlist se
+# EXTIENDE por ruta, no se relaja (RNF-EGRESS-NO-NUEVO).
 GRAPH_ALLOWED_MODULES=(
     "app/integrations/whatsapp"
+    "app/integrations/instagram"
 )
 GRAPH_ALLOWED_PATH_REGEX=$(IFS='|'; echo "${GRAPH_ALLOWED_MODULES[*]}")
 
@@ -279,16 +285,17 @@ if [ -n "$matches" ]; then
     outside_whatsapp=$(echo "$matches" | grep -vE "${GRAPH_ALLOWED_PATH_REGEX}" || true)
 
     if [ -n "$outside_whatsapp" ]; then
-        echo -e "${RED}    ✗ FALLO: graph.facebook.com encontrado FUERA del módulo WhatsApp (debe estar SOLO en ${GRAPH_ALLOWED_MODULES[*]}):${NC}"
+        echo -e "${RED}    ✗ FALLO: graph.facebook.com encontrado FUERA de los módulos permitidos (debe estar SOLO en ${GRAPH_ALLOWED_MODULES[*]}):${NC}"
         echo "$outside_whatsapp" | sed 's/^/      /'
         GRAPH_VIOLATION=1
     else
-        echo -e "${GREEN}    ✓ OK: graph.facebook.com solo en ${GRAPH_ALLOWED_MODULES[*]} (transporte real: graph_client.py envío SPEC-024/029, media_client.py descarga SPEC-054)${NC}"
+        echo -e "${GREEN}    ✓ OK: graph.facebook.com solo en ${GRAPH_ALLOWED_MODULES[*]} (transporte real: graph_client.py envío SPEC-024/029, media_client.py descarga SPEC-054; app/integrations/instagram aún sin transporte real, F0 SPEC-085)${NC}"
     fi
 else
-    # No debería ocurrir hoy (el módulo ya tiene transporte real, no placeholder);
-    # se deja como aviso, no como fallo, por si el código se reestructura.
-    echo -e "${YELLOW}    ⚠ AVISO: graph.facebook.com no aparece en código (inesperado: el módulo ya no es placeholder desde SPEC-024/054)${NC}"
+    # No debería ocurrir hoy (el módulo WhatsApp ya tiene transporte real, no
+    # placeholder); se deja como aviso, no como fallo, por si el código se
+    # reestructura.
+    echo -e "${YELLOW}    ⚠ AVISO: graph.facebook.com no aparece en código (inesperado: el módulo WhatsApp ya no es placeholder desde SPEC-024/054)${NC}"
 fi
 
 if [ $GRAPH_VIOLATION -ne 0 ]; then
@@ -391,6 +398,43 @@ else
     # defensivo (directorio ausente), no el estado esperado del proyecto.
     echo -e "${RED}    ✗ FALLO: módulo WhatsApp (${WHATSAPP_MODULE}) no existe — inesperado desde SPEC-024${NC}"
     EXIT_CODE=1
+fi
+
+# Verificar que el módulo Instagram (cuando exista) NO importe Ollama ni
+# servicios de IA (separación: transporte ≠ inferencia) — replica la
+# verificación 8 de WhatsApp para el segundo módulo de conector (SPEC-085 F0,
+# habilita SPEC-086..091; el módulo de transporte real aún no existe en esta
+# SPEC, por eso la ausencia del directorio NO es un fallo aquí, a diferencia
+# de WhatsApp que ya tiene transporte real desde SPEC-024).
+echo -e "\n${YELLOW}    → Verificando que módulo Instagram (si existe) NO importa Ollama ni IA (SPEC-085)...${NC}"
+INSTAGRAM_MODULE="${BACKEND_DIR}/app/integrations/instagram"
+if [ -d "$INSTAGRAM_MODULE" ]; then
+    declare -a INSTAGRAM_FORBIDDEN_IMPORTS=(
+        "from.*ollama"
+        "import ollama"
+        "from.*ai_client"
+        "from.*app.services.rag"
+        "from.*app.workers"
+    )
+
+    INSTAGRAM_VIOLATION=0
+    for pattern in "${INSTAGRAM_FORBIDDEN_IMPORTS[@]}"; do
+        if grep -r "$pattern" "$INSTAGRAM_MODULE" 2>/dev/null | grep -v "__pycache__"; then
+            echo -e "${RED}    ✗ FALLO: patrón prohibido '$pattern' encontrado en módulo Instagram${NC}"
+            INSTAGRAM_VIOLATION=1
+        fi
+    done
+
+    if [ $INSTAGRAM_VIOLATION -eq 0 ]; then
+        echo -e "${GREEN}    ✓ OK: módulo Instagram no tiene imports de IA (separación de responsabilidades, SPEC-085/086..091)${NC}"
+    else
+        EXIT_CODE=1
+    fi
+else
+    # Esperado en SPEC-085 (F0): esta SPEC solo deja datos/infra/secretos
+    # listos; el módulo de transporte real (webhook/graph_client) lo crean
+    # SPEC-086..089. Aviso informativo, no fallo.
+    echo -e "${YELLOW}    ⚠ AVISO: módulo Instagram (${INSTAGRAM_MODULE}) aún no existe (esperado en SPEC-085 F0, lo crean SPEC-086..091)${NC}"
 fi
 
 # Verificar que módulos de IA NO importen httpx ni clientes HTTP de transporte a Meta

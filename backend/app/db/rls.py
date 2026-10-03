@@ -53,6 +53,7 @@ TENANT_SCOPED_TABLES: list[str] = [
     "calls",
     "call_transcripts",
     "pbx_lines",
+    "instagram_accounts",
 ]
 
 TENANT_SESSION_VAR = "app.tenant_id"

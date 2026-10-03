@@ -27,6 +27,7 @@ from app.api.tenants import router as tenants_router
 from app.api.privacy import router as privacy_router
 from app.api.ws_chat import router as ws_chat_router
 from app.integrations.whatsapp.webhook import router as whatsapp_webhook_router
+from app.integrations.instagram.webhook import router as instagram_webhook_router
 from app.integrations.pbx.webhook import router as pbx_webhook_router
 from app.core.metrics import observe_http_request, render_latest
 from app.core.rate_limit_general import setup_general_rate_limiting
@@ -228,6 +229,15 @@ app.include_router(analytics_router, prefix="/api/v1")
 # valida y encola para el worker de ingesta (SPEC-027).
 # ============================================================================
 app.include_router(whatsapp_webhook_router, prefix="/api/v1")
+
+# ============================================================================
+# CANAL INSTAGRAM DM — webhook de recepción: challenge GET + firma
+# HMAC-SHA256 + ACK rápido (SPEC-086, F1, SENSIBLE: borde de entrada con
+# Meta, espejo exacto de WhatsApp). NO hace llamadas salientes a la Graph API
+# en esta fase; solo valida y encola en `ig:inbound` para el worker de
+# ingesta (SPEC-087, fuera de alcance aquí).
+# ============================================================================
+app.include_router(instagram_webhook_router, prefix="/api/v1")
 
 # ============================================================================
 # CANAL VOZ/TELEFONÍA — webhook de ingesta de grabaciones: firma HMAC-SHA256 +

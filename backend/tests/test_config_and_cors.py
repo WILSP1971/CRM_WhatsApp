@@ -31,6 +31,11 @@ ENV_KEYS = (
     "WEBHOOK_SECRET",
     "PBX_EXTERNAL_ENABLED",
     "PBX_EXTERNAL_AUTH_TOKEN",
+    "INSTAGRAM_APP_SECRET",
+    "INSTAGRAM_VERIFY_TOKEN",
+    "INSTAGRAM_PAGE_ACCESS_TOKEN",
+    "INSTAGRAM_BUSINESS_ACCOUNT_ID",
+    "INSTAGRAM_API_VERSION",
 )
 
 
@@ -118,6 +123,12 @@ def test_settings_production_starts_with_strong_secrets(clean_env):
     clean_env.setenv("AUDIO_ENCRYPTION_KEY", "f" * 40)
     clean_env.setenv("WEBHOOK_VERIFY_TOKEN", "g" * 40)
     clean_env.setenv("WEBHOOK_SECRET", "h" * 40)
+    # INSTAGRAM_APP_SECRET/INSTAGRAM_VERIFY_TOKEN/INSTAGRAM_PAGE_ACCESS_TOKEN:
+    # obligatorios fuera de development (SPEC-085, mismo fail-fast C3 que el
+    # resto de secretos del canal WhatsApp).
+    clean_env.setenv("INSTAGRAM_APP_SECRET", "i" * 40)
+    clean_env.setenv("INSTAGRAM_VERIFY_TOKEN", "j" * 40)
+    clean_env.setenv("INSTAGRAM_PAGE_ACCESS_TOKEN", "k" * 40)
     config_module = _reload_config()
 
     settings = config_module.Settings()
@@ -130,6 +141,9 @@ def test_settings_production_starts_with_strong_secrets(clean_env):
     assert settings.audio_encryption_key == "f" * 40
     assert settings.webhook_verify_token == "g" * 40
     assert settings.webhook_secret == "h" * 40
+    assert settings.instagram_app_secret == "i" * 40
+    assert settings.instagram_verify_token == "j" * 40
+    assert settings.instagram_page_access_token == "k" * 40
 
 
 def test_settings_production_fails_fast_without_whatsapp_app_secret(clean_env):
@@ -235,6 +249,74 @@ def test_settings_staging_environment_also_enforces_fail_fast(clean_env):
 
 
 # ---------------------------------------------------------------------------
+# Instagram Direct Message (SPEC-085, F0) — mismo fail-fast C3 que WhatsApp
+# ---------------------------------------------------------------------------
+
+
+def test_settings_production_fails_fast_without_instagram_app_secret(clean_env):
+    """SPEC-085 C3: sin INSTAGRAM_APP_SECRET fuera de development, el
+    arranque ABORTA (un secreto ausente permitiría desactivar de facto la
+    validación de firma del webhook de Instagram)."""
+    clean_env.setenv("ENVIRONMENT", "production")
+    _set_all_required_secrets(clean_env)
+    clean_env.delenv("INSTAGRAM_APP_SECRET", raising=False)
+    config_module = _reload_config()
+
+    with pytest.raises(config_module.ConfigurationError):
+        config_module.Settings()
+
+
+def test_settings_production_fails_fast_without_instagram_verify_token(clean_env):
+    """SPEC-085 C3: sin INSTAGRAM_VERIFY_TOKEN fuera de development, el
+    arranque ABORTA (impide validar el challenge GET de alta del webhook de
+    Instagram)."""
+    clean_env.setenv("ENVIRONMENT", "production")
+    _set_all_required_secrets(clean_env)
+    clean_env.delenv("INSTAGRAM_VERIFY_TOKEN", raising=False)
+    config_module = _reload_config()
+
+    with pytest.raises(config_module.ConfigurationError):
+        config_module.Settings()
+
+
+def test_settings_production_fails_fast_without_instagram_page_access_token(
+    clean_env,
+):
+    """SPEC-085 C3: sin INSTAGRAM_PAGE_ACCESS_TOKEN fuera de development, el
+    arranque ABORTA (un access token ausente/débil bloquearía el envío en vez
+    de fallar silenciosamente en cada request a la Graph API de Instagram)."""
+    clean_env.setenv("ENVIRONMENT", "production")
+    _set_all_required_secrets(clean_env)
+    clean_env.delenv("INSTAGRAM_PAGE_ACCESS_TOKEN", raising=False)
+    config_module = _reload_config()
+
+    with pytest.raises(config_module.ConfigurationError):
+        config_module.Settings()
+
+
+def test_settings_development_instagram_uses_dev_defaults(clean_env):
+    """En development, sin variables INSTAGRAM_* definidas, se usan los
+    dev_default documentados (mismo patrón que WHATSAPP_*), nunca aborta el
+    arranque local."""
+    clean_env.setenv("ENVIRONMENT", "development")
+    config_module = _reload_config()
+
+    settings = config_module.Settings()
+
+    assert settings.instagram_app_secret == "dev-only-change-me-instagram-app-secret"
+    assert (
+        settings.instagram_verify_token
+        == "dev-only-change-me-instagram-verify-token"
+    )
+    assert (
+        settings.instagram_page_access_token
+        == "dev-only-change-me-instagram-page-token-not-a-real-secret"
+    )
+    assert settings.instagram_business_account_id is None
+    assert settings.instagram_api_version == "v21.0"
+
+
+# ---------------------------------------------------------------------------
 # PBX_EXTERNAL_AUTH_TOKEN — fail-fast CONDICIONADO a PBX_EXTERNAL_ENABLED
 # (SPEC-037, endurecimiento pedido por BLACK WIDOW/WOLVERINE)
 # ---------------------------------------------------------------------------
@@ -245,6 +327,12 @@ def _set_all_required_secrets(clean_env) -> None:
     clean_env.setenv("AUDIO_ENCRYPTION_KEY", "f" * 40)
     clean_env.setenv("WEBHOOK_VERIFY_TOKEN", "g" * 40)
     clean_env.setenv("WEBHOOK_SECRET", "h" * 40)
+    # INSTAGRAM_APP_SECRET/INSTAGRAM_VERIFY_TOKEN/INSTAGRAM_PAGE_ACCESS_TOKEN:
+    # obligatorios fuera de development (SPEC-085, mismo fail-fast C3 que el
+    # resto de secretos del canal WhatsApp).
+    clean_env.setenv("INSTAGRAM_APP_SECRET", "i" * 40)
+    clean_env.setenv("INSTAGRAM_VERIFY_TOKEN", "j" * 40)
+    clean_env.setenv("INSTAGRAM_PAGE_ACCESS_TOKEN", "k" * 40)
 
 
 def test_settings_production_pbx_external_disabled_does_not_require_auth_token(

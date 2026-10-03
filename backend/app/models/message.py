@@ -4,7 +4,16 @@ el sentimiento clasificado por el LLM local, por SPEC-025 con el `wamid`
 de WhatsApp para idempotencia, por SPEC-053 con el tipo `audio` para la
 nota de voz de WhatsApp (ADR-013), por SPEC-054 con el `mime_type` del
 media descargado de WhatsApp y por SPEC-058 con `audio_purged_at` (marca de
-purga física del audio por el mismo job de retención de SPEC-041)."""
+purga física del audio por el mismo job de retención de SPEC-041).
+
+Nota de diseño (SPEC-085 §3.4, Q4=A, decisión de arquitecto — NO reabrir):
+`wamid` se reutiliza también para el canal Instagram DM, que identifica sus
+mensajes con un `mid` (no un `wamid`). NO se añade columna nueva ni se
+renombra esta: `wamid` pasa a representar el "id de mensaje del canal
+externo" genérico (WhatsApp -> `wamid`, Instagram -> `mid`), con la misma
+restricción UNIQUE como garantía de idempotencia (ADR-007) para ambos
+canales. Ningún código debe asumir el formato de WhatsApp al leer esta
+columna (R-113)."""
 
 import uuid
 from datetime import datetime
@@ -149,5 +158,8 @@ class Message(Base, TimestampMixin, TenantMixin, SoftDeleteMixin):
     # ESTADOS_ENTREGA_VALIDOS arriba)
     wamid: Mapped[str | None] = mapped_column(
         String(128), nullable=True
-    )  # id de mensaje de WhatsApp (Meta), UNIQUE cuando no es None — base de
-    # idempotencia (ADR-007). None para mensajes de otros canales (webchat).
+    )  # id de mensaje del CANAL EXTERNO, genérico (SPEC-085 §3.4, Q4=A): WhatsApp
+    # guarda su `wamid`, Instagram DM guarda su `mid` en esta MISMA columna (no
+    # renombrada, no duplicada) — UNIQUE cuando no es None, base de la
+    # idempotencia de ambos canales (ADR-007). None para mensajes de otros
+    # canales (webchat).

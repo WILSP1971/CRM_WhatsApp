@@ -281,6 +281,11 @@ limiter._exempt_routes.add("app.api.auth.login")
 limiter._exempt_routes.add("app.integrations.whatsapp.webhook.receive_webhook_event")
 limiter._exempt_routes.add("app.integrations.pbx.webhook.receive_recording_webhook")
 limiter._exempt_routes.add("app.api.rag.generate_draft_endpoint")
+# SPEC-086 (espejo exacto de WhatsApp arriba): mismo motivo — el límite
+# ESPECÍFICO de Instagram (`instagram_webhook_rate_limiter`, umbral holgado)
+# quedaría inalcanzable si el default general (más estricto) se evaluara
+# primero sobre esta ruta.
+limiter._exempt_routes.add("app.integrations.instagram.webhook.receive_webhook_event")
 
 
 def _retry_after_from_slowapi_exc(exc: RateLimitExceeded) -> int:
@@ -466,4 +471,11 @@ whatsapp_webhook_rate_limiter = PathRateLimiter(
 )
 pbx_webhook_rate_limiter = PathRateLimiter(
     scope="pbx_webhook", max_requests=WEBHOOK_RATE_LIMIT_PER_MINUTE
+)
+# SPEC-086: espejo exacto de `whatsapp_webhook_rate_limiter` — mismo umbral
+# holgado (`GENERAL_RATE_LIMIT_WEBHOOK`), scope propio para que el contador
+# de Instagram nunca interfiera con el de WhatsApp/PBX (misma IP de origen
+# en entornos de prueba, por ejemplo).
+instagram_webhook_rate_limiter = PathRateLimiter(
+    scope="instagram_webhook", max_requests=WEBHOOK_RATE_LIMIT_PER_MINUTE
 )

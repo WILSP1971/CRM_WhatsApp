@@ -244,6 +244,56 @@ class Settings:
             os.getenv("WHATSAPP_SEND_BACKOFF_BASE_SECONDS", "1")
         )
 
+        # --- Instagram Direct Message (SPEC-085, F0, SENSIBLE, espejo del
+        # bloque WhatsApp de arriba) ---
+        # `INSTAGRAM_APP_SECRET`: clave HMAC para validar `X-Hub-Signature-256`
+        # del webhook de Instagram (SPEC-086, fuera de alcance de SPEC-085).
+        # `INSTAGRAM_VERIFY_TOKEN`: token del challenge GET de suscripción del
+        # webhook. CHECKPOINT C3: fail-fast fuera de `development` igual que
+        # WHATSAPP_APP_SECRET/WHATSAPP_VERIFY_TOKEN (mismo
+        # `_require_strong_secret`) — un valor débil/ausente permitiría
+        # falsificar webhooks o bloquear la verificación de Meta.
+        self.instagram_app_secret: str = self._require_strong_secret(
+            "INSTAGRAM_APP_SECRET",
+            os.getenv("INSTAGRAM_APP_SECRET"),
+            dev_default="dev-only-change-me-instagram-app-secret",
+        )
+        self.instagram_verify_token: str = self._require_strong_secret(
+            "INSTAGRAM_VERIFY_TOKEN",
+            os.getenv("INSTAGRAM_VERIFY_TOKEN"),
+            dev_default="dev-only-change-me-instagram-verify-token",
+        )
+
+        # --- Instagram Direct Message — envío saliente (SPEC-089, fuera de
+        # alcance de SPEC-085, ADR-006 ampliado: mismo host de Graph API ya
+        # autorizado para WhatsApp, egress NO nuevo) ---
+        # `INSTAGRAM_PAGE_ACCESS_TOKEN`: access token de la Página/cuenta de
+        # Instagram Business (Bearer) usado por
+        # `app/integrations/instagram/graph_client.py` (SPEC-089, fuera de
+        # alcance aquí) para autenticar contra la Graph API de Meta (host
+        # fijo, allowlist ADR-006 ampliado). CHECKPOINT C3: fail-fast fuera de
+        # `development`, igual que el resto de secretos del canal.
+        self.instagram_page_access_token: str = self._require_strong_secret(
+            "INSTAGRAM_PAGE_ACCESS_TOKEN",
+            os.getenv("INSTAGRAM_PAGE_ACCESS_TOKEN"),
+            dev_default="dev-only-change-me-instagram-page-token-not-a-real-secret",
+        )
+        # `INSTAGRAM_BUSINESS_ACCOUNT_ID` por defecto (fallback): en
+        # multi-tenant el `instagram_business_account_id` real de cada envío
+        # proviene de la conversación/`instagram_accounts` (SPEC-085); esta
+        # variable solo cubre el caso de una única cuenta configurada por
+        # entorno (mismo criterio que WHATSAPP_PHONE_NUMBER_ID, nunca
+        # sustituye el dato de la fila cuando existe). No es secreto fuerte
+        # (id público de cuenta, no credencial).
+        self.instagram_business_account_id: str | None = os.getenv(
+            "INSTAGRAM_BUSINESS_ACCOUNT_ID"
+        )
+        # Versión de la Graph API: configurable por env, el HOST queda FIJO
+        # (allowlist en `graph_client.py` de Instagram, RNF-EGRESS-NO-NUEVO
+        # SPEC-085) — cambiar esta variable nunca puede reapuntar a otro
+        # dominio. Default alineado con `whatsapp_api_version`.
+        self.instagram_api_version: str = os.getenv("INSTAGRAM_API_VERSION", "v21.0")
+
         # --- STT local self-hosted (faster-whisper) — SPEC-035/037/038,
         # SENSIBLE (.no-externo), ADR-009 ---
         # Modelo/idioma/dispositivo del `stt_worker` (SPEC-038, fuera de
