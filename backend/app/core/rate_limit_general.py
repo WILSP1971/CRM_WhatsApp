@@ -260,6 +260,28 @@ limiter = Limiter(
 # `Depends`).
 limiter._exempt_routes.add("app.api.auth.login")
 
+# CORRECCIÓN (R-105, hallazgo de HAWKEYE verificado en SPEC-084): `slowapi`
+# evalúa `default_limits` SIEMPRE que corre "en middleware"
+# (`_check_request_limit(..., in_middleware=True)` IGNORA `_route_limits`/
+# `_dynamic_route_limits` y cae siempre al `default_limits` general —
+# verificado en `slowapi/extension.py::Limiter._check_request_limit`). Esto
+# significa que, SIN esta exención, el límite GENERAL (`DEFAULT_RATE_LIMIT`,
+# 60/min) se evalúa IGUAL sobre los 3 endpoints con límite ESPECÍFICO
+# holgado (webhooks WhatsApp/PBX a 300/min) — y al ser más estricto, dispara
+# PRIMERO: el umbral "holgado" pensado para absorber ráfagas legítimas de
+# Meta/PBX (R-105, el riesgo TOP de SPEC-081) queda en la práctica
+# INALCANZABLE, y una ráfaga de más de 60/min (plausible en hora pico con
+# varias sedes) recibiría 429 del middleware general en vez de ser aceptada
+# por el límite específico de 300/min. Se eximen estas 3 rutas del
+# middleware general (NO de `PathRateLimiter`, que sigue intacto y es quien
+# realmente las protege con el umbral correcto): cada una ya tiene su propio
+# control dedicado y mejor calibrado, igual que `login` arriba — el default
+# general queda reservado para el resto de la API que NO tiene límite
+# específico (RF-01).
+limiter._exempt_routes.add("app.integrations.whatsapp.webhook.receive_webhook_event")
+limiter._exempt_routes.add("app.integrations.pbx.webhook.receive_recording_webhook")
+limiter._exempt_routes.add("app.api.rag.generate_draft_endpoint")
+
 
 def _retry_after_from_slowapi_exc(exc: RateLimitExceeded) -> int:
     """Calcula `Retry-After` a partir de la ventana del límite de slowapi

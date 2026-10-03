@@ -9,10 +9,10 @@
     "total_specs": 84,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 2,
+      "APROBADA": 1,
       "EN_PROGRESO": 0,
       "EN_VERIFICACION": 33,
-      "CERRADA": 41,
+      "CERRADA": 42,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-10-03"
@@ -227,7 +227,7 @@
       "id": "PLAN-011",
       "titulo": "Hardening de produccion (Fase C): contenedores no-root + limites de recursos, rate-limiting general de API, escaneo de vulnerabilidades bloqueante en CI, firewall de host + restriccion de puertos, coherencia HSTS/CSP, TLS de produccion y Dockerfile de produccion - sin CD/staging, sin tocar runbook operativo, sin retomar backups",
       "archivo": ".swarm/PLAN-011.md",
-      "estado": "APROBADO",
+      "estado": "CERRADO",
       "origen": "prompt-lab/prompts/PROMPT-011-HARDENING-PRODUCCION.md",
       "sensible": true,
       "specs_propuestas": [
@@ -1964,7 +1964,7 @@
       "id": "SPEC-084",
       "titulo": "Pruebas+seguridad+no-regresion+docs que cierra PLAN-011: 429, no-root, headers, CI falla ante vuln sembrada, auditoria de no-relajacion de invariantes, cero regresion",
       "archivo": ".swarm/specs/SPEC-084.md",
-      "estado": "APROBADA",
+      "estado": "CERRADA",
       "fase": "F4",
       "plan": "PLAN-011",
       "sensible": true,

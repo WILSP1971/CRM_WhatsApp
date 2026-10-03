@@ -43,9 +43,50 @@
   - [ ] Contenedor API está en AMBAS redes: `app` + `ia_internal` (líneas 131–133)
   - [ ] `docker exec crm_ia wget -T5 -qO- http://1.1.1.1` devuelve timeout/error (egress bloqueado)
 
-- [ ] **Firewall del host**
-  - [ ] Reglas `iptables`/`nftables` DROP de tráfico saliente desde Ollama a internet
-  - [ ] Puertos expuestos restringidos:
+- [x] **Puertos restringidos (artefacto real, SPEC-083/PLAN-011 F3, CE-109)**
+  - [x] `db`/`redis` sin `ports:` publicado a `0.0.0.0` — verificado con
+        `docker compose config` (sin Docker real disponible en esta
+        verificación, solo resolución de config): ningún `ports:` en esos
+        dos servicios de `docker-compose.yml`.
+  - [x] `api` solo en `127.0.0.1:${API_PORT:-8000}` (loopback), nunca
+        `0.0.0.0` — mismo patrón ya correcto de `ia` (`127.0.0.1:11434`).
+  - [ ] **Pendiente de verificación EN VIVO** (host real): `ss -tlnp | grep -E "5432|6379|8000"` desde una interfaz pública del host NO debe mostrar ninguno de esos puertos escuchando en `0.0.0.0`/`*:*`.
+
+- [x] **Firewall del host — artefacto real versionado (SPEC-083/PLAN-011 F3, ADR-016, CE-111)**
+  - [x] Script: `scripts/ops/firewall-host.sh` (`nftables`, tabla dedicada
+        `crm_hardening`). Genera reglas de entrada (SSH siempre accesible,
+        borde Caddy 80/443, DROP explícito de `5432`/`6379`/`11434`/`8000`
+        en interfaces públicas) + una cadena de salida documentada para el
+        egress de IA.
+  - [x] **NO se aplica automáticamente** (C6): sin cron/systemd timer/hook
+        de CI/CD que lo invoque; `--apply` exige además
+        `--i-understand-this-is-sensitive` como segunda confirmación
+        explícita. Aplicarlo en un host real requiere aprobación del Lead +
+        notificación antes de ejecutar `--apply` (reafirmado en el propio
+        script).
+  - [ ] ⚠️ **PASO MANUAL PENDIENTE antes de considerar el firewall COMPLETO**
+        (hallazgo explícito de BLACK WIDOW en la auditoría de SPEC-083,
+        confirmado por HAWKEYE en SPEC-084): la cadena de salida
+        `output_hardening_ia_egress` del script deja el DROP de egress de
+        IA como **plantilla comentada** (`ip daddr <IA_INTERNAL_SUBNET>
+        accept` / `drop` de ejemplo) — el operador DEBE, antes de aplicar el
+        firewall en un host real:
+        1. Obtener la subred REAL de la red Docker `ia_internal` con
+           `docker network inspect <proyecto>_ia_internal` (el nombre
+           exacto depende del `COMPOSE_PROJECT_NAME`/directorio del repo en
+           ese host).
+        2. Descomentar y completar esa sección del script con la subred
+           obtenida (sustituir `<IA_INTERNAL_SUBNET>` por el valor real).
+        3. Solo entonces `--apply` deja el firewall de host COMPLETO
+           (entrada + salida de IA reforzada a nivel de kernel).
+        Sin este paso manual, el firewall de host protege los **puertos de
+        entrada** (SSH/Caddy/DROP de puertos sensibles) pero **NO** añade
+        una segunda línea de defensa al egress de IA a nivel de host — la
+        primera línea de defensa, el aislamiento de red Docker
+        `ia_internal internal: true` (ADR-005), sigue intacta y operativa
+        **independientemente** de este paso pendiente (defensa en
+        profundidad, no sustitución, ADR-016 §1).
+  - [ ] Puertos expuestos restringidos (verificación EN VIVO, host real):
     - [ ] `8000` (API): solo desde reverse proxy (127.0.0.1 o LB interno)
     - [ ] `5432` (PostgreSQL): SIN exposición a internet; solo red Docker
     - [ ] `6379` (Redis): SIN exposición a internet; solo red Docker
@@ -56,27 +97,59 @@
   - [ ] NO contiene URLs de OpenAI, Anthropic, Google, etc.
   - [ ] NO contiene imports de SDKs externos de IA
   - [ ] OLLAMA_BASE_URL apunta a `http://ia:11434` (interno)
+  - [x] Verificado (SPEC-084, HAWKEYE): el script **no fue modificado** en
+        ningún commit de PLAN-011 (SPEC-080..083) — `git diff` contra el
+        inicio de la fase devuelve 0 líneas de cambio sobre
+        `backend/check-externos-backend.sh`; ningún endurecimiento relajó
+        la allowlist de egress (R-106).
 
 ---
 
 ## Fase 3: TLS/HTTPS (RNF-05, SPEC-021)
 
-- [ ] **Reverse proxy (Nginx, Traefik, Caddy) configurado**
-  - [ ] Termina TLS en puerto 443 (no 8000 expuesto)
-  - [ ] Certificado válido (Let's Encrypt o CA corporativa)
-  - [ ] Redirige HTTP plano → HTTPS
-  - [ ] Reenvía a `api:8000` por red Docker interna
+- [x] **Reverse proxy (Caddy) — artefacto real parametrizado por dominio/env (SPEC-083/PLAN-011 F3, ADR-016)**
+  - [x] Artefacto: `Caddyfile` (raíz del repo) — bloque de sitio
+        `{$CADDY_DOMAIN:localhost}`: con `CADDY_DOMAIN` sin definir o
+        `localhost` (desarrollo), Caddy sirve HTTP plano sin ACME (no es un
+        dominio público resoluble); con un dominio público real configurado
+        en el `.env` del host de producción (NUNCA commiteado, ver
+        `.env.example`), Caddy gestiona TLS automático vía ACME/Let's
+        Encrypt sin bloque `tls` explícito ni certificado/clave en el repo
+        (C3).
+  - [x] Termina TLS en 443 (no 8000 expuesto directamente — `api` queda tras
+        `127.0.0.1:8000`, ver Fase 2); reenvía a `api:8000` por red Docker
+        interna (`app`).
+  - [ ] **Pendiente de verificación EN VIVO** (requiere dominio real + host
+        con puerto 80 accesible desde internet para el reto ACME HTTP-01):
+    - [ ] Certificado válido emitido (Let's Encrypt o CA corporativa)
+    - [ ] Redirige HTTP plano → HTTPS
+    - [ ] `curl -v https://<dominio-real>/healthz` devuelve 200 con certificado válido
+    - [ ] `openssl s_client -connect <dominio-real>:443` muestra certificado válido
+    - [ ] Fecha de expiración del certificado ≥30 días en el futuro
 
-- [ ] **Headers de seguridad**
-  - [ ] `Strict-Transport-Security: max-age=31536000; includeSubDomains`
-  - [ ] `X-Content-Type-Options: nosniff`
-  - [ ] `X-Frame-Options: DENY`
-  - [ ] `Content-Security-Policy: default-src 'self'` (sin `unsafe-inline`)
-
-- [ ] **Test de TLS**
-  - [ ] `curl -v https://app.tudominio.com/healthz` devuelve 200 con certificado válido
-  - [ ] `openssl s_client -connect app.tudominio.com:443` muestra certificado válido
-  - [ ] Fecha de expiración del certificado ≥30 días en el futuro
+- [x] **Headers de seguridad — fuente de verdad única código↔checklist (SPEC-083/PLAN-011 F3, D-1 §11.2, CE-110)**
+  - [x] Artefacto: `backend/app/core/security_headers.py`
+        (`SecurityHeadersMiddleware`). Verificado con `TestClient` real
+        (SPEC-084, HAWKEYE — `backend/tests/test_security_headers.py`):
+  - [x] `Strict-Transport-Security: max-age=31536000; includeSubDomains` en
+        TODA respuesta (`/api/*`, `/healthz`, `/metrics`, incluidas
+        respuestas de error 401/404) — valor EXACTO verificado, no solo
+        "contiene max-age".
+  - [x] `X-Content-Type-Options: nosniff`
+  - [x] `X-Frame-Options: DENY`
+  - [x] `Content-Security-Policy: default-src 'self'` **sin `'unsafe-inline'`**
+        en toda ruta de la API — verificado explícitamente que la cadena
+        `'unsafe-inline'` NO aparece en la CSP de `/healthz`.
+  - [x] **Excepción ACOTADA, no relajación global:** `/docs`/`/redoc`
+        (Swagger UI/ReDoc) reciben una CSP propia con `'unsafe-inline'`
+        SOLO en esas 2 rutas (necesario para que esas UIs rendericen
+        estilos/JS inline) — verificado que ninguna otra ruta de la MISMA
+        app recibe esa relajación. Fuera de `development`, Swagger/ReDoc
+        están deshabilitados por completo (`docs_url=None`/`redoc_url=None`
+        en `app/main.py`, verificado con `TestClient`: 404 fuera de
+        `development`), reduciendo la superficie expuesta de un backend con
+        PHI potencial (ADR-009) en vez de mantener la CSP relajada en
+        producción.
 
 ---
 
