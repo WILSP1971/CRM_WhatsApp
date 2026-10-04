@@ -1,6 +1,6 @@
 # SPEC-091 — Pruebas + simulador de webhook de Instagram FIRMADO + runbook del canal (con el bloqueo de Meta App Review EXPLÍCITO) + deploy on-prem — CIERRA PLAN-012 (F6) 🔴 SENSIBLE
 
-- Estado: APROBADA · Responsable: HAWKEYE · Colaboran/revisan: BLACK PANTHER, BLACK WIDOW, WOLVERINE, QUICKSILVER (deploy) · Prioridad: ALTA · Tipo: PRUEBAS/DOCS/DEVOPS/NO-REGRESIÓN · Fase: F6
+- Estado: CERRADA · Responsable: HAWKEYE · Colaboran/revisan: BLACK PANTHER, BLACK WIDOW, WOLVERINE, QUICKSILVER (deploy) · Prioridad: ALTA · Tipo: PRUEBAS/DOCS/DEVOPS/NO-REGRESIÓN · Fase: F6
 - Deriva de: PLAN-012 (F6, §2.IN.8, §4 tabla F6, §5, §6 R-110..R-117 (cierre), §7 CE-114/CE-120, §9, §10, §1.5/§1 bloqueo de Meta App Review) · Clasificación: SENSIBLE (`.no-externo`) · **Depende de SPEC-085..090** (prueba el conjunto completo y cierra el plan) · Espeja el simulador de webhook firmado de WhatsApp (SPEC-034) y las suites de WhatsApp (SPEC-033); `RUNBOOK.md`/`DEPLOYMENT_CHECKLIST.md`, `docker-compose.yml` · ADR-006/007/009/016/017(si aplica) · **CIERRA PLAN-012**
 
 ## Objetivo

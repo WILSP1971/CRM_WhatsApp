@@ -9,10 +9,10 @@
     "total_specs": 91,
     "por_estado": {
       "PROPUESTA": 0,
-      "APROBADA": 8,
+      "APROBADA": 0,
       "EN_PROGRESO": 0,
-      "EN_VERIFICACION": 33,
-      "CERRADA": 42,
+      "EN_VERIFICACION": 34,
+      "CERRADA": 49,
       "ARCHIVADA": 8
     },
     "actualizado": "2026-10-03"
@@ -246,7 +246,7 @@
       "id": "PLAN-012",
       "titulo": "Canal Instagram Direct Message (Fase D, la ultima de 4): segundo canal de mensajeria real via Instagram Messaging API de Meta, espejando la arquitectura del canal WhatsApp ya en produccion, reutilizando dominio/pipeline IA/infra ya construidos, con el bloqueo externo de Meta App Review como riesgo top",
       "archivo": ".swarm/PLAN-012.md",
-      "estado": "APROBADO",
+      "estado": "CERRADO",
       "origen": "prompt-lab/prompts/PROMPT-012-INSTAGRAM-DM.md",
       "sensible": true,
       "specs_propuestas": [
@@ -262,7 +262,7 @@
         "ADR-006 (ampliacion)",
         "ADR-017 (condicional)"
       ],
-      "nota": "Fase D de 4, la ultima (tras PLAN-009/010/011 cerrados). Hallazgo central de XAVIER: el tamano real es MENOR que reconstruir el Entregable #3 completo (estimacion de PLAN-006) porque el pipeline IA local, observabilidad, rate-limiting y el patron de routing identificador-tenant con SECURITY DEFINER ya existen y se heredan casi intactos. Decisiones vinculantes del Lead: Meta App Review NO resuelto (el equipo construye/prueba con payloads simulados + cuentas de prueba, activacion con usuarios reales diferida al Lead - riesgo top R-110), alcance V1 texto+imagenes/adjuntos (sin notas de voz), human-in-the-loop identico a WhatsApp (cero autoenvio), idempotencia reutilizando messages.wamid como id generico (sin anadir columna), frontend headless/minimo (sin UI dedicada). DOCTOR STRANGE decidio ampliar ADR-006 para el envio (mismo host graph.facebook.com) y dejo como decision condicional/diferida a SPEC-088 si el CDN de media de Instagram necesita su propio ADR-017 (debe confirmarse el hostname real contra documentacion vigente de Meta antes de fijar el guardarrail de egress)."
+      "nota": "Fase D de 4, la ultima (tras PLAN-009/010/011 cerrados). Hallazgo central de XAVIER: el tamano real es MENOR que reconstruir el Entregable #3 completo (estimacion de PLAN-006) porque el pipeline IA local, observabilidad, rate-limiting y el patron de routing identificador-tenant con SECURITY DEFINER ya existen y se heredan casi intactos. Decisiones vinculantes del Lead: Meta App Review NO resuelto (el equipo construye/prueba con payloads simulados + cuentas de prueba, activacion con usuarios reales diferida al Lead - riesgo top R-110), alcance V1 texto+imagenes/adjuntos (sin notas de voz), human-in-the-loop identico a WhatsApp (cero autoenvio), idempotencia reutilizando messages.wamid como id generico (sin anadir columna), frontend headless/minimo (sin UI dedicada). DOCTOR STRANGE decidio ampliar ADR-006 para el envio (mismo host graph.facebook.com) y dejo como decision condicional/diferida a SPEC-088 si el CDN de media de Instagram necesita su propio ADR-017 (debe confirmarse el hostname real contra documentacion vigente de Meta antes de fijar el guardarrail de egress). CIERRE DE INGENIERIA (2026-10-04): las 7 SPECs (085..091) estan implementadas y verificadas contra Postgres real, cero regresiones. Dos decisiones quedaron trazadas en revisiones post-aprobacion: SPEC-088 redisenada (sin descarga/cifrado de media, por politica de Meta) y SPEC-089 (el callback delivery no existe para Instagram, estado_entrega se queda en enviado). DIFERIDO al Lead, sin fecha: (1) el deploy on-prem real de los servicios Docker (checkpoint C6, secretos reales los genera el Lead, nunca pegados en chat) -- documentado y listo en RUNBOOK_INSTAGRAM.md/DEPLOYMENT_CHECKLIST_INSTAGRAM.md, NO ejecutado; (2) la activacion real con usuarios de Instagram, bloqueada externamente hasta que Meta apruebe la App Review (R-110, fuera del control del equipo)."
     }
   ],
   "specs": [
@@ -2009,7 +2009,7 @@
       "id": "SPEC-085",
       "titulo": "Datos del canal Instagram (instagram_accounts + resolve_tenant_by_instagram_account_id) + egress acotado extendido + secretos INSTAGRAM_* + ampliacion de ADR-006",
       "archivo": ".swarm/specs/SPEC-085.md",
-      "estado": "EN_VERIFICACION",
+      "estado": "CERRADA",
       "fase": "F0",
       "plan": "PLAN-012",
       "sensible": true,
@@ -2025,7 +2025,7 @@
       "id": "SPEC-086",
       "titulo": "Webhook de recepcion de Instagram (challenge GET + firma HMAC sobre RAW body + ACK 200 <=500ms + encolado ig:inbound) + parser puro object:instagram/entry[].messaging[]",
       "archivo": ".swarm/specs/SPEC-086.md",
-      "estado": "EN_VERIFICACION",
+      "estado": "CERRADA",
       "fase": "F1",
       "plan": "PLAN-012",
       "sensible": true,
@@ -2043,7 +2043,7 @@
       "id": "SPEC-087",
       "titulo": "Ingesta idempotente + enrutado multi-tenant + disparo del pipeline IA local (instagram_inbound_worker, cola ig:inbound) + servicio Docker endurecido",
       "archivo": ".swarm/specs/SPEC-087.md",
-      "estado": "EN_VERIFICACION",
+      "estado": "CERRADA",
       "fase": "F2",
       "plan": "PLAN-012",
       "sensible": true,
@@ -2063,7 +2063,7 @@
       "id": "SPEC-088",
       "titulo": "Media de los DMs de Instagram: persistencia de la URL del CDN de Meta (sin descarga, sin cifrado), CERO egress de backend para media (REVISADA 2026-10-04 tras hallazgo de politica de Meta)",
       "archivo": ".swarm/specs/SPEC-088.md",
-      "estado": "EN_VERIFICACION",
+      "estado": "CERRADA",
       "fase": "F3",
       "plan": "PLAN-012",
       "sensible": true,
@@ -2082,7 +2082,7 @@
       "id": "SPEC-089",
       "titulo": "Envio saliente por la Graph API de Instagram (graph_client.py + instagram_send_worker): ventana de mensajeria PROPIA de IG (message tags, NO HSM) + conciliacion de statuses -> estado_entrega",
       "archivo": ".swarm/specs/SPEC-089.md",
-      "estado": "EN_VERIFICACION",
+      "estado": "CERRADA",
       "fase": "F4",
       "plan": "PLAN-012",
       "sensible": true,
@@ -2103,7 +2103,7 @@
       "id": "SPEC-090",
       "titulo": "Seguridad del canal Instagram (auditoria BLACK WIDOW) + CERO regresion (WhatsApp y resto del backend) + badge/filtro de canal instagram MINIMO en la Bandeja",
       "archivo": ".swarm/specs/SPEC-090.md",
-      "estado": "EN_VERIFICACION",
+      "estado": "CERRADA",
       "fase": "F5",
       "plan": "PLAN-012",
       "sensible": true,
@@ -2127,7 +2127,7 @@
       "id": "SPEC-091",
       "titulo": "Pruebas + simulador de webhook de Instagram FIRMADO + runbook del canal (con el bloqueo de Meta App Review EXPLICITO) + deploy on-prem - CIERRA PLAN-012",
       "archivo": ".swarm/specs/SPEC-091.md",
-      "estado": "EN_VERIFICACION",
+      "estado": "CERRADA",
       "fase": "F6",
       "plan": "PLAN-012",
       "sensible": true,

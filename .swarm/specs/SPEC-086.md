@@ -1,6 +1,6 @@
 # SPEC-086 — Webhook de recepción de Instagram (challenge GET + firma HMAC sobre RAW body + ACK 200 ≤500ms + encolado `ig:inbound`) + parser puro `object:"instagram"`/`entry[].messaging[]` (F1) 🔴 SENSIBLE
 
-- Estado: APROBADA · Responsable: BLACK PANTHER · Colaboran/revisan: BLACK WIDOW (firma HMAC), HAWKEYE (simulador firmado), WOLVERINE (robustez del parser) · Prioridad: ALTA · Tipo: BACKEND/TRANSPORTE/SEGURIDAD · Fase: F1
+- Estado: CERRADA · Responsable: BLACK PANTHER · Colaboran/revisan: BLACK WIDOW (firma HMAC), HAWKEYE (simulador firmado), WOLVERINE (robustez del parser) · Prioridad: ALTA · Tipo: BACKEND/TRANSPORTE/SEGURIDAD · Fase: F1
 - Deriva de: PLAN-012 (F1, §2.IN.1.a/b, §3.1, §3.2 N-1, §4 tabla F1, §5, §6 R-112, §7 CE-115) · Clasificación: SENSIBLE (`.no-externo`) · **Depende de SPEC-085** (cola `ig:inbound` + allowlist por ruta + secretos `INSTAGRAM_*`) · Espeja `backend/app/integrations/whatsapp/webhook.py` (SPEC-026) y `inbound_parser.py` (SPEC-027), `backend/app/core/whatsapp_queue.py`, `backend/app/core/rate_limit_general.py` (SPEC-081) · ADR-006/007
 
 ## Objetivo

@@ -1,6 +1,6 @@
 # SPEC-090 — Seguridad del canal Instagram (auditoría BLACK WIDOW) + CERO regresión (WhatsApp y resto del backend) + badge/filtro de canal "instagram" MÍNIMO en la Bandeja (F5) 🔴 SENSIBLE
 
-- Estado: APROBADA · Responsable: BLACK WIDOW (seguridad) · Colaboran/revisan: WOLVERINE (no-regresión), DAREDEVIL/SPIDER-MAN (badge mínimo), BLACK PANTHER, HAWKEYE · Prioridad: ALTA · Tipo: SEGURIDAD/NO-REGRESIÓN/FRONTEND-MÍNIMO · Fase: F5
+- Estado: CERRADA · Responsable: BLACK WIDOW (seguridad) · Colaboran/revisan: WOLVERINE (no-regresión), DAREDEVIL/SPIDER-MAN (badge mínimo), BLACK PANTHER, HAWKEYE · Prioridad: ALTA · Tipo: SEGURIDAD/NO-REGRESIÓN/FRONTEND-MÍNIMO · Fase: F5
 - Deriva de: PLAN-012 (F5, §2.IN.5/7, §3.3, §4 tabla F5, §5, §6 R-111/R-112/R-114/R-117, §7 CE-116/CE-118/CE-120(parcial)) · Clasificación: SENSIBLE (`.no-externo`) · **Depende de SPEC-085..089** (audita/no-regresiona el conjunto) · Consume `backend/check-externos-backend.sh`, `tests/test_rls_isolation.py`/`test_auth_cross_tenant_rls.py`/`test_config_and_cors.py`, suites de WhatsApp; patrón de auditoría de SPEC-032 (WhatsApp) / SPEC-084 (PLAN-011) · ADR-004/005/006/007/008/009
 
 ## Objetivo

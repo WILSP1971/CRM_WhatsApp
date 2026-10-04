@@ -1,6 +1,6 @@
 # SPEC-089 — Envío saliente por la Graph API de Instagram (`graph_client.py` + `instagram_send_worker`): ventana de mensajería PROPIA de IG (message tags, NO HSM) + conciliación de statuses → `estado_entrega` (F4) 🔴 SENSIBLE
 
-- Estado: APROBADA · Responsable: BLACK PANTHER · Colaboran/revisan: BLACK WIDOW (token/egress), HAWKEYE (human-in-the-loop/statuses), WOLVERINE (no-regresión), DOCTOR STRANGE/BLACK PANTHER (confirmación de message tags contra doc de Meta) · Prioridad: ALTA · Tipo: BACKEND/TRANSPORTE/SEGURIDAD · Fase: F4
+- Estado: CERRADA · Responsable: BLACK PANTHER · Colaboran/revisan: BLACK WIDOW (token/egress), HAWKEYE (human-in-the-loop/statuses), WOLVERINE (no-regresión), DOCTOR STRANGE/BLACK PANTHER (confirmación de message tags contra doc de Meta) · Prioridad: ALTA · Tipo: BACKEND/TRANSPORTE/SEGURIDAD · Fase: F4
 - Deriva de: PLAN-012 (F4, §2.IN.1.c/4, §3.1, §3.2 N-5, §3.5, §4 tabla F4, §5, §6 R-116, §7 CE-119) · Clasificación: SENSIBLE (`.no-externo`) · **Depende de SPEC-087** (mensaje persistido) **y de SPEC-019** (borrador aprobado por humano, YA EXISTENTE) **y SPEC-085** (secreto `INSTAGRAM_PAGE_ACCESS_TOKEN`, allowlist/ADR-006 ampliado) · Espeja `backend/app/integrations/whatsapp/graph_client.py` (SPEC-029) y `wa_send_worker` (SPEC-029/030), `backend/app/models/message.py` (`estado_entrega`) · ADR-006/007
 
 ## Objetivo

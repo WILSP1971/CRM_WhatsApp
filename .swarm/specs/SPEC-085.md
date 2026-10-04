@@ -1,6 +1,6 @@
 # SPEC-085 — Datos del canal Instagram (`instagram_accounts` + `resolve_tenant_by_instagram_account_id`) + egress acotado extendido + secretos `INSTAGRAM_*` + ampliación de ADR-006 (F0) 🔴 SENSIBLE
 
-- Estado: APROBADA · Responsable: BLACK PANTHER · Colaboran/revisan: BLACK WIDOW (egress/secretos), WOLVERINE (allowlist CI/no-regresión), DOCTOR STRANGE (ADR-006 ampliado) · Prioridad: ALTA · Tipo: DATOS/INFRA/SEGURIDAD · Fase: F0
+- Estado: CERRADA · Responsable: BLACK PANTHER · Colaboran/revisan: BLACK WIDOW (egress/secretos), WOLVERINE (allowlist CI/no-regresión), DOCTOR STRANGE (ADR-006 ampliado) · Prioridad: ALTA · Tipo: DATOS/INFRA/SEGURIDAD · Fase: F0
 - Deriva de: PLAN-012 (F0, §2.IN.2/5/6, §3.2 N-2/N-3/N-4, §3.3, §3.4, §4 tabla F0, §5, §6 R-111/R-113/R-114/R-117, §7 CE-116/CE-118/CE-120, §11.1) · Clasificación: SENSIBLE (`.no-externo`) · **No depende de fases previas de PLAN-012 (habilita todo el canal)** · Consume/espeja `backend/app/models/whatsapp_account.py`, la migración de `resolve_tenant_by_phone_number_id` (`54c75efefe3c`), `backend/app/core/config.py` (`_require_strong_secret`, bloque WhatsApp `config.py:176–239`), `backend/check-externos-backend.sh` (sección 7), `.env.example` (bloque WhatsApp), ADR-004/006/007/008 · **Habilita SPEC-086..091**
 
 ## Objetivo

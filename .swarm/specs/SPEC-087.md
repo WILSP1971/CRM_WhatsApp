@@ -1,6 +1,6 @@
 # SPEC-087 — Ingesta idempotente + enrutado multi-tenant + disparo del pipeline IA local (`instagram_inbound_worker`, cola `ig:inbound`) + servicio Docker endurecido (F2) 🔴 SENSIBLE
 
-- Estado: APROBADA · Responsable: BLACK PANTHER · Colaboran/revisan: BLACK WIDOW (cross-tenant/RLS), HAWKEYE (idempotencia/cross-tenant), WOLVERINE (no-regresión), THOR (no competir con STT/IA en CPU) · Prioridad: ALTA · Tipo: BACKEND/WORKER/SEGURIDAD · Fase: F2
+- Estado: CERRADA · Responsable: BLACK PANTHER · Colaboran/revisan: BLACK WIDOW (cross-tenant/RLS), HAWKEYE (idempotencia/cross-tenant), WOLVERINE (no-regresión), THOR (no competir con STT/IA en CPU) · Prioridad: ALTA · Tipo: BACKEND/WORKER/SEGURIDAD · Fase: F2
 - Deriva de: PLAN-012 (F2, §2.IN.3, §3.1, §3.2 N-1/N-2/N-3, §3.4, §4 tabla F2, §5, §6 R-111/R-113, §7 CE-116/CE-117) · Clasificación: SENSIBLE (`.no-externo`) · **Depende de SPEC-086** (evento en `ig:inbound`) **y SPEC-085** (función de routing + idempotencia + modelo) · **Reutiliza SIN REIMPLEMENTAR SPEC-018 (sentimiento) y SPEC-017/019 (RAG + human-in-the-loop)** · Espeja `backend/app/workers/whatsapp_inbound_worker.py` (SPEC-027/028), `docker-compose.yml` (servicios endurecidos, PLAN-011) · ADR-004/007/008
 
 ## Objetivo
