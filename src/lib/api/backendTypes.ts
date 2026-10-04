@@ -61,6 +61,15 @@ export interface BackendMessage {
   // ("texto" | "audio"; opcional/null-safe por si un backend más antiguo aún
   // no lo envía).
   tipo?: string | null;
+  // SPEC-088/090: URL del CDN de Meta (`lookaside.fbsbx.com`) de un adjunto
+  // de DM de Instagram, tal cual la expone `MessageOut.media_url` — el
+  // backend solo transporta la cadena (RF-06 SPEC-088), nunca el binario.
+  // Opcional/null-safe por si un backend más antiguo aún no lo envía (mismo
+  // patrón que `tipo`).
+  media_url?: string | null;
+  // Tipo del adjunto ("image" | "video" | "audio" | "file"), 1:1 con
+  // `MessageOut.media_type`.
+  media_type?: string | null;
 }
 
 export interface BackendCitation {

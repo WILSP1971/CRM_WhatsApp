@@ -2103,7 +2103,7 @@
       "id": "SPEC-090",
       "titulo": "Seguridad del canal Instagram (auditoria BLACK WIDOW) + CERO regresion (WhatsApp y resto del backend) + badge/filtro de canal instagram MINIMO en la Bandeja",
       "archivo": ".swarm/specs/SPEC-090.md",
-      "estado": "APROBADA",
+      "estado": "EN_VERIFICACION",
       "fase": "F5",
       "plan": "PLAN-012",
       "sensible": true,

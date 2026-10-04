@@ -49,6 +49,26 @@ export interface ConversationMessage {
    * regresión (RNF-07).
    */
   isTranscribedAudio?: boolean;
+  /**
+   * URL EXTERNA del CDN de Meta (`lookaside.fbsbx.com`) de un adjunto de DM
+   * de Instagram (SPEC-088/090), copiada TAL CUAL desde `MessageOut.media_url`
+   * — el backend NUNCA descarga ese binario (política de Meta,
+   * `chatwoot#8583`). El NAVEGADOR del agente hace el fetch directo a esa
+   * URL para renderizarla/abrirla bajo demanda. La URL puede expirar o ser
+   * revocada por Meta (el contacto borró el contenido): comportamiento
+   * ACEPTADO, se maneja con un fallback de error de carga, sin mecanismo de
+   * refresco (no existe). EXPLÍCITAMENTE DISTINTO de `isTranscribedAudio`
+   * (nota de voz de WhatsApp, local/cifrada, ADR-009): aquí no hay storage
+   * local ni cifrado, es una referencia externa de solo lectura.
+   * `undefined`/`null` para mensajes sin adjunto y para los de
+   * WhatsApp/webchat/mock.
+   */
+  mediaUrl?: string | null;
+  /** Tipo del adjunto (`"image"` | `"video"` | `"audio"` | `"file"`, tal
+   * como lo clasifica Meta en `attachments[].type`), copiado 1:1 desde
+   * `MessageOut.media_type`. Determina si se renderiza `<img>` o un enlace
+   * "Abrir adjunto". `undefined`/`null` junto con `mediaUrl` ausente. */
+  mediaType?: string | null;
 }
 
 /**

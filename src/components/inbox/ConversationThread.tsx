@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, CheckCheck, Send } from "lucide-react";
+import { AlertTriangle, Check, CheckCheck, Paperclip, Send } from "lucide-react";
 import { Badge, Button } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { formatTime } from "@/lib/format";
@@ -9,13 +9,70 @@ import {
   SENTIMENT_META,
   WHATSAPP_WINDOW_META,
 } from "@/lib/channels";
-import type { Contact, Conversation, MessageStatus } from "@/lib/types";
+import type { Contact, Conversation, ConversationMessage, MessageStatus } from "@/lib/types";
 
 interface ConversationThreadProps {
   conversation: Conversation;
   contact: Contact | undefined;
   draftText: string;
   onDraftChange: (value: string) => void;
+}
+
+/**
+ * Adjunto de un DM de Instagram (SPEC-088/090): `message.mediaUrl` es la URL
+ * FIRMADA del CDN de Meta (`lookaside.fbsbx.com`), transportada tal cual por
+ * el backend — el NAVEGADOR del agente es quien hace el fetch real al
+ * renderizar/abrir esta URL, el backend nunca descarga el binario (RF-06
+ * SPEC-088). Headless/mínimo (Q5=A SPEC-090): sin reproductor dedicado.
+ *
+ * - `mediaType === "image"` -> `<img>` directo a la URL del CDN, con
+ *   fallback "Adjunto no disponible" vía `onError` (la URL puede
+ *   expirar/revocarse si el contacto borra el contenido — comportamiento
+ *   ACEPTADO, SPEC-088 RF-07, sin mecanismo de refresco).
+ * - cualquier otro tipo (`video`/`audio`/`file`) -> enlace "Abrir adjunto"
+ *   que el navegador abre en una pestaña nueva.
+ */
+function MessageAttachment({ message }: { message: ConversationMessage }) {
+  const [imageError, setImageError] = useState(false);
+
+  if (!message.mediaUrl) {
+    return null;
+  }
+
+  if (message.mediaType === "image" && !imageError) {
+    return (
+      <img
+        src={message.mediaUrl}
+        alt="Adjunto de Instagram"
+        className="mb-1.5 max-h-64 max-w-full rounded-lg border border-border-subtle object-cover"
+        onError={() => setImageError(true)}
+      />
+    );
+  }
+
+  if (message.mediaType === "image" && imageError) {
+    return (
+      <p className="mb-1.5 flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface-raised px-3 py-2 text-xs text-text-muted">
+        <Paperclip className="h-3.5 w-3.5" aria-hidden />
+        Adjunto no disponible
+      </p>
+    );
+  }
+
+  return (
+    <a
+      href={message.mediaUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={cn(
+        "mb-1.5 flex items-center gap-1.5 rounded-lg border border-border-subtle bg-bg-surface-raised px-3 py-2 text-xs font-medium text-accent-indigo-strong",
+        "hover:underline focus-visible:shadow-focus focus-visible:outline-none",
+      )}
+    >
+      <Paperclip className="h-3.5 w-3.5" aria-hidden />
+      Abrir adjunto
+    </a>
+  );
 }
 
 function MessageStatusIcon({ status }: { status: MessageStatus }) {
@@ -127,16 +184,19 @@ export function ConversationThread({
                   Transcrito de audio
                 </Badge>
               )}
-              <div
-                className={cn(
-                  "max-w-[75%] rounded-xl px-3.5 py-2.5 text-sm shadow-sm",
-                  isOutgoing
-                    ? "bg-accent-indigo text-text-inverse"
-                    : "border border-border-subtle bg-bg-surface-raised text-text-primary",
-                )}
-              >
-                {message.text}
-              </div>
+              <MessageAttachment message={message} />
+              {message.text.length > 0 && (
+                <div
+                  className={cn(
+                    "max-w-[75%] rounded-xl px-3.5 py-2.5 text-sm shadow-sm",
+                    isOutgoing
+                      ? "bg-accent-indigo text-text-inverse"
+                      : "border border-border-subtle bg-bg-surface-raised text-text-primary",
+                  )}
+                >
+                  {message.text}
+                </div>
+              )}
               <div className="mt-1 flex items-center gap-1 px-1 text-xs text-text-muted">
                 <span>{formatTime(message.sentAt)}</span>
                 {isOutgoing && (

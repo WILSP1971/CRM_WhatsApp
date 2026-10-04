@@ -57,6 +57,24 @@ describe("adaptMessage", () => {
   it("hace fallback de contenido=null a text='' (audio aún sin transcribir)", () => {
     expect(adaptMessage({ ...base, contenido: null, tipo: "audio" }).text).toBe("");
   });
+
+  it("mapea media_url/media_type 1:1 (SPEC-088/090, adjunto de Instagram)", () => {
+    const result = adaptMessage({
+      ...base,
+      media_url: "https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=1&signature=abc",
+      media_type: "image",
+    });
+    expect(result.mediaUrl).toBe(
+      "https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=1&signature=abc",
+    );
+    expect(result.mediaType).toBe("image");
+  });
+
+  it("hace fallback de media_url/media_type a null cuando el backend no los envía", () => {
+    const result = adaptMessage(base);
+    expect(result.mediaUrl).toBeNull();
+    expect(result.mediaType).toBeNull();
+  });
 });
 
 describe("adaptConversation", () => {

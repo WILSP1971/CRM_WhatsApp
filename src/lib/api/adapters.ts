@@ -98,6 +98,20 @@
  *     y los tres campos quedan `undefined` — `RagDraftCard` los trata como
  *     `"texto"`/sin solicitar, igual que el comportamiento previo a esta
  *     SPEC (RNF-FLAG).
+ *
+ * 11. `ConversationMessage.mediaUrl`/`mediaType` (SPEC-088/090) <-
+ *     `BackendMessage.media_url`/`media_type`: copia 1:1 SIN transformación
+ *     — es la URL FIRMADA del CDN de Meta (`lookaside.fbsbx.com`) de un
+ *     adjunto de DM de Instagram, que el backend solo transporta como
+ *     cadena (RF-06 SPEC-088). `ConversationThread` (SPEC-090) la usa para
+ *     renderizar un `<img>` (si `mediaType === "image"`) o un enlace "Abrir
+ *     adjunto" (otros tipos), con el fetch real ocurriendo en el NAVEGADOR
+ *     del agente, nunca en el backend. Explícitamente DISTINTO del patrón
+ *     de `isTranscribedAudio` (nota 9): ese es un dato local cifrado
+ *     (ADR-009), este es una referencia externa de solo lectura que puede
+ *     expirar (Meta la invalida si el contacto borra el contenido) —
+ *     limitación aceptada, sin mecanismo de refresco. `undefined`/`null` en
+ *     modo mock o si el backend aún no envía el campo (null-safe).
  */
 
 import type {
@@ -177,6 +191,12 @@ export function adaptMessage(message: BackendMessage): ConversationMessage {
     sentAt: message.created_at,
     status: adaptMessageStatus(message.estado_entrega),
     isTranscribedAudio: message.tipo === "audio",
+    // Nota 11 (SPEC-088/090): copia 1:1, sin transformación — es una URL
+    // externa que el CLIENTE consume directamente, el adaptador no la valida
+    // ni la reescribe (la validación de forma ya ocurrió en el backend,
+    // SPEC-088 RF-03).
+    mediaUrl: message.media_url ?? null,
+    mediaType: message.media_type ?? null,
   };
 }
 
