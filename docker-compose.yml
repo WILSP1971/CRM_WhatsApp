@@ -1003,10 +1003,13 @@ services:
   # está en la red `app` (egress). También está en `ia_internal` para poder
   # leer/escribir Postgres y Redis, igual que el resto de workers — pero
   # NUNCA habla con `ia` (Ollama): no importa `AIClient`/`app.services.rag`,
-  # auditado por `check-externos-backend.sh`. Invariante de topología: `ia`,
-  # `rag_worker`, `sentiment_worker`, `whatsapp_inbound_worker` permanecen
-  # SIN egress (solo en `ia_internal`); `api` y `wa_send_worker` son los
-  # ÚNICOS con salida, y solo hacia Meta.)
+  # auditado por `check-externos-backend.sh`. Invariante de topología (ACTUALIZADO
+  # SPEC-089: `instagram_send_worker` se SUMA a la lista de servicios con
+  # egress, mismo host): `ia`, `rag_worker`, `sentiment_worker`,
+  # `whatsapp_inbound_worker`, `instagram_inbound_worker` permanecen SIN
+  # egress (solo en `ia_internal`); `api`, `wa_send_worker` e
+  # `instagram_send_worker` son los ÚNICOS con salida, y solo hacia Meta
+  # (`graph.facebook.com`).)
   wa_send_worker:
     build:
       context: ./backend
@@ -1094,6 +1097,99 @@ services:
       - ALL
     # SIN read_only: lee/purga el clip TTS de `audio_store` (volumen ya
     # `rw`, R-104) y usa bind-mount de desarrollo.
+
+  # Worker de ENVÍO saliente por Instagram DM (SPEC-089, ADR-006 ampliado):
+  # consume la cola Redis persistente `ig:outbound`
+  # (`app.core.instagram_outbound_queue`) tras la APROBACIÓN HUMANA del
+  # borrador/mensaje (SPEC-019, `approve_draft_endpoint`). Llama a la Graph
+  # API de Meta EXCLUSIVAMENTE desde
+  # `app/integrations/instagram/graph_client.py` (host allowlist en código:
+  # `graph.facebook.com` exacto, MISMO host ya autorizado para WhatsApp — no
+  # es egress nuevo, ADR-006 ampliado SPEC-085). Nada se envía
+  # automáticamente.
+  # Espejo endurecido de `wa_send_worker` (arriba): a diferencia de
+  # `instagram_inbound_worker` (que vive SOLO en `ia_internal`, sin egress),
+  # este worker SÍ necesita hablar con Meta para ENVIAR — por eso está en la
+  # red `app` (egress), igual que `api`/`wa_send_worker`. También está en
+  # `ia_internal` para poder leer/escribir Postgres y Redis, igual que el
+  # resto de workers — pero NUNCA habla con `ia` (Ollama): no importa
+  # `AIClient`/`app.services.rag`, auditado por `check-externos-backend.sh`.
+  # Sin volumen de audio (a diferencia de `wa_send_worker`): Instagram DM no
+  # tiene respuesta de audio/TTS en el alcance de SPEC-089.
+  instagram_send_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      # SPEC-080 (PLAN-011 F0): Dockerfile ahora es multi-stage (`development`
+      # vs `production`); el compose de desarrollo local FIJA `target:
+      # development` explícitamente para conservar el comportamiento actual
+      # (root, `--reload`, `COPY . .` + bind-mount abajo) sin depender de cuál
+      # stage quede último en el Dockerfile. El stage `production` (no-root,
+      # sin `--reload`, sin tests/`.env`, sin bind-mount) se usa en
+      # `docker-compose.prod.yml` (ver ese archivo), nunca aquí.
+      target: development
+    container_name: crm_instagram_send_worker
+    command: ["python", "-m", "app.workers.instagram_send_worker"]
+    environment:
+      # Base de datos — RUNTIME (ADR-008): rol de aplicación NO-superusuario
+      # `omnicore_app` (NOSUPERUSER NOBYPASSRLS), igual que `api`/otros
+      # workers. El worker nunca ejecuta DDL, solo DML.
+      DATABASE_URL: postgresql://${DB_APP_ROLE:-omnicore_app}:${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}@db:5432/${DB_NAME:-omnicore_ai}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-omnicore_ai}
+      DB_USER: ${DB_APP_ROLE:-omnicore_app}
+      DB_PASSWORD: ${DB_APP_PASSWORD:?DB_APP_PASSWORD requerido (rol omnicore_app, ADR-008)}
+
+      # Redis (misma cola `ig:outbound` que la API usa para encolar tras aprobar)
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+
+      # Secretos (NUNCA hardcoded; desde variables de entorno; sin default débil)
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY requerido}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+
+      # Instagram Messaging API — envío saliente (SPEC-089, SENSIBLE, C3: sin
+      # default débil fuera de development; host fijo graph.facebook.com en
+      # app/integrations/instagram/graph_client.py, ADR-006 ampliado).
+      INSTAGRAM_PAGE_ACCESS_TOKEN: ${INSTAGRAM_PAGE_ACCESS_TOKEN:?INSTAGRAM_PAGE_ACCESS_TOKEN requerido (SPEC-089, C3)}
+      INSTAGRAM_BUSINESS_ACCOUNT_ID: ${INSTAGRAM_BUSINESS_ACCOUNT_ID:-}
+      INSTAGRAM_API_VERSION: ${INSTAGRAM_API_VERSION:-v21.0}
+      # Reutiliza los MISMOS timeouts/reintentos que WhatsApp (ver
+      # `app/integrations/instagram/graph_client.py`, comentario de
+      # `__init__`): ambos clientes hablan con el mismo host/infraestructura
+      # de Meta, sin variables `INSTAGRAM_SEND_*` duplicadas sin motivo.
+      WHATSAPP_SEND_TIMEOUT_SECONDS: ${WHATSAPP_SEND_TIMEOUT_SECONDS:-10}
+      WHATSAPP_SEND_MAX_RETRIES: ${WHATSAPP_SEND_MAX_RETRIES:-3}
+      WHATSAPP_SEND_BACKOFF_BASE_SECONDS: ${WHATSAPP_SEND_BACKOFF_BASE_SECONDS:-1}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    networks:
+      - app
+      - ia_internal
+    restart: unless-stopped
+    # Worker Python I/O-bound (espera en cola Redis, persiste bajo RLS, hace
+    # HTTP egress acotado a `graph.facebook.com`; NO ejecuta inferencia
+    # localmente) — NO forma parte de la puerta dura de THOR. Techo HOLGADO,
+    # no ajuste fino (mismo criterio que `wa_send_worker`).
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # SIN read_only: usa bind-mount de desarrollo (hot-reload), mismo
+    # criterio que `wa_send_worker`/`instagram_inbound_worker`.
 
   # Reverse proxy TLS (SPEC-035, ADR-010): expone SOLO el path del webhook de
   # grabaciones (/webhooks/pbx/recordings). Nunca STT/IA ni BD.

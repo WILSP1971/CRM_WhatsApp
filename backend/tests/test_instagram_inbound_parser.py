@@ -13,6 +13,8 @@ import pytest
 
 from app.integrations.instagram.inbound_parser import (
     InboundEventParseError,
+    InstagramDeliveryEvent,
+    parse_delivery_events,
     parse_inbound_instagram_events,
 )
 
@@ -214,3 +216,119 @@ def test_empty_entry_list_returns_no_events():
     events = parse_inbound_instagram_events(json.dumps({"object": "instagram", "entry": []}))
 
     assert events == []
+
+
+# ---------------------------------------------------------------------------
+# `parse_delivery_events` — SPEC-089, conciliación de statuses de ENVÍO.
+# ---------------------------------------------------------------------------
+
+
+def _delivery_payload(
+    *, instagram_account_id="ig-biz-1", sender_id="ig-user-123", mids=None
+):
+    return json.dumps(
+        {
+            "object": "instagram",
+            "entry": [
+                {
+                    "id": instagram_account_id,
+                    "time": 1700000000,
+                    "messaging": [
+                        {
+                            "sender": {"id": sender_id},
+                            "recipient": {"id": instagram_account_id},
+                            "delivery": {
+                                "mids": mids if mids is not None else ["mid.OUT1"],
+                                "watermark": 1700000000,
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
+def test_parse_delivery_events_extracts_mids_and_account_id():
+    events = parse_delivery_events(
+        _delivery_payload(instagram_account_id="ig-biz-42", mids=["mid.A", "mid.B"])
+    )
+
+    assert events == [
+        InstagramDeliveryEvent(mids=["mid.A", "mid.B"], instagram_account_id="ig-biz-42")
+    ]
+
+
+def test_parse_delivery_events_ignores_message_events():
+    # Un evento de MENSAJE entrante (sin "delivery") no debe aparecer aquí.
+    events = parse_delivery_events(_payload())
+
+    assert events == []
+
+
+def test_parse_inbound_instagram_events_ignores_delivery_events():
+    # Y viceversa: un callback `delivery` no debe colarse como mensaje entrante.
+    events = parse_inbound_instagram_events(_delivery_payload())
+
+    assert events == []
+
+
+def test_parse_delivery_events_ignores_read_callbacks():
+    payload = json.dumps(
+        {
+            "object": "instagram",
+            "entry": [
+                {
+                    "id": "ig-biz-1",
+                    "time": 1700000000,
+                    "messaging": [
+                        {
+                            "sender": {"id": "ig-user-123"},
+                            "recipient": {"id": "ig-biz-1"},
+                            "read": {"watermark": 1700000000},
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    events = parse_delivery_events(payload)
+
+    assert events == []
+
+
+def test_parse_delivery_events_without_mids_is_ignored():
+    payload = json.dumps(
+        {
+            "object": "instagram",
+            "entry": [
+                {
+                    "id": "ig-biz-1",
+                    "messaging": [
+                        {
+                            "sender": {"id": "ig-user-123"},
+                            "recipient": {"id": "ig-biz-1"},
+                            "delivery": {"watermark": 1700000000},
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    events = parse_delivery_events(payload)
+
+    assert events == []
+
+
+def test_parse_delivery_events_invalid_json_raises_parse_error():
+    with pytest.raises(InboundEventParseError):
+        parse_delivery_events("{not-valid-json")
+
+
+def test_parse_delivery_events_wrong_object_raises_parse_error():
+    with pytest.raises(InboundEventParseError):
+        parse_delivery_events(
+            json.dumps({"object": "whatsapp_business_account", "entry": []})
+        )

@@ -72,6 +72,14 @@ _SERVICIOS_SIN_EGRESS_ESPERADO = {
     "tts_worker",
     "db",
     "redis",
+    # `instagram_inbound_worker` (SPEC-087, ADR-007/008): recepción/ingesta
+    # del canal Instagram — mismo criterio que `whatsapp_inbound_worker` NO
+    # tenía egress en su propia fase (SPEC-027, antes de SPEC-054/055): este
+    # worker NO descarga media (SPEC-088 decidió persistir solo la URL del
+    # CDN, CERO egress de backend para media) ni envía (eso es
+    # `instagram_send_worker`, SÍ con egress, ver abajo). Permanece
+    # EXCLUSIVAMENTE en `ia_internal`.
+    "instagram_inbound_worker",
 }
 
 # Únicos servicios autorizados a tener egress/salida por la red `app`
@@ -95,6 +103,10 @@ _SERVICIOS_SIN_EGRESS_ESPERADO = {
 #   host SOLO al PBX de media si es externo (por defecto inerte en on-prem,
 #   sin egress nuevo); también en `ia_internal` para hablar con voice_stt/
 #   voice_tts/NLU por red interna.
+# - `instagram_send_worker`: espejo de `wa_send_worker` (SPEC-089, ADR-006
+#   ampliado por SPEC-085) — transporte de ENVÍO hacia `graph.facebook.com`
+#   exclusivamente (MISMO host ya autorizado, no es egress nuevo), nunca
+#   inferencia; solo envía borradores YA aprobados por un humano (SPEC-019).
 _SERVICIOS_CON_EGRESS_PERMITIDO = {
     "api",
     "wa_send_worker",
@@ -102,6 +114,7 @@ _SERVICIOS_CON_EGRESS_PERMITIDO = {
     "caddy",
     "recording_fetch_worker",
     "voice_gateway",
+    "instagram_send_worker",
 }
 
 # Red con egress a internet (bridge normal, sin `internal: true`).

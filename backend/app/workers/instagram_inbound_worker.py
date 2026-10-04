@@ -77,6 +77,27 @@ exclusivamente los servicios de dominio YA EXISTENTES
 (`schedule_sentiment_analysis`, `generate_rag_draft`,
 `draft_review_service.create_draft`). La cola `ig:inbound` es DISTINTA de
 `wa:inbound` (R-117, cero regresión del canal WhatsApp).
+
+Conciliación de statuses de ENVÍO (SPEC-089, espejo de SPEC-030) —
+`_process_delivery_event`:
+  1. Parsea `entry[].messaging[].delivery` del MISMO payload crudo
+     (`inbound_parser.parse_delivery_events`) — un evento de webhook de
+     Instagram puede traer mensajes entrantes Y callbacks de entrega
+     mezclados, igual que WhatsApp mezcla `messages[]`/`statuses[]`.
+  2. RESUELVE tenant por `instagram_account_id` con la MISMA función
+     SECURITY DEFINER que los mensajes entrantes (`_resolve_tenant_id`); sin
+     mapeo, descarte auditado, cero escritura.
+  3. Fija RLS (`set_tenant_session`) y busca CADA mensaje saliente por `mid`
+     (columna `messages.wamid`, §3.4) DENTRO del tenant resuelto: un `mid`
+     que no pertenece a ese tenant (o que no existe) no aparece en la
+     consulta (RLS lo filtra) y se ignora/loguea sin romper.
+  4. Mapea a `estado_entrega="entregado"` y reutiliza `update_delivery_status`
+     (SPEC-015), monotónica (no retrocede) e idempotente ante
+     duplicados/reentregas: aplicarla dos veces, o en cualquier orden, deja
+     el mensaje en el estado más avanzado visto. `failed` (si ya estaba
+     asignado por el propio `instagram_send_worker`, p.ej. envío fuera de
+     ventana bloqueado) es TERMINAL y nunca revive ante un `delivery` tardío
+     (mismo criterio que WhatsApp).
 """
 
 from __future__ import annotations
@@ -104,7 +125,9 @@ from app.core.worker_resilience import resilient_worker_loop
 from app.db.session import SessionLocal, set_tenant_session
 from app.integrations.instagram.inbound_parser import (
     InboundEventParseError,
+    InstagramDeliveryEvent,
     InstagramMessageEvent,
+    parse_delivery_events,
     parse_inbound_instagram_events,
 )
 from app.integrations.instagram.media_url_validator import (
@@ -112,8 +135,13 @@ from app.integrations.instagram.media_url_validator import (
 )
 from app.models.contact import Contact
 from app.models.conversation import Conversation
+from app.models.message import ESTADO_ENTREGA_FAILED, Message
 from app.services.ai_service import AIClient, AIServiceError
-from app.services.message_service import create_message, schedule_sentiment_analysis
+from app.services.message_service import (
+    create_message,
+    schedule_sentiment_analysis,
+    update_delivery_status,
+)
 from app.services.rag import draft_review_service
 from app.services.rag.draft_service import InsufficientContextError, generate_rag_draft
 
@@ -121,6 +149,7 @@ logger = structlog.get_logger(__name__)
 
 _CANAL_INSTAGRAM = "instagram"
 _REMITENTE_CONTACTO = "contacto"
+_ESTADO_ENTREGA_ENTREGADO = "entregado"
 
 
 def _resolve_tenant_id(db: Session, *, instagram_account_id: str) -> uuid.UUID | None:
@@ -358,6 +387,85 @@ def _generate_rag_draft_best_effort(
     )
 
 
+def _get_message_by_mid(db: Session, *, mid: str) -> Message | None:
+    """Busca el mensaje SALIENTE conciliado por `mid` DENTRO del tenant de la
+    sesión (RLS ya fijado, `set_tenant_session`) — espejo de
+    `whatsapp_inbound_worker._get_message_by_wamid` (SPEC-030). Reutiliza la
+    columna YA EXISTENTE `messages.wamid` (§3.4): Instagram guarda su `mid`
+    ahí, igual que al persistir el mensaje saliente
+    (`instagram_send_worker`). Un `mid` de otro tenant simplemente no aparece
+    (RLS lo filtra a nivel de fila)."""
+    return db.scalar(sa.select(Message).where(Message.wamid == mid))
+
+
+def _process_delivery_event(
+    db: Session,
+    event: InstagramDeliveryEvent,
+    *,
+    event_id: str,
+) -> None:
+    """Procesa UN callback `delivery` (SPEC-089, espejo simplificado de
+    `whatsapp_inbound_worker._process_status_event`, SPEC-030): resuelve
+    tenant, fija RLS, concilia CADA mensaje saliente de `event.mids` por
+    `mid` (columna `messages.wamid`) y actualiza `estado_entrega` a
+    "entregado" (monotónico/idempotente vía `update_delivery_status`).
+
+    Sin mapeo de `instagram_account_id` -> descarte auditado, cero escritura
+    (mismo criterio RF-04 que `_process_message_event`): se loguean solo
+    metadatos de enrutado (`instagram_account_id`/`mid`/`event_id`), NUNCA
+    contenido de mensajes ni datos del contacto (C2/C3).
+    """
+    tenant_id = _resolve_tenant_id(db, instagram_account_id=event.instagram_account_id)
+    if tenant_id is None:
+        logger.warning(
+            "instagram_delivery_unmapped_account_id_discarded",
+            instagram_account_id=event.instagram_account_id,
+            mids=event.mids,
+            event_id=event_id,
+        )
+        return
+
+    with db.begin():
+        set_tenant_session(db, str(tenant_id))
+
+        for mid in event.mids:
+            message = _get_message_by_mid(db, mid=mid)
+            if message is None:
+                # `mid` desconocido para este tenant (mensaje no nuestro, o
+                # de otro tenant filtrado por RLS): no-op auditado.
+                logger.info(
+                    "instagram_delivery_unknown_mid_skipped",
+                    tenant_id=str(tenant_id),
+                    mid=mid,
+                    event_id=event_id,
+                )
+                continue
+
+            if message.estado_entrega == ESTADO_ENTREGA_FAILED:
+                # `failed` es TERMINAL (mismo criterio que WhatsApp, RF-05
+                # SPEC-089): un `delivery` tardío tras un bloqueo de ventana
+                # NO debe revivir el mensaje ni corromper el estado.
+                logger.info(
+                    "instagram_delivery_ignored_after_failed",
+                    tenant_id=str(tenant_id),
+                    mid=mid,
+                    event_id=event_id,
+                )
+                continue
+
+            estado_anterior = message.estado_entrega
+            update_delivery_status(db, message, _ESTADO_ENTREGA_ENTREGADO)
+            logger.info(
+                "instagram_delivery_updated",
+                tenant_id=str(tenant_id),
+                mid=mid,
+                message_id=str(message.id),
+                estado_anterior=estado_anterior,
+                estado_actual=message.estado_entrega,
+                event_id=event_id,
+            )
+
+
 def _process_message_event(
     db: Session,
     event: InstagramMessageEvent,
@@ -514,9 +622,17 @@ def process_job(
     `postgres_engine` de test en vez del `SessionLocal` cacheado).
     `redis_client`/`ai_client` son SOLO para pruebas (inyectan dobles de
     sentimiento/RAG en vez de instancias reales).
+
+    Extensión aditiva (SPEC-089): además de `entry[].messaging[].message`
+    (mensajes entrantes), este mismo payload crudo puede traer
+    `entry[].messaging[].delivery` (callbacks de entrega de mensajes
+    SALIENTES, ver `_process_delivery_event`) — se parsean y procesan en la
+    MISMA pasada, igual que `whatsapp_inbound_worker` procesa
+    `messages[]`/`statuses[]` del mismo evento.
     """
     try:
         events = parse_inbound_instagram_events(job.raw_body)
+        delivery_events = parse_delivery_events(job.raw_body)
     except InboundEventParseError:
         logger.warning(
             "instagram_inbound_payload_parse_error",
@@ -525,10 +641,10 @@ def process_job(
         )
         return
 
-    if not events:
+    if not events and not delivery_events:
         logger.info(
             "instagram_inbound_no_message_events", event_id=job.event_id
-        )  # payload sin mensajes entrantes reconocibles (echo/status/otros campos)
+        )  # payload sin mensajes entrantes ni deliveries reconocibles (echo/read/otros campos)
         return
 
     db = (session_factory or SessionLocal)()
@@ -548,6 +664,18 @@ def process_job(
                     "instagram_inbound_message_processing_failed",
                     event_id=job.event_id,
                     mid=event.mid,
+                    exc_info=True,
+                )
+
+        for delivery_event in delivery_events:
+            try:
+                _process_delivery_event(db, delivery_event, event_id=job.event_id)
+            except Exception:  # noqa: BLE001 — robustez: un delivery no tumba el worker
+                db.rollback()
+                logger.error(
+                    "instagram_delivery_processing_failed",
+                    event_id=job.event_id,
+                    mids=delivery_event.mids,
                     exc_info=True,
                 )
     finally:

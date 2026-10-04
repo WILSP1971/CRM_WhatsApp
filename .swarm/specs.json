@@ -2082,7 +2082,7 @@
       "id": "SPEC-089",
       "titulo": "Envio saliente por la Graph API de Instagram (graph_client.py + instagram_send_worker): ventana de mensajeria PROPIA de IG (message tags, NO HSM) + conciliacion de statuses -> estado_entrega",
       "archivo": ".swarm/specs/SPEC-089.md",
-      "estado": "APROBADA",
+      "estado": "EN_VERIFICACION",
       "fase": "F4",
       "plan": "PLAN-012",
       "sensible": true,

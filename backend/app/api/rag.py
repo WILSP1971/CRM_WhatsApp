@@ -64,6 +64,15 @@ ejecutada. El envío real (host de la Graph API de Meta, allowlist ADR-006,
 ventana 24h/plantilla) vive fuera de este router, en
 `app/integrations/whatsapp/graph_client.py` +
 `app/workers/wa_send_worker.py` (separación transporte/orquestación).
+
+RESTRICCIÓN DURA (SPEC-089, SENSIBLE, ADR-006 ampliado): espejo EXACTO de lo
+anterior para `conversation.canal == "instagram"` — `approve_draft_endpoint`
+ENCOLA el envío por Graph API (`app.core.instagram_outbound_queue`,
+consumido por el worker `instagram_send_worker`) DESPUÉS de la misma
+aprobación humana ya confirmada. El envío real (MISMO host de Meta, ventana
+propia de Instagram con message tags, NO HSM) vive en
+`app/integrations/instagram/graph_client.py` +
+`app/workers/instagram_send_worker.py`.
 """
 
 from __future__ import annotations
@@ -104,6 +113,9 @@ from app.core.tts_queue import (
     TTS_JOB_MODO_ESCUCHAR,
     enqueue_tts_job,
 )
+from app.core.instagram_outbound_queue import (
+    enqueue_outbound_send as enqueue_instagram_outbound_send,
+)
 from app.core.whatsapp_outbound_queue import enqueue_outbound_send
 from app.schemas.ws_chat import WsOutgoingMessage
 from app.services.ai_service import AIClient, AIServiceError, get_ai_client
@@ -113,6 +125,7 @@ from app.services.telefonia import audio_store
 from app.workers.rag_ingest_worker import notify_new_job
 
 _CANAL_WHATSAPP = "whatsapp"
+_CANAL_INSTAGRAM = "instagram"
 _RESPUESTA_MODO_AUDIO = "audio"
 _TTS_ESTADO_LISTO = "listo"
 _AUDIO_MIME_TYPE = "audio/ogg; codecs=opus"
@@ -629,6 +642,34 @@ async def approve_draft_endpoint(
                     tenant_id=str(current_user.tenant_id),
                     exc_info=True,
                 )
+    elif conversation.canal == _CANAL_INSTAGRAM:
+        # SPEC-089/RF-02 (SENSIBLE, ADR-006 ampliado): espejo EXACTO del
+        # bloque WhatsApp de arriba, pero hacia la cola `ig:outbound`
+        # (consumida por `instagram_send_worker`). SOLO tras la aprobación
+        # humana ya confirmada (`approve_and_send` ya persistió `message`).
+        # Ningún otro path del backend encola este job. Best-effort de
+        # encolado (igual criterio que WhatsApp/el `publish` de abajo): si
+        # Redis falla aquí, el mensaje YA quedó persistido — se loguea para
+        # reconciliar manualmente en vez de revertir la aprobación ya
+        # confirmada. Instagram no tiene respuesta de audio (TTS) en el
+        # alcance de SPEC-089 — no hay rama equivalente al bloque de audio
+        # de WhatsApp de arriba.
+        try:
+            await enqueue_instagram_outbound_send(
+                redis_client,
+                tenant_id=current_user.tenant_id,
+                conversation_id=conversation_id,
+                message_id=message.id,
+            )
+        except Exception:  # noqa: BLE001 — best-effort, no revierte la aprobación
+            logger.error(
+                "rag_draft_approve_instagram_enqueue_failed",
+                draft_id=str(draft.id),
+                message_id=str(message.id),
+                conversation_id=str(conversation_id),
+                tenant_id=str(current_user.tenant_id),
+                exc_info=True,
+            )
 
     message_out = MessageOut.model_validate(message)
     envelope = WsOutgoingMessage(message=message_out)

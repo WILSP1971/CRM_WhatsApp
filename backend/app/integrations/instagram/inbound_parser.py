@@ -37,8 +37,34 @@ receptor, análogo al `phone_number_id` de WhatsApp). El id de mensaje es
 `message.mid` (análogo al `wamid`). Eventos `messaging[]` que NO sean
 mensajes entrantes (echo-backs del propio negocio, `message.is_echo`, o
 callbacks de estado como `delivery`/`read` sin `message`) se ignoran sin
-error: no son responsabilidad de este parser (conciliación de estados
-salientes es SPEC-089).
+error en `parse_inbound_instagram_events`: no son responsabilidad de ese
+extractor.
+
+Extensión aditiva (SPEC-089, conciliación de statuses de ENVÍO ->
+`estado_entrega`): `parse_delivery_events` extrae el callback `delivery` de
+`messaging[]`, forma documentada de la Instagram Messaging API:
+
+    {
+      "sender": {"id": "<sender_id>"},
+      "recipient": {"id": "<instagram_business_account_id>"},
+      "delivery": {"mids": ["<mid1>", "<mid2>"], "watermark": 1700000000}
+    }
+
+Un evento `delivery` trae uno o más `mid` de mensajes SALIENTES ya
+confirmados como entregados por el cliente de Instagram del destinatario —
+análogo (aunque más simple) al `value.statuses[]` de WhatsApp (SPEC-030).
+Instagram NO expone un callback de entrega granular equivalente al `sent`
+de WhatsApp (el ACK inmediato del envío ya lo captura
+`instagram_send_worker` al recibir la respuesta 200 del propio POST, igual
+que WhatsApp) y el callback `read` (`{"read": {"watermark": ...}}`) NO trae
+`mid` — solo una marca de tiempo del último mensaje leído por el
+destinatario — por lo que NO puede conciliarse de forma determinista por
+mensaje individual; esta V1 (SPEC-089) deliberadamente NO procesa `read`
+(limitación documentada, análoga a R-68 de SPEC-055/056): solo `delivery`
+se mapea a `estado_entrega="entregado"`. Si una SPEC futura necesitara
+reflejar "leído" de forma aproximada (p.ej. todos los mensajes anteriores al
+`watermark` de la conversación), sería una extensión aditiva nueva, no un
+cambio de esta.
 """
 
 from __future__ import annotations
@@ -166,6 +192,93 @@ def parse_inbound_instagram_events(raw_body: str) -> list[InstagramMessageEvent]
                     tipo=tipo,
                     texto=texto,
                     attachments=attachments,
+                )
+            )
+
+    return events
+
+
+@dataclass(frozen=True)
+class InstagramDeliveryEvent:
+    """Un callback `delivery` ya extraído y normalizado del payload de Meta
+    (SPEC-089) — espejo simplificado de `StatusEvent` de WhatsApp
+    (SPEC-030), SOLO para el evento `delivery` (ver docstring del módulo:
+    `read` no trae `mid`, no es conciliable por mensaje individual, V1 no lo
+    procesa).
+
+    `mids`: ids de mensajes SALIENTES (persistidos en `messages.wamid`,
+    §3.4) confirmados como entregados. `instagram_account_id`:
+    `recipient.id` — cuenta de Instagram Business EMISORA del mensaje
+    original (base de la resolución de tenant, análogo a `phone_number_id`
+    en `StatusEvent` de WhatsApp).
+    """
+
+    mids: list[str]
+    instagram_account_id: str
+
+
+def parse_delivery_events(raw_body: str) -> list[InstagramDeliveryEvent]:
+    """Extrae los callbacks `delivery` (`entry[].messaging[].delivery`) del
+    payload crudo de Instagram (SPEC-089, conciliación de statuses ->
+    `estado_entrega`).
+
+    Un solo evento de webhook puede traer varios `entry`/`messaging`; se
+    devuelven TODOS los callbacks `delivery` encontrados, en orden. Eventos
+    `messaging[]` sin `delivery` (mensajes entrantes, `read`, echo) se
+    ignoran sin error: no son responsabilidad de este extractor.
+
+    Mismo contrato de robustez que `parse_inbound_instagram_events`: un
+    payload malformado (no JSON, `object` distinto de `"instagram"`, o sin
+    `entry`) lanza `InboundEventParseError`; el worker la captura y descarta
+    el evento sin reventar.
+    """
+    try:
+        data = json.loads(raw_body)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise InboundEventParseError(f"raw_body no es JSON válido: {exc}") from exc
+
+    if not isinstance(data, dict) or "entry" not in data:
+        raise InboundEventParseError(
+            "payload sin 'entry': no es un evento de Meta válido"
+        )
+
+    if data.get("object") != "instagram":
+        raise InboundEventParseError(
+            "payload con 'object' distinto de 'instagram': formato inesperado"
+        )
+
+    events: list[InstagramDeliveryEvent] = []
+
+    for entry in data.get("entry") or []:
+        if not isinstance(entry, dict):
+            continue
+        for messaging_event in entry.get("messaging") or []:
+            if not isinstance(messaging_event, dict):
+                continue
+
+            delivery = messaging_event.get("delivery")
+            if not isinstance(delivery, dict):
+                continue  # no es un callback de entrega (mensaje/read/echo)
+
+            raw_mids = delivery.get("mids")
+            if not isinstance(raw_mids, list):
+                continue
+
+            mids = [m for m in raw_mids if isinstance(m, str) and m]
+            if not mids:
+                continue
+
+            recipient = messaging_event.get("recipient") or {}
+            instagram_account_id = (
+                recipient.get("id") if isinstance(recipient, dict) else None
+            )
+            if not instagram_account_id:
+                continue  # sin cuenta emisora identificable: no enrutable
+
+            events.append(
+                InstagramDeliveryEvent(
+                    mids=mids,
+                    instagram_account_id=instagram_account_id,
                 )
             )
 

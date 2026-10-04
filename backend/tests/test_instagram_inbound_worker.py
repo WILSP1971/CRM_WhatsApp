@@ -1029,3 +1029,189 @@ def test_process_job_insufficient_context_skips_draft_without_breaking_ingestion
 
     assert message_count == 1
     assert draft_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Conciliación de statuses de ENVÍO (SPEC-089, espejo simplificado de
+# SPEC-030): callback `delivery` -> `estado_entrega="entregado"`.
+# ---------------------------------------------------------------------------
+
+
+def _crear_contacto(engine, tenant_id: uuid.UUID, sender_id: str) -> uuid.UUID:
+    contact_id = uuid.uuid4()
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO contacts (id, tenant_id, nombre, telefono) "
+                "VALUES (:id, :tenant_id, :nombre, :telefono)"
+            ),
+            {
+                "id": contact_id,
+                "tenant_id": tenant_id,
+                "nombre": "Contacto IG Delivery",
+                "telefono": sender_id,
+            },
+        )
+    return contact_id
+
+
+def _crear_conversacion_instagram(
+    engine, tenant_id: uuid.UUID, contact_id: uuid.UUID
+) -> uuid.UUID:
+    conversation_id = uuid.uuid4()
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO conversations (id, tenant_id, contact_id, canal, estado) "
+                "VALUES (:id, :tenant_id, :contact_id, 'instagram', 'abierta')"
+            ),
+            {"id": conversation_id, "tenant_id": tenant_id, "contact_id": contact_id},
+        )
+    return conversation_id
+
+
+def _crear_mensaje_saliente_con_mid(
+    engine,
+    tenant_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    *,
+    mid: str,
+    estado_entrega: str = "enviado",
+) -> uuid.UUID:
+    message_id = uuid.uuid4()
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO messages "
+                "(id, tenant_id, conversation_id, remitente, contenido, "
+                " estado_entrega, wamid) "
+                "VALUES (:id, :tenant_id, :conversation_id, 'agente', "
+                "        'texto ya enviado', :estado_entrega, :mid)"
+            ),
+            {
+                "id": message_id,
+                "tenant_id": tenant_id,
+                "conversation_id": conversation_id,
+                "estado_entrega": estado_entrega,
+                "mid": mid,
+            },
+        )
+    return message_id
+
+
+def _delivery_job(*, instagram_account_id: str, mids: list[str]) -> InboundInstagramJob:
+    raw_body = json.dumps(
+        {
+            "object": "instagram",
+            "entry": [
+                {
+                    "id": instagram_account_id,
+                    "time": 1700000000,
+                    "messaging": [
+                        {
+                            "sender": {"id": "ig-sender-x"},
+                            "recipient": {"id": instagram_account_id},
+                            "delivery": {"mids": mids, "watermark": 1700000000},
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    return InboundInstagramJob(raw_body=raw_body)
+
+
+def _leer_estado_entrega(engine, message_id: uuid.UUID) -> str:
+    with engine.connect() as conn:
+        return conn.execute(
+            sa.text("SELECT estado_entrega FROM messages WHERE id = :id"),
+            {"id": message_id},
+        ).scalar_one()
+
+
+def test_process_job_delivery_event_updates_estado_entrega_to_entregado(
+    postgres_engine,
+):
+    tenant_id = _crear_tenant(postgres_engine, "TenantIgDelivery")
+    instagram_account_id = f"iaid-delivery-{uuid.uuid4().hex[:10]}"
+    _crear_instagram_account(postgres_engine, tenant_id, instagram_account_id)
+    contact_id = _crear_contacto(postgres_engine, tenant_id, "ig-sender-delivery")
+    conversation_id = _crear_conversacion_instagram(postgres_engine, tenant_id, contact_id)
+    mid = f"mid.OUT-{uuid.uuid4().hex[:10]}"
+    message_id = _crear_mensaje_saliente_con_mid(
+        postgres_engine, tenant_id, conversation_id, mid=mid
+    )
+
+    job = _delivery_job(instagram_account_id=instagram_account_id, mids=[mid])
+
+    process_job(
+        job,
+        session_factory=_session_factory(postgres_engine),
+        redis_client=fakeredis.aioredis.FakeRedis(decode_responses=True),
+    )
+
+    assert _leer_estado_entrega(postgres_engine, message_id) == "entregado"
+
+
+def test_process_job_delivery_event_is_idempotent(postgres_engine):
+    tenant_id = _crear_tenant(postgres_engine, "TenantIgDeliveryIdem")
+    instagram_account_id = f"iaid-deliveryidem-{uuid.uuid4().hex[:10]}"
+    _crear_instagram_account(postgres_engine, tenant_id, instagram_account_id)
+    contact_id = _crear_contacto(postgres_engine, tenant_id, "ig-sender-delivery-idem")
+    conversation_id = _crear_conversacion_instagram(postgres_engine, tenant_id, contact_id)
+    mid = f"mid.OUT-IDEM-{uuid.uuid4().hex[:10]}"
+    message_id = _crear_mensaje_saliente_con_mid(
+        postgres_engine, tenant_id, conversation_id, mid=mid
+    )
+
+    job = _delivery_job(instagram_account_id=instagram_account_id, mids=[mid])
+
+    for _ in range(2):
+        process_job(
+            job,
+            session_factory=_session_factory(postgres_engine),
+            redis_client=fakeredis.aioredis.FakeRedis(decode_responses=True),
+        )
+
+    assert _leer_estado_entrega(postgres_engine, message_id) == "entregado"
+
+
+def test_process_job_delivery_event_never_revives_failed_message(postgres_engine):
+    tenant_id = _crear_tenant(postgres_engine, "TenantIgDeliveryFailed")
+    instagram_account_id = f"iaid-deliveryfailed-{uuid.uuid4().hex[:10]}"
+    _crear_instagram_account(postgres_engine, tenant_id, instagram_account_id)
+    contact_id = _crear_contacto(postgres_engine, tenant_id, "ig-sender-delivery-failed")
+    conversation_id = _crear_conversacion_instagram(postgres_engine, tenant_id, contact_id)
+    mid = f"mid.OUT-FAILED-{uuid.uuid4().hex[:10]}"
+    message_id = _crear_mensaje_saliente_con_mid(
+        postgres_engine,
+        tenant_id,
+        conversation_id,
+        mid=mid,
+        estado_entrega="failed",
+    )
+
+    job = _delivery_job(instagram_account_id=instagram_account_id, mids=[mid])
+
+    process_job(
+        job,
+        session_factory=_session_factory(postgres_engine),
+        redis_client=fakeredis.aioredis.FakeRedis(decode_responses=True),
+    )
+
+    assert _leer_estado_entrega(postgres_engine, message_id) == "failed"
+
+
+def test_process_job_delivery_event_unmapped_account_is_discarded_without_error(
+    postgres_engine,
+):
+    job = _delivery_job(
+        instagram_account_id=f"iaid-unmapped-{uuid.uuid4().hex[:10]}",
+        mids=["mid.DOES-NOT-MATTER"],
+    )
+
+    process_job(
+        job,
+        session_factory=_session_factory(postgres_engine),
+        redis_client=fakeredis.aioredis.FakeRedis(decode_responses=True),
+    )  # no debe lanzar
