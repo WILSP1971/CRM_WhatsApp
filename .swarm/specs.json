@@ -2061,7 +2061,7 @@
     },
     {
       "id": "SPEC-088",
-      "titulo": "Descarga de media de Instagram (media_client.py): confirmacion BLOQUEANTE del host del CDN de Meta + allowlist de host por codigo + almacen cifrado (ADR-009) + gatillo condicional de ADR-017",
+      "titulo": "Media de los DMs de Instagram: persistencia de la URL del CDN de Meta (sin descarga, sin cifrado), CERO egress de backend para media (REVISADA 2026-10-04 tras hallazgo de politica de Meta)",
       "archivo": ".swarm/specs/SPEC-088.md",
       "estado": "APROBADA",
       "fase": "F3",
