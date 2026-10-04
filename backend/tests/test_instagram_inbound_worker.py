@@ -8,7 +8,7 @@ automáticamente sin Postgres accesible (mismo patrón que
 sentimiento y `FakeAIClient` (SPEC-017) para el LLM/embeddings local: CERO
 llamadas externas/red real en toda la suite.
 
-Cubre (SPEC-087, espejo de SPEC-027/028):
+Cubre (SPEC-087, espejo de SPEC-027/028; adjuntos actualizados por SPEC-088):
   (a) evento con `instagram_account_id` conocido -> resuelve tenant y
       persiste bajo RLS (contacto + conversación `canal="instagram"` +
       mensaje con `wamid=mid`).
@@ -23,8 +23,12 @@ Cubre (SPEC-087, espejo de SPEC-027/028):
   (e) la resolución de tenant usa la función SQL
       `resolve_tenant_by_instagram_account_id` (SECURITY DEFINER) y NO un
       SELECT directo sobre `instagram_accounts`.
-  (f) adjuntos -> se encola el contrato de descarga (`ig:media_pending`) sin
-      afectar el camino de texto.
+  (f) adjuntos (SPEC-088): una URL de CDN válida (`lookaside.fbsbx.com`,
+      https, sin userinfo) se persiste TAL CUAL en `messages.media_url`/
+      `media_type`, EN EL MISMO FLUJO SÍNCRONO (sin cola intermedia); una
+      URL inválida (host distinto/no-https/userinfo embebido) NO se
+      persiste como referencia pero el mensaje de texto sí, sin afectar el
+      camino de texto.
   (g) disparo de sentimiento (SPEC-018) y borrador RAG `propuesto` con ≥3
       citas (SPEC-019), nunca autoenviado.
   (h) modo degradado: LLM caído / contexto insuficiente -> sin borrador, sin
@@ -50,11 +54,7 @@ from app.core.instagram_queue import (
 )
 from app.db.session import set_tenant_session
 from app.services.rag.ingest_service import ingest_document
-from app.workers.instagram_inbound_worker import (
-    MEDIA_PENDING_QUEUE_KEY,
-    drain_one,
-    process_job,
-)
+from app.workers.instagram_inbound_worker import drain_one, process_job
 from tests.rag_ai_client_fake import FakeAIClient
 
 
@@ -464,12 +464,14 @@ def test_resolve_tenant_uses_function_not_direct_select():
 
 
 # ---------------------------------------------------------------------------
-# (f) adjuntos -> encola contrato de descarga (SPEC-088), sin afectar texto
+# (f) adjuntos (SPEC-088): la URL del CDN se persiste TAL CUAL en el mismo
+# flujo síncrono (sin cola intermedia); una URL inválida no se persiste pero
+# el mensaje de texto sí.
 # ---------------------------------------------------------------------------
 
 
-def test_process_job_with_attachments_enqueues_media_pending(postgres_engine):
-    tenant_id = _crear_tenant(postgres_engine, "TenantIgMediaPending")
+def test_process_job_with_valid_attachment_persists_media_url(postgres_engine):
+    tenant_id = _crear_tenant(postgres_engine, "TenantIgMediaValid")
     instagram_account_id = f"iaid-media-{uuid.uuid4().hex[:10]}"
     mid = f"mid.{uuid.uuid4().hex}"
     _crear_instagram_account(postgres_engine, tenant_id, instagram_account_id)
@@ -477,11 +479,15 @@ def test_process_job_with_attachments_enqueues_media_pending(postgres_engine):
     fake_server = fakeredis.FakeServer()
     redis_client = fakeredis.aioredis.FakeRedis(server=fake_server, decode_responses=True)
 
+    cdn_url = (
+        "https://lookaside.fbsbx.com/ig_messaging_cdn/"
+        "?asset_id=1234567890&signature=abc123signature"
+    )
     job = _inbound_job(
         instagram_account_id=instagram_account_id,
         mid=mid,
         texto=None,
-        attachments=[{"type": "image", "payload": {"url": "https://x/img.jpg"}}],
+        attachments=[{"type": "image", "payload": {"url": cdn_url}}],
     )
 
     process_job(
@@ -491,55 +497,178 @@ def test_process_job_with_attachments_enqueues_media_pending(postgres_engine):
         ai_client=FakeAIClient(),
     )
 
-    # El mensaje de texto (placeholder) debe persistir igual, sin verse
-    # afectado por la presencia de adjuntos.
     with postgres_engine.connect() as conn:
-        count = conn.execute(
-            sa.text("SELECT count(*) FROM messages WHERE wamid = :mid"),
+        row = conn.execute(
+            sa.text(
+                "SELECT media_url, media_type FROM messages WHERE wamid = :mid"
+            ),
             {"mid": mid},
-        ).scalar_one()
-    assert count == 1
+        ).one_or_none()
 
-    import asyncio
-
-    dequeue_client = fakeredis.aioredis.FakeRedis(
-        server=fake_server, decode_responses=True
+    assert row is not None
+    assert row.media_url == cdn_url, (
+        "La URL del CDN debe persistirse TAL CUAL llega (SPEC-088 RF-01)"
     )
-    raw = asyncio.run(dequeue_client.lpop(MEDIA_PENDING_QUEUE_KEY))
-    assert raw is not None, "Debe haberse encolado el contrato de descarga de adjuntos"
-    payload = json.loads(raw)
-    assert payload["mid"] == mid
-    assert payload["tenant_id"] == str(tenant_id)
-    assert payload["attachments"][0]["type"] == "image"
+    assert row.media_type == "image"
 
 
-def test_process_job_without_attachments_does_not_enqueue_media_pending(
+def test_process_job_with_invalid_host_attachment_does_not_persist_media_url(
     postgres_engine,
 ):
+    """Host distinto de `lookaside.fbsbx.com` -> no se persiste la
+    referencia (RF-03), pero el mensaje de texto (placeholder) sí."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantIgMediaBadHost")
+    instagram_account_id = f"iaid-media-badhost-{uuid.uuid4().hex[:10]}"
+    mid = f"mid.{uuid.uuid4().hex}"
+    _crear_instagram_account(postgres_engine, tenant_id, instagram_account_id)
+
+    job = _inbound_job(
+        instagram_account_id=instagram_account_id,
+        mid=mid,
+        texto=None,
+        attachments=[
+            {"type": "image", "payload": {"url": "https://evil.example.com/img.jpg"}}
+        ],
+    )
+
+    process_job(job, session_factory=_session_factory(postgres_engine))
+
+    with postgres_engine.connect() as conn:
+        row = conn.execute(
+            sa.text(
+                "SELECT contenido, media_url, media_type FROM messages "
+                "WHERE wamid = :mid"
+            ),
+            {"mid": mid},
+        ).one_or_none()
+
+    assert row is not None, "El mensaje debe persistir pese a la URL inválida"
+    assert row.contenido == "[attachment]"
+    assert row.media_url is None
+    assert row.media_type is None
+
+
+def test_process_job_with_non_https_attachment_does_not_persist_media_url(
+    postgres_engine,
+):
+    """Esquema distinto de https -> no se persiste la referencia (RF-03)."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantIgMediaHttp")
+    instagram_account_id = f"iaid-media-http-{uuid.uuid4().hex[:10]}"
+    mid = f"mid.{uuid.uuid4().hex}"
+    _crear_instagram_account(postgres_engine, tenant_id, instagram_account_id)
+
+    job = _inbound_job(
+        instagram_account_id=instagram_account_id,
+        mid=mid,
+        texto=None,
+        attachments=[
+            {"type": "image", "payload": {"url": "http://lookaside.fbsbx.com/img.jpg"}}
+        ],
+    )
+
+    process_job(job, session_factory=_session_factory(postgres_engine))
+
+    with postgres_engine.connect() as conn:
+        row = conn.execute(
+            sa.text("SELECT media_url FROM messages WHERE wamid = :mid"),
+            {"mid": mid},
+        ).one_or_none()
+
+    assert row is not None
+    assert row.media_url is None
+
+
+def test_process_job_with_userinfo_embedded_attachment_does_not_persist_media_url(
+    postgres_engine,
+):
+    """Userinfo embebido (`user:pass@host`) -> no se persiste la referencia
+    (RF-03, defensa en profundidad, mismo criterio que `_validate_graph_host`
+    de WhatsApp)."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantIgMediaUserinfo")
+    instagram_account_id = f"iaid-media-userinfo-{uuid.uuid4().hex[:10]}"
+    mid = f"mid.{uuid.uuid4().hex}"
+    _crear_instagram_account(postgres_engine, tenant_id, instagram_account_id)
+
+    job = _inbound_job(
+        instagram_account_id=instagram_account_id,
+        mid=mid,
+        texto=None,
+        attachments=[
+            {
+                "type": "image",
+                "payload": {
+                    "url": "https://user:pass@lookaside.fbsbx.com/img.jpg"
+                },
+            }
+        ],
+    )
+
+    process_job(job, session_factory=_session_factory(postgres_engine))
+
+    with postgres_engine.connect() as conn:
+        row = conn.execute(
+            sa.text("SELECT media_url FROM messages WHERE wamid = :mid"),
+            {"mid": mid},
+        ).one_or_none()
+
+    assert row is not None
+    assert row.media_url is None
+
+
+def test_process_job_without_attachments_leaves_media_url_null(postgres_engine):
     tenant_id = _crear_tenant(postgres_engine, "TenantIgNoMedia")
     instagram_account_id = f"iaid-nomedia-{uuid.uuid4().hex[:10]}"
     mid = f"mid.{uuid.uuid4().hex}"
     _crear_instagram_account(postgres_engine, tenant_id, instagram_account_id)
 
-    fake_server = fakeredis.FakeServer()
-    redis_client = fakeredis.aioredis.FakeRedis(server=fake_server, decode_responses=True)
-
     job = _inbound_job(instagram_account_id=instagram_account_id, mid=mid, texto="hola")
 
-    process_job(
-        job,
-        session_factory=_session_factory(postgres_engine),
-        redis_client=redis_client,
-        ai_client=FakeAIClient(),
+    process_job(job, session_factory=_session_factory(postgres_engine))
+
+    with postgres_engine.connect() as conn:
+        row = conn.execute(
+            sa.text("SELECT media_url, media_type FROM messages WHERE wamid = :mid"),
+            {"mid": mid},
+        ).one_or_none()
+
+    assert row is not None
+    assert row.media_url is None
+    assert row.media_type is None
+
+
+def test_process_job_with_multiple_attachments_persists_first_valid_one(
+    postgres_engine,
+):
+    """Varios adjuntos en un mismo mensaje -> V1 persiste SOLO EL PRIMERO
+    válido (decisión de implementación acotada, SPEC-088)."""
+    tenant_id = _crear_tenant(postgres_engine, "TenantIgMediaMultiple")
+    instagram_account_id = f"iaid-media-multi-{uuid.uuid4().hex[:10]}"
+    mid = f"mid.{uuid.uuid4().hex}"
+    _crear_instagram_account(postgres_engine, tenant_id, instagram_account_id)
+
+    first_url = "https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=1&signature=a"
+    second_url = "https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=2&signature=b"
+    job = _inbound_job(
+        instagram_account_id=instagram_account_id,
+        mid=mid,
+        texto=None,
+        attachments=[
+            {"type": "image", "payload": {"url": first_url}},
+            {"type": "video", "payload": {"url": second_url}},
+        ],
     )
 
-    import asyncio
+    process_job(job, session_factory=_session_factory(postgres_engine))
 
-    dequeue_client = fakeredis.aioredis.FakeRedis(
-        server=fake_server, decode_responses=True
-    )
-    raw = asyncio.run(dequeue_client.lpop(MEDIA_PENDING_QUEUE_KEY))
-    assert raw is None, "Sin adjuntos no debe encolarse nada en ig:media_pending"
+    with postgres_engine.connect() as conn:
+        row = conn.execute(
+            sa.text("SELECT media_url, media_type FROM messages WHERE wamid = :mid"),
+            {"mid": mid},
+        ).one_or_none()
+
+    assert row is not None
+    assert row.media_url == first_url
+    assert row.media_type == "image"
 
 
 # ---------------------------------------------------------------------------

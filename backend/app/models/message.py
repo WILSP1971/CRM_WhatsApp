@@ -3,8 +3,10 @@ extendido por SPEC-015 con estado de entrega del WebChat, por SPEC-018 con
 el sentimiento clasificado por el LLM local, por SPEC-025 con el `wamid`
 de WhatsApp para idempotencia, por SPEC-053 con el tipo `audio` para la
 nota de voz de WhatsApp (ADR-013), por SPEC-054 con el `mime_type` del
-media descargado de WhatsApp y por SPEC-058 con `audio_purged_at` (marca de
-purga física del audio por el mismo job de retención de SPEC-041).
+media descargado de WhatsApp, por SPEC-058 con `audio_purged_at` (marca de
+purga física del audio por el mismo job de retención de SPEC-041) y por
+SPEC-088 con `media_url`/`media_type` (referencia a la URL del CDN de Meta
+de los adjuntos de DMs de Instagram, SIN descarga ni cifrado).
 
 Nota de diseño (SPEC-085 §3.4, Q4=A, decisión de arquitecto — NO reabrir):
 `wamid` se reutiliza también para el canal Instagram DM, que identifica sus
@@ -13,7 +15,20 @@ renombra esta: `wamid` pasa a representar el "id de mensaje del canal
 externo" genérico (WhatsApp -> `wamid`, Instagram -> `mid`), con la misma
 restricción UNIQUE como garantía de idempotencia (ADR-007) para ambos
 canales. Ningún código debe asumir el formato de WhatsApp al leer esta
-columna (R-113)."""
+columna (R-113).
+
+Nota de diseño (SPEC-088 — NO confundir `media_url`/`media_type` con
+`audio_ref`): `audio_ref` (SPEC-054/058, ADR-009) es una referencia OPACA a
+un blob de audio de WhatsApp que el backend DESCARGÓ y CIFRÓ EN REPOSO
+(`audio_store`), con purga controlada por el job de retención propio
+(SPEC-041/058). `media_url`/`media_type`, en cambio, son la URL EXTERNA del
+CDN de Meta (`lookaside.fbsbx.com`) tal cual llega en el payload del
+webhook de Instagram DM (SPEC-086/087) — el backend NUNCA la descarga, NUNCA
+la cifra, y su ciclo de vida (expiración/revocación) lo controla Meta, no
+este backend (política de plataforma de Meta, `chatwoot#8583`; decisión
+vinculante del Lead en SPEC-088). `audio_ref`/`audio_store`/ADR-009
+permanecen EXCLUSIVOS de las notas de voz de WhatsApp; esta SPEC no los
+toca ni reutiliza su semántica."""
 
 import uuid
 from datetime import datetime
@@ -163,3 +178,25 @@ class Message(Base, TimestampMixin, TenantMixin, SoftDeleteMixin):
     # renombrada, no duplicada) — UNIQUE cuando no es None, base de la
     # idempotencia de ambos canales (ADR-007). None para mensajes de otros
     # canales (webchat).
+    media_url: Mapped[str | None] = mapped_column(
+        String(2048), nullable=True
+    )  # SPEC-088: URL EXTERNA del CDN de Meta (`lookaside.fbsbx.com`) de un
+    # adjunto de DM de Instagram, persistida TAL CUAL llega en el payload del
+    # webhook (`attachments[].payload.url`, SPEC-086). NO es una ruta local,
+    # NO está cifrada, NO pasa por `audio_store`/ADR-009: el backend NUNCA
+    # descarga ni abre una conexión hacia esta URL (RNF-NO-EGRESS-MEDIA,
+    # política de Meta `chatwoot#8583`). Su ciclo de vida (expiración o
+    # revocación si el contacto borra el contenido) lo controla Meta, no este
+    # backend — ver R-115''/RF-07 de SPEC-088. Longitud holgada (2048) porque
+    # la URL firmada incluye `asset_id`/`signature` largos. None para
+    # mensajes sin adjunto y para los de WhatsApp/webchat. EXPLÍCITAMENTE
+    # DISTINTA de `audio_ref` (ver nota de diseño SPEC-088 arriba): no
+    # confundir ambos campos ni reutilizar uno por el otro.
+    media_type: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )  # SPEC-088: tipo del adjunto de Instagram tal como lo clasifica Meta en
+    # `attachments[].type` (p.ej. "image"/"video"/"audio"/"file"), persistido
+    # tal cual. None en los mismos casos que `media_url`. NO confundir con
+    # `tipo` (discriminador "texto"/"audio" del propio `Message`, SPEC-053)
+    # ni con `mime_type` (MIME del audio de WhatsApp ya descargado, SPEC-054)
+    # — son tres campos con semántica distinta, de canales/flujos distintos.

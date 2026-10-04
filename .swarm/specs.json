@@ -2063,7 +2063,7 @@
       "id": "SPEC-088",
       "titulo": "Media de los DMs de Instagram: persistencia de la URL del CDN de Meta (sin descarga, sin cifrado), CERO egress de backend para media (REVISADA 2026-10-04 tras hallazgo de politica de Meta)",
       "archivo": ".swarm/specs/SPEC-088.md",
-      "estado": "APROBADA",
+      "estado": "EN_VERIFICACION",
       "fase": "F3",
       "plan": "PLAN-012",
       "sensible": true,

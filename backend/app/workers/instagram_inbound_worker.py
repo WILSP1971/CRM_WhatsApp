@@ -31,10 +31,23 @@ ADR-007/008. Espejo EXACTO de `app.workers.whatsapp_inbound_worker`
      nuevas, BLACK PANTHER) y la conversación (`canal="instagram"`), y
      persiste el mensaje entrante reutilizando
      `app.services.message_service.create_message`.
-  6. Si el evento trae adjuntos (`event.attachments`, RF-07): encola su
-     descarga en `ig:media_pending` (contrato consumido por SPEC-088, fuera
-     de alcance aquí) — el camino de texto NO se ve afectado por la
-     presencia de adjuntos, el mensaje se persiste igual.
+  6. Si el evento trae adjuntos (`event.attachments`, RF-01 SPEC-088):
+     persiste la URL del CDN de Meta (`media_url`) y su `type` (`media_type`)
+     TAL CUAL llegan, EN EL MISMO FLUJO SÍNCRONO de persistencia del mensaje
+     (dentro de la misma transacción que fija `message.wamid`) — SIN
+     descargar el binario y SIN abrir ninguna conexión hacia el CDN
+     (SPEC-088, política de Meta `chatwoot#8583`). Antes de persistir, la
+     URL se valida en FORMA (`https` + host EXACTO `lookaside.fbsbx.com` +
+     sin userinfo, `media_url_validator.is_valid_instagram_media_url`); si
+     no pasa la validación, se audita (solo metadatos) y NO se persiste la
+     referencia — el mensaje de texto, si lo hay, se persiste igual. Si el
+     evento trae varios adjuntos, esta V1 persiste SOLO EL PRIMERO válido
+     (decisión de implementación acotada, SPEC-088: un DM típico de
+     Instagram trae un único adjunto por mensaje; ver comentario en
+     `_select_first_valid_attachment`). Ya NO se encola en `ig:media_pending`
+     (esa cola queda OBSOLETA desde SPEC-088: no hay descarga asíncrona que
+     hacer — el render de la media ocurre desde el cliente, consumiendo
+     `media_url` directamente).
 
 Disparo del pipeline IA (sentimiento/RAG) — SPEC-028, reutiliza SPEC-017/018
 sin crear componentes de IA nuevos (RF-05, RNF-IA-REUTILIZADA):
@@ -69,7 +82,6 @@ exclusivamente los servicios de dominio YA EXISTENTES
 from __future__ import annotations
 
 import asyncio
-import json
 import signal
 import uuid
 from types import SimpleNamespace
@@ -95,6 +107,9 @@ from app.integrations.instagram.inbound_parser import (
     InstagramMessageEvent,
     parse_inbound_instagram_events,
 )
+from app.integrations.instagram.media_url_validator import (
+    is_valid_instagram_media_url,
+)
 from app.models.contact import Contact
 from app.models.conversation import Conversation
 from app.services.ai_service import AIClient, AIServiceError
@@ -106,11 +121,6 @@ logger = structlog.get_logger(__name__)
 
 _CANAL_INSTAGRAM = "instagram"
 _REMITENTE_CONTACTO = "contacto"
-
-# Cola de encolado de descarga de adjuntos (RF-07, contrato consumido por
-# SPEC-088 — este worker SOLO encola, NUNCA descarga). Nombre análogo a
-# `ig:inbound`/`stt:jobs` (convención del proyecto, cola Redis persistente).
-MEDIA_PENDING_QUEUE_KEY = "ig:media_pending"
 
 
 def _resolve_tenant_id(db: Session, *, instagram_account_id: str) -> uuid.UUID | None:
@@ -203,40 +213,42 @@ def _get_or_create_conversation(
     return conversation
 
 
-def _enqueue_media_pending_best_effort(
-    redis_client: redis_asyncio.Redis,
+def _select_first_valid_attachment(
+    attachments: list[dict[str, str | None]],
     *,
     tenant_id: uuid.UUID,
-    message_id: uuid.UUID,
     mid: str,
-    attachments: list[dict[str, str | None]],
-) -> None:
-    """Encola el contrato de descarga de adjuntos (RF-07) para que SPEC-088
-    (`media_client.py` de Instagram, fuera de alcance aquí) lo consuma de
-    forma asíncrona — este worker SOLO encola, NUNCA descarga ni abre
-    egress a Meta.
+    event_id: str,
+) -> dict[str, str | None] | None:
+    """Selecciona el PRIMER adjunto cuya URL pasa la validación de forma
+    (SPEC-088 RF-03), o `None` si ninguno la pasa.
 
-    Best-effort (mismo criterio que `_schedule_sentiment_best_effort`): un
-    fallo de encolado (p.ej. Redis caído) se loguea (solo metadatos) y NUNCA
-    revierte ni bloquea la ingesta del mensaje de texto ya persistido."""
-    try:
-        payload = json.dumps(
-            {
-                "tenant_id": str(tenant_id),
-                "message_id": str(message_id),
-                "mid": mid,
-                "attachments": attachments,
-            }
-        )
-        run_coroutine_best_effort(redis_client.rpush(MEDIA_PENDING_QUEUE_KEY, payload))
-    except Exception:  # noqa: BLE001 — best-effort, nunca bloquea la ingesta
+    Decisión de implementación acotada (SPEC-088 §Alcance IN, dejada
+    explícitamente al implementador): si un mensaje trae VARIOS adjuntos,
+    esta V1 persiste SOLO EL PRIMERO válido en una columna única
+    (`media_url`/`media_type`), en vez de introducir una tabla hija para
+    multiplicidad. Se opta por esto porque un DM típico de Instagram trae un
+    único adjunto por mensaje (la UI nativa de Instagram no permite adjuntar
+    más de un archivo por envío) — una tabla hija añadiría complejidad de
+    esquema sin un caso de uso real que la justifique hoy; si una SPEC
+    futura requiere exponer múltiples adjuntos por mensaje, se puede
+    introducir sin romper esta columna (aditivo).
+
+    Cada URL inválida encontrada en el recorrido se audita individualmente
+    (RF-03): host distinto, esquema no-https o userinfo embebido -> se
+    loguea SOLO metadatos (`tenant_id`/`mid`/`event_id`, NUNCA la URL con su
+    `signature`, C2/RNF-C2) y se sigue probando con el siguiente adjunto."""
+    for attachment in attachments:
+        url = attachment.get("url")
+        if is_valid_instagram_media_url(url):
+            return attachment
         logger.warning(
-            "instagram_inbound_media_pending_enqueue_failed",
+            "instagram_inbound_media_url_invalid_discarded",
             tenant_id=str(tenant_id),
-            message_id=str(message_id),
             mid=mid,
-            exc_info=True,
+            event_id=event_id,
         )
+    return None
 
 
 def _schedule_sentiment_best_effort(
@@ -407,6 +419,24 @@ def _process_message_event(
                 contenido=contenido,
             )
             message.wamid = event.mid
+
+            # SPEC-088 RF-01: si el evento trae adjuntos, persiste la
+            # referencia (URL del CDN de Meta + type) EN ESTE MISMO FLUJO
+            # SÍNCRONO, tras validar su FORMA (sin abrir conexión, RF-03) —
+            # ya NO se encola en `ig:media_pending` (cola obsoleta, ver
+            # docstring del módulo). Un adjunto inválido se audita y no se
+            # persiste, sin afectar el mensaje de texto ya construido arriba.
+            if event.attachments:
+                selected = _select_first_valid_attachment(
+                    event.attachments,
+                    tenant_id=tenant_id,
+                    mid=event.mid,
+                    event_id=event_id,
+                )
+                if selected is not None:
+                    message.media_url = selected.get("url")
+                    message.media_type = selected.get("type")
+
             db.flush()
             # Capturados DENTRO de la transacción (con el tenant fijado):
             # los objetos ORM `message`/`conversation` quedan con sus
@@ -445,18 +475,6 @@ def _process_message_event(
         conversation_id=str(conversation_id),
         event_id=event_id,
     )
-
-    # RF-07: si el evento trae adjuntos, encola su descarga (contrato de
-    # SPEC-088) — el camino de texto YA quedó persistido arriba sin importar
-    # esto; un fallo aquí es best-effort y no afecta el mensaje ya guardado.
-    if event.attachments:
-        _enqueue_media_pending_best_effort(
-            redis_client or get_redis_client(),
-            tenant_id=tenant_id,
-            message_id=message_id,
-            mid=event.mid,
-            attachments=event.attachments,
-        )
 
     # SPEC-028 (reutilizado tal cual, sin crear IA nueva): dispara el
     # pipeline IA local (sentimiento SPEC-018 + borrador RAG SPEC-019) sobre

@@ -51,6 +51,17 @@ class MessageOut(BaseModel):
     # declarado aquí). None para mensajes insertados fuera del flujo normal
     # del servicio (ver comentario de `tipo` en `app/models/message.py`).
     tipo: str | None
+    # SPEC-088: referencia a la URL del CDN de Meta (`lookaside.fbsbx.com`)
+    # de un adjunto de DM de Instagram, expuesta TAL CUAL para que el
+    # FRONTEND (agente autenticado) la renderice/abra BAJO DEMANDA desde el
+    # cliente — el backend solo transporta la cadena JSON, nunca el binario
+    # (RF-06). None para mensajes sin adjunto y para los de WhatsApp/webchat.
+    # EXPLÍCITAMENTE DISTINTO de `audio_ref` (ADR-009), que NUNCA se expone
+    # tal cual (ver `app/schemas/call.py`): `media_url` SÍ se expone porque
+    # es una URL externa ya pensada por Meta para consumo directo del
+    # cliente, no un identificador de storage interno.
+    media_url: str | None
+    media_type: str | None
     sentimiento: str | None
     sentimiento_score: float | None
     estado_entrega: str
