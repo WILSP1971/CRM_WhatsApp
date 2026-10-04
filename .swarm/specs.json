@@ -2127,7 +2127,7 @@
       "id": "SPEC-091",
       "titulo": "Pruebas + simulador de webhook de Instagram FIRMADO + runbook del canal (con el bloqueo de Meta App Review EXPLICITO) + deploy on-prem - CIERRA PLAN-012",
       "archivo": ".swarm/specs/SPEC-091.md",
-      "estado": "APROBADA",
+      "estado": "EN_VERIFICACION",
       "fase": "F6",
       "plan": "PLAN-012",
       "sensible": true,

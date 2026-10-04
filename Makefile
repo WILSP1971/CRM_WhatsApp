@@ -1,4 +1,4 @@
-.PHONY: help setup up down logs health backup restore test-egress migrate seed clean ps shell wa-sim wa-sim-dup wa-sim-status wa-sim-challenge
+.PHONY: help setup up down logs health backup restore test-egress migrate seed clean ps shell wa-sim wa-sim-dup wa-sim-status wa-sim-challenge ig-sim ig-sim-dup ig-sim-attachment ig-sim-challenge ig-sim-bad-signature
 
 # Variables
 COMPOSE_FILE := docker-compose.yml
@@ -40,6 +40,11 @@ help:
 	@echo "  $(GREEN)wa-sim-dup$(NC)         Emitir webhook duplicado (prueba idempotencia)"
 	@echo "  $(GREEN)wa-sim-status$(NC)      Emitir callbacks de status (sent→delivered→read)"
 	@echo "  $(GREEN)wa-sim-challenge$(NC)   Emitir GET challenge (suscripción de webhook)"
+	@echo "  $(GREEN)ig-sim$(NC)             Emitir webhook Instagram con firma HMAC válida"
+	@echo "  $(GREEN)ig-sim-dup$(NC)         Emitir webhook Instagram duplicado (prueba idempotencia por mid)"
+	@echo "  $(GREEN)ig-sim-attachment$(NC) Emitir webhook Instagram con attachment (prueba media_url)"
+	@echo "  $(GREEN)ig-sim-challenge$(NC)  Emitir GET challenge Instagram (suscripción de webhook)"
+	@echo "  $(GREEN)ig-sim-bad-signature$(NC) Emitir webhook Instagram con firma inválida (debe rechazar 401)"
 	@echo "  $(GREEN)docs$(NC)               Imprimir referencias a documentación"
 	@echo ""
 
@@ -198,6 +203,35 @@ wa-sim-challenge:
 	@echo "$(BLUE)▶ Emitiendo GET challenge (suscripción)...$(NC)"
 	@export WEBHOOK_URL=http://localhost:8000/api/v1/whatsapp/webhook; \
 	python $(BACKEND_DIR)/tools/wa_webhook_simulator.py --challenge
+
+ig-sim:
+	@echo "$(BLUE)▶ Emitiendo webhook Instagram (mensaje entrante)...$(NC)"
+	@export INSTAGRAM_APP_SECRET=$${INSTAGRAM_APP_SECRET:-$$(openssl rand -hex 32)}; \
+	export WEBHOOK_URL=http://localhost:8000/api/v1/instagram/webhook; \
+	echo "$(YELLOW)app_secret: $$INSTAGRAM_APP_SECRET$(NC)"; \
+	python $(BACKEND_DIR)/tools/ig_webhook_simulator.py
+
+ig-sim-dup:
+	@echo "$(BLUE)▶ Emitiendo webhook Instagram duplicado (prueba idempotencia por mid)...$(NC)"
+	@export INSTAGRAM_APP_SECRET=$${INSTAGRAM_APP_SECRET:-$$(openssl rand -hex 32)}; \
+	export WEBHOOK_URL=http://localhost:8000/api/v1/instagram/webhook; \
+	python $(BACKEND_DIR)/tools/ig_webhook_simulator.py --duplicate
+
+ig-sim-attachment:
+	@echo "$(BLUE)▶ Emitiendo webhook Instagram con attachment (prueba media_url)...$(NC)"
+	@export INSTAGRAM_APP_SECRET=$${INSTAGRAM_APP_SECRET:-$$(openssl rand -hex 32)}; \
+	export WEBHOOK_URL=http://localhost:8000/api/v1/instagram/webhook; \
+	python $(BACKEND_DIR)/tools/ig_webhook_simulator.py --attachment
+
+ig-sim-challenge:
+	@echo "$(BLUE)▶ Emitiendo GET challenge Instagram (suscripción)...$(NC)"
+	@export WEBHOOK_URL=http://localhost:8000/api/v1/instagram/webhook; \
+	python $(BACKEND_DIR)/tools/ig_webhook_simulator.py --challenge
+
+ig-sim-bad-signature:
+	@echo "$(BLUE)▶ Emitiendo webhook Instagram con firma inválida (debe rechazar 401)...$(NC)"
+	@export WEBHOOK_URL=http://localhost:8000/api/v1/instagram/webhook; \
+	python $(BACKEND_DIR)/tools/ig_webhook_simulator.py --bad-signature
 
 shell-api:
 	@$(DOCKER_COMPOSE) exec api /bin/bash
