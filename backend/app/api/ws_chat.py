@@ -181,7 +181,16 @@ async def websocket_chat(websocket: WebSocket, conversation_id: uuid.UUID) -> No
         )
     finally:
         forward_task.cancel()
-        with contextlib.suppress(Exception):
+        # `asyncio.CancelledError` hereda de `BaseException` (no de
+        # `Exception`) desde Python 3.8 — `suppress(Exception)` NO la
+        # atrapa. Al cancelar `forward_task` y esperarlo inmediatamente
+        # después, SIEMPRE se recibe su propio `CancelledError`; sin
+        # incluirlo aquí explícitamente, ese error se escapa de este
+        # `finally` y reemplaza cualquier salida normal del handler (visible
+        # en producción como un error ruidoso en cada desconexión, y de forma
+        # determinista en tests que abren varios sockets concurrentes sobre
+        # el mismo TestClient/event loop).
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await forward_task
         with contextlib.suppress(Exception):
             await pubsub.unsubscribe(channel)

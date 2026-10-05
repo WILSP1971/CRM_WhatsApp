@@ -36,9 +36,12 @@ from __future__ import annotations
 import json
 import uuid
 
+import anyio.from_thread
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
+
+from sqlalchemy.orm import Session
 
 from app.api import ws_chat
 from app.db.session import set_tenant_session
@@ -53,7 +56,40 @@ fakeredis = pytest.importorskip(
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    """`TestClient` con un `BlockingPortal` persistente para TODO el test,
+    fijado manualmente en `test_client.portal`, SIN disparar el lifespan
+    real de la app (`startup`/`shutdown`).
+
+    Causa raíz del cuelgue/`RuntimeError` intermitente diagnosticado en
+    este archivo: `TestClient._portal_factory` (ver `starlette/testclient.py`)
+    SOLO reutiliza un único `anyio` `BlockingPortal` (y por tanto un único
+    event loop, corriendo en un único hilo de fondo) cuando `self.portal` ya
+    está fijado; si no, CADA llamada a `.websocket_connect(...)` crea su
+    PROPIO portal/event loop nuevo en un hilo nuevo. Los tests de este
+    archivo abren DOS websockets concurrentes por test que comparten el
+    MISMO objeto `fake_redis_client` (un solo `FakeRedis`/`FakeServer`,
+    simulando el bus Redis físico compartido entre conexiones) — usar
+    primitivas asyncio (colas/locks internos de `fakeredis`) desde dos event
+    loops distintos simultáneamente es incompatible con el modelo de asyncio
+    y produce fallos no deterministas (`RuntimeError: ... is bound to a
+    different event loop` o un `await` que nunca se resuelve). En
+    producción esto NUNCA ocurre (un solo proceso, un solo event loop) — es
+    una limitación de ESTE fixture de test, no un bug de `app/api/ws_chat.py`.
+
+    NO se usa `with TestClient(app) as test_client:` (que SÍ fija un portal
+    persistente, vía `__enter__`) porque ESO ADEMÁS ejecuta el lifespan real
+    de la app (`@app.on_event("startup"/"shutdown")`, `app/main.py`), que
+    cierra el cliente Redis GLOBAL compartido por TODO el proceso de pytest
+    (`app/core/redis_client.py::close_redis_client`, singleton a nivel de
+    módulo) — repetir esto una vez por test de este archivo rompía otros
+    archivos de test que corren en el MISMO proceso cuando se ejecuta la
+    suite completa (el cliente Redis global terminaba cerrado/atado a un
+    event loop ya finalizado). Fijar el portal manualmente evita tocar el
+    lifespan global por completo."""
+    with anyio.from_thread.start_blocking_portal(backend="asyncio") as portal:
+        test_client = TestClient(app)
+        test_client.portal = portal
+        yield test_client
 
 
 @pytest.fixture
@@ -251,10 +287,19 @@ def test_reconnect_recovers_persisted_messages_via_rest(
         )
 
     def fake_get_tenant_db():
+        # `get_tenant_db` real (app/api/deps.py) yiel da una `Session` ORM,
+        # NUNCA una `Connection` Core cruda — el router de conversaciones
+        # usa la API de `Session` (`.scalars()`/ORM) para construir
+        # `MessageOut`. Yieldear `conn` directamente (bug encontrado:
+        # produce un `ValidationError` de pydantic porque el router termina
+        # pasándole una fila/columna cruda a `MessageOut.model_validate`, no
+        # un `Message` ORM) rompía esta verificación de forma silenciosa
+        # antes de que el fix de `client`/portal permitiera llegar hasta
+        # aquí (antes fallaba antes, por el cuelgue de event loop).
         with client.portal_engine.connect() as conn:  # type: ignore[attr-defined]
             with conn.begin():
                 set_tenant_session(conn, str(tenant_id))
-                yield conn
+                yield Session(bind=conn)
 
     # Reutiliza el MISMO engine de Postgres del fixture (sin abrir uno nuevo)
     # para verificar, vía el REST ya probado en SPEC-014, que los mensajes
